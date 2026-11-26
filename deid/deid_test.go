@@ -230,8 +230,50 @@ func TestMintUIDFallbackRemainsUniqueWhenEntropyFails(t *testing.T) {
 	if first == second {
 		t.Fatalf("mintUID fallback returned duplicate %q", first)
 	}
-	if !strings.HasPrefix(first, "2.25.") || !strings.HasPrefix(second, "2.25.") {
-		t.Fatalf("fallback UIDs = %q, %q; want 2.25.*", first, second)
+	if !strings.HasPrefix(first, "2.25.") || !strings.HasPrefix(second, "2.25.") || !core.IsValidUID(first) || !core.IsValidUID(second) {
+		t.Fatalf("fallback UIDs = %q, %q; want valid 2.25.*", first, second)
+	}
+}
+
+func TestKeyedUIDRemapperIsDeterministicPerKey(t *testing.T) {
+	key := []byte("site secret")
+	a, b := NewKeyedUIDRemapper(key), NewKeyedUIDRemapper(key)
+	first := a.Map("1.2.840.113619.2.1")
+	if want := core.KeyedNameUID(key, "1.2.840.113619.2.1"); first != want || b.Map("1.2.840.113619.2.1") != want {
+		t.Fatalf("keyed remappers map to %q and %q, want %q", first, b.Map("1.2.840.113619.2.1"), want)
+	}
+	if NewKeyedUIDRemapper([]byte("other")).Map("1.2.840.113619.2.1") == first || NewUIDRemapper().Map("1.2.840.113619.2.1") == first {
+		t.Fatal("the replacement does not depend on the key")
+	}
+	if a.Map("1.2.840.113619.2.2") == first || !core.IsValidUID(first) {
+		t.Fatalf("replacement %q", first)
+	}
+	// UIDs minted for absent attributes stay random, so separate batches do
+	// not share them.
+	if a.mapMissing("study") == b.mapMissing("study") {
+		t.Fatal("keyed remappers minted the same UID for an absent attribute")
+	}
+}
+
+func TestKeyedUIDRemapperWithEmptyKeyRemainsDeterministic(t *testing.T) {
+	const original = "1.2.840.113619.2.1"
+	for _, test := range []struct {
+		name string
+		key  []byte
+	}{
+		{name: "nil"},
+		{name: "empty", key: []byte{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			a, b := NewKeyedUIDRemapper(test.key), NewKeyedUIDRemapper(test.key)
+			want := core.KeyedNameUID(test.key, original)
+			if first, second := a.Map(original), b.Map(original); first != want || second != want || a.Map(original) != want {
+				t.Fatalf("keyed remappers map to %q and %q, want %q", first, second, want)
+			}
+			if a.mapMissing("study") == b.mapMissing("study") {
+				t.Fatal("keyed remappers minted the same UID for an absent attribute")
+			}
+		})
 	}
 }
 

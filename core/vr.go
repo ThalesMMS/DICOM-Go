@@ -1,6 +1,9 @@
 package core
 
-import "fmt"
+import (
+	"errors"
+	"strconv"
+)
 
 // VR is the DICOM value representation code associated with an element.
 type VR string
@@ -44,10 +47,6 @@ const (
 	VRUV VR = "UV"
 )
 
-var knownVRs = map[VR]struct{}{
-	VRAE: {}, VRAS: {}, VRAT: {}, VRCS: {}, VRDA: {}, VRDS: {}, VRDT: {}, VRFL: {}, VRFD: {}, VRIS: {}, VRLO: {}, VRLT: {}, VROB: {}, VROD: {}, VROF: {}, VROL: {}, VROV: {}, VROW: {}, VRPN: {}, VRSH: {}, VRSL: {}, VRSQ: {}, VRSS: {}, VRSV: {}, VRST: {}, VRTM: {}, VRUC: {}, VRUI: {}, VRUL: {}, VRUN: {}, VRUR: {}, VRUS: {}, VRUT: {}, VRUV: {},
-}
-
 var spacePaddedVRs = map[VR]struct{}{
 	VRAE: {},
 	VRAS: {},
@@ -68,11 +67,83 @@ var spacePaddedVRs = map[VR]struct{}{
 }
 
 func ParseVR(s string) (VR, error) {
-	vr := VR(s)
-	if _, ok := knownVRs[vr]; !ok {
-		return "", fmt.Errorf("dicom: invalid VR %q", s)
+	// Return canonical constants, rather than retaining the caller's string.
+	// In particular, explicit headers pass a temporary two-byte string here.
+	if len(s) == 2 {
+		switch uint16(s[0])<<8 | uint16(s[1]) {
+		case 'A'<<8 | 'E':
+			return VRAE, nil
+		case 'A'<<8 | 'S':
+			return VRAS, nil
+		case 'A'<<8 | 'T':
+			return VRAT, nil
+		case 'C'<<8 | 'S':
+			return VRCS, nil
+		case 'D'<<8 | 'A':
+			return VRDA, nil
+		case 'D'<<8 | 'S':
+			return VRDS, nil
+		case 'D'<<8 | 'T':
+			return VRDT, nil
+		case 'F'<<8 | 'L':
+			return VRFL, nil
+		case 'F'<<8 | 'D':
+			return VRFD, nil
+		case 'I'<<8 | 'S':
+			return VRIS, nil
+		case 'L'<<8 | 'O':
+			return VRLO, nil
+		case 'L'<<8 | 'T':
+			return VRLT, nil
+		case 'O'<<8 | 'B':
+			return VROB, nil
+		case 'O'<<8 | 'D':
+			return VROD, nil
+		case 'O'<<8 | 'F':
+			return VROF, nil
+		case 'O'<<8 | 'L':
+			return VROL, nil
+		case 'O'<<8 | 'V':
+			return VROV, nil
+		case 'O'<<8 | 'W':
+			return VROW, nil
+		case 'P'<<8 | 'N':
+			return VRPN, nil
+		case 'S'<<8 | 'H':
+			return VRSH, nil
+		case 'S'<<8 | 'L':
+			return VRSL, nil
+		case 'S'<<8 | 'Q':
+			return VRSQ, nil
+		case 'S'<<8 | 'S':
+			return VRSS, nil
+		case 'S'<<8 | 'V':
+			return VRSV, nil
+		case 'S'<<8 | 'T':
+			return VRST, nil
+		case 'T'<<8 | 'M':
+			return VRTM, nil
+		case 'U'<<8 | 'C':
+			return VRUC, nil
+		case 'U'<<8 | 'I':
+			return VRUI, nil
+		case 'U'<<8 | 'L':
+			return VRUL, nil
+		case 'U'<<8 | 'N':
+			return VRUN, nil
+		case 'U'<<8 | 'R':
+			return VRUR, nil
+		case 'U'<<8 | 'S':
+			return VRUS, nil
+		case 'U'<<8 | 'T':
+			return VRUT, nil
+		case 'U'<<8 | 'V':
+			return VRUV, nil
+		}
 	}
-	return vr, nil
+	// Quote preserves the former %q error text without making the input
+	// string escape through fmt's variadic interface on the valid path.
+	return "", errors.New("dicom: invalid VR " + strconv.Quote(s))
 }
 
 func (vr VR) String() string {

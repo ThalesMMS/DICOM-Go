@@ -10,6 +10,8 @@ import (
 
 // BulkDataSource is a defined-length stream returned by BulkDataResolver.
 // Size is the number of unpadded value bytes available from Reader.
+// Defined-container planning uses WriterOptions.BulkDataSize or a declared
+// element header; it never opens this Reader to determine a length.
 type BulkDataSource struct {
 	Reader io.ReadCloser
 	Size   int64
@@ -116,6 +118,9 @@ func (e bulkDataResolveError) Unwrap() error {
 func bulkDataEncodedLength(size int64) (core.Length, error) {
 	if size < 0 {
 		return 0, fmt.Errorf("dicom: Bulk Data source size %d is negative", size)
+	}
+	if size >= int64(core.UndefinedLength) {
+		return 0, fmt.Errorf("dicom: Bulk Data source size %d exceeds defined length", size)
 	}
 	encodedSize := size
 	if encodedSize%2 != 0 {

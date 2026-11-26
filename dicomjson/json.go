@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,17 +22,14 @@ import (
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
-var (
-	dsValuePattern = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
-	isValuePattern = regexp.MustCompile(`^[+-]?[0-9]+$`)
-)
-
 type Element struct {
 	VR           string `json:"vr"`
 	Value        []any  `json:"Value,omitempty"`
 	InlineBinary string `json:"InlineBinary,omitempty"`
 	BulkDataURI  string `json:"BulkDataURI,omitempty"`
 }
+
+var ErrMaxMaterializedValueBytesExceeded = errors.New("dicomjson: maximum materialized value bytes exceeded")
 
 type PersonNameComponents struct {
 	Alphabetic  string `json:"Alphabetic,omitempty"`
@@ -42,19 +38,50 @@ type PersonNameComponents struct {
 }
 
 type Options struct {
-	Pretty          bool
-	OmitGroupLength bool
+	// BulkDataReferenceURIFunc receives source metadata before payload replay.
+	// Only recorded deferred values eligible for BulkDataURI are offered.
+	// Empty URI uses the byte callback/InlineBinary/Value fallback.
+	BulkDataReferenceURIFunc func(context.Context, object.BulkDataReference) (string, error)
+	// MaxMaterializedValueBytes bounds each deferred fallback before allocation.
+	// Zero preserves unlimited historical behavior; negative values are invalid.
+	MaxMaterializedValueBytes int64
+	root                      *object.Object
+	path                      []parser.BulkDataPathStep
+	inlineAlreadyBudgeted     bool
+	Pretty                    bool
+	OmitGroupLength           bool
 	// BulkDataURIFunc receives the complete encoded Value Field bytes, including
 	// fragment item headers and the delimiter for encapsulated Pixel Data.
+	// OW, OF, OD, OL and OV bytes are in the byte order InlineBinary would
+	// have: Little Endian unless SourceByteOrderInlineBinary is set.
 	BulkDataURIFunc func(tag core.Tag, vr core.VR, data []byte) string
 	// PixelDataBulkDataURIFunc can offload Pixel Data without first collecting
 	// its complete value field in memory. The callback may open the value stream
 	// zero or more times and must close every reader it opens. Returning an empty
 	// URI falls back to the existing byte-slice callback or InlineBinary path.
+	// Native OW Pixel Data streams in the byte order InlineBinary would have:
+	// Little Endian (by sample for Bits Allocated 32 or 64) unless
+	// SourceByteOrderInlineBinary is set; encapsulated Pixel Data is unchanged.
 	PixelDataBulkDataURIFunc func(tag core.Tag, vr core.VR, open func() (io.ReadCloser, error)) (string, error)
 	// ByteOrder is used when interpreting raw bytes for numeric VRs and AT.
 	// When nil, the object's ValueByteOrder is used.
 	ByteOrder binary.ByteOrder
+	// SourceByteOrderInlineBinary writes the InlineBinary of OW, OF, OD, OL
+	// and OV values in ByteOrder, the object's own value bytes, which Unmarshal
+	// with the same ByteOrder and SourceByteOrderInlineBinary restores. By
+	// default, when ByteOrder is Big Endian, these values are written in Little
+	// Endian, as PS3.18 section F.2.7 requires: bytes are reversed in units of
+	// the VR width, except OW Pixel Data with Bits Allocated 32 or 64 in the
+	// same data set or item, which is reversed at the sample width, by the
+	// rules of pixeldata.TranscodeDataSet. Unmarshal with a Big Endian
+	// ByteOrder reverses them back (#1982). BulkDataURIFunc and
+	// PixelDataBulkDataURIFunc receive the bytes in the same order. The
+	// object's own values are never modified: a value held by the object is
+	// reversed into a copy, after MaxInlineBinaryBytes has accepted it.
+	SourceByteOrderInlineBinary bool
+	// Deprecated: InlineBinary is Little Endian by default; this field has no
+	// effect. Use SourceByteOrderInlineBinary to keep the object's byte order.
+	LittleEndianInlineBinary bool
 	// Limits bounds traversal and output resources. Zero values preserve the
 	// historical unlimited behavior.
 	Limits Limits
@@ -64,8 +91,13 @@ type Options struct {
 type UnmarshalOptions struct {
 	TextOptions object.TextOptions
 	// ByteOrder is used when encoding numeric VRs and AT from JSON Value arrays.
-	// It defaults to binary.LittleEndian.
+	// It defaults to binary.LittleEndian. When it is Big Endian, the Little
+	// Endian InlineBinary of OW, OF, OD, OL and OV values is reversed into it,
+	// as Options describes for Marshal.
 	ByteOrder binary.ByteOrder
+	// SourceByteOrderInlineBinary keeps InlineBinary bytes as they are, for
+	// documents written with Options.SourceByteOrderInlineBinary.
+	SourceByteOrderInlineBinary bool
 	// TransferSyntax identifies the source value encoding. When it is
 	// encapsulated, Pixel Data InlineBinary is reconstructed as a
 	// core.FragmentSequence instead of a defined-length raw value.
@@ -198,7 +230,7 @@ func UnmarshalContext(ctx context.Context, data []byte, dict dictionary.DataDict
 		opts.ByteOrder = opts.TransferSyntax.ByteOrder
 	}
 	opts.ByteOrder = byteOrderOrDefault(opts.ByteOrder)
-	ds, err := unmarshalDataSetContext(data, "", dict, opts, budget, 0)
+	ds, err := unmarshalDataSetContext(data, dict, opts, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -294,6 +326,13 @@ func parseEncapsulatedPixelDataValue(data []byte, syntax transfer.Syntax, dict d
 
 func marshalElementsContext(obj *object.Object, opts Options, budget *conversionBudget, depth int) (map[string]Element, error) {
 	out := map[string]Element{}
+	if opts.MaxMaterializedValueBytes < 0 {
+		return nil, fmt.Errorf("%w: MaxMaterializedValueBytes must not be negative", ErrInvalidLimits)
+	}
+	if depth == 0 {
+		opts.root = obj
+		opts.path = nil
+	}
 	if obj == nil {
 		return out, nil
 	}
@@ -332,21 +371,108 @@ func marshalElementContext(obj *object.Object, elem core.Element, opts Options, 
 		return Element{}, err
 	}
 	entry := Element{VR: elem.VR().String()}
+	// freshRaw reports a raw value this call read into a buffer of its own,
+	// which may be reversed in place; other raw values belong to the object.
+	freshRaw := false
 
 	switch value := elem.Value.(type) {
 	case core.BulkDataValue:
 		entry.BulkDataURI = value.URI
 		return entry, nil
 	}
+	if elem.Value == nil && parser.BulkDataVR(elem.VR()) && (elem.EncodedLength().IsUndefined() || elem.EncodedLength() > 0) {
+		path := append(append([]parser.BulkDataPathStep(nil), opts.path...), parser.BulkDataPathStep{Tag: elem.Tag(), ItemIndex: -1})
+		ref, eligible, err := opts.root.DeferredBulkDataReference(path)
+		if err != nil {
+			return Element{}, fmt.Errorf("dicomjson: reference %s: %w", elem.Tag(), err)
+		}
+		if eligible {
+			if opts.BulkDataReferenceURIFunc != nil {
+				uri, err := opts.BulkDataReferenceURIFunc(budget.ctx, ref)
+				if err != nil {
+					return Element{}, fmt.Errorf("dicomjson: offload reference %s: %w", elem.Tag(), err)
+				}
+				if err := budget.checkContext(); err != nil {
+					return Element{}, err
+				}
+				if uri != "" {
+					entry.BulkDataURI = uri
+					return entry, nil
+				}
+			}
+			// Keep Pixel Data's existing streaming callback before fallback replay.
+			if elem.Tag() == core.TagPixelData && opts.PixelDataBulkDataURIFunc != nil {
+				width := inlineByteOrderWidth(obj, elem, opts)
+				open := func() (io.ReadCloser, error) {
+					return streamingValueReader(func(w io.Writer) error {
+						return writeLittleEndianUnits(w, width, func(w io.Writer) error {
+							// Normalize as the existing pixel callback does (legacy
+							// and CP-246) before the Little Endian conversion.
+							normalized := &referenceNormalizingWriter{writer: w, width: ref.NormalizationWidth}
+							_, err := opts.root.CopyBulkDataValueTo(budget.ctx, path, normalized)
+							if err == nil && len(normalized.pending) != 0 {
+								err = fmt.Errorf("dicomjson: incomplete numeric byte-order unit")
+							}
+							return err
+						})
+					}), nil
+				}
+				uri, err := opts.PixelDataBulkDataURIFunc(elem.Tag(), elem.VR(), open)
+				if err != nil {
+					return Element{}, fmt.Errorf("dicomjson: offload Pixel Data: %w", err)
+				}
+				if err := budget.checkContext(); err != nil {
+					return Element{}, err
+				}
+				if uri != "" {
+					entry.BulkDataURI = uri
+					return entry, nil
+				}
+				opts.PixelDataBulkDataURIFunc = nil
+			}
+			if opts.MaxMaterializedValueBytes > 0 && ref.Length > opts.MaxMaterializedValueBytes {
+				return Element{}, fmt.Errorf("%w: deferred value %s has %d bytes, limit %d", ErrMaxMaterializedValueBytesExceeded, elem.Tag(), ref.Length, opts.MaxMaterializedValueBytes)
+			}
+			if opts.BulkDataURIFunc == nil && !elem.VR().IsStringLike() && !marshalsRawAsJSONValue(elem.VR()) {
+				if err := budget.addInlineBinary(ref.Length); err != nil {
+					return Element{}, err
+				}
+				// The replayed value below must not be charged a second time.
+				opts.inlineAlreadyBudgeted = true
+			}
+			raw, err := materializeReference(opts.root, path, ref, budget)
+			if err != nil {
+				return Element{}, err
+			}
+			elem.Value = core.RawValue(raw)
+			// The buffer was just read from the source: no one else holds it.
+			freshRaw = true
+		}
+	}
+	if authored, ok := elem.Value.(core.StringValue); ok {
+		if err := valueencode.ValidateString(elem.VR(), authored); err != nil {
+			return Element{}, fmt.Errorf("dicomjson: marshal %s: %w", elem.Tag(), err)
+		}
+	}
 
+	if creator, ok := unknownPrivateCreator(obj, elem, opts.ByteOrder); ok {
+		entry.VR = core.VRLO.String()
+		entry.Value = []any{creator}
+		return entry, nil
+	}
+	_, isSequence := elem.Value.(core.SequenceValue)
 	switch {
 	case elem.VR() == core.VRPN:
-		values, err := obj.LookupStrings(elem.Tag())
+		values, err := obj.DecodeElementStrings(elem)
 		if err != nil {
 			return Element{}, err
 		}
 		entry.Value = personNamesToAny(values)
-	case elem.VR() == core.VRSQ:
+	case elem.VR() == core.VRSQ || elem.VR() == core.VRUN && isSequence:
+		// A private sequence read in Implicit VR (or explicitly as UN, per
+		// CP-246) stays UN in the object but was parsed as items; its items
+		// are exported, so its VR is SQ.
+		entry.VR = core.VRSQ.String()
 		items, ok := obj.GetSequence(elem.Tag())
 		if !ok {
 			return Element{}, fmt.Errorf("dicomjson: marshal %s VR SQ: expected SequenceValue, got %T", elem.Tag(), elem.Value)
@@ -355,18 +481,20 @@ func marshalElementContext(obj *object.Object, elem core.Element, opts Options, 
 			return Element{}, err
 		}
 		entry.Value = make([]any, 0, len(items))
-		for _, item := range items {
+		for index, item := range items {
 			if err := budget.checkContext(); err != nil {
 				return Element{}, err
 			}
-			nested, err := marshalElementsContext(item, opts, budget, depth+1)
+			nestedOpts := opts
+			nestedOpts.path = append(append([]parser.BulkDataPathStep(nil), opts.path...), parser.BulkDataPathStep{Tag: elem.Tag(), ItemIndex: index})
+			nested, err := marshalElementsContext(item, nestedOpts, budget, depth+1)
 			if err != nil {
 				return Element{}, err
 			}
 			entry.Value = append(entry.Value, nested)
 		}
 	case elem.VR().IsStringLike():
-		values, err := obj.LookupStrings(elem.Tag())
+		values, err := obj.DecodeElementStrings(elem)
 		if err != nil {
 			return Element{}, err
 		}
@@ -378,7 +506,7 @@ func marshalElementContext(obj *object.Object, elem core.Element, opts Options, 
 			}
 		}
 		if elem.Tag() == core.TagPixelData && opts.PixelDataBulkDataURIFunc != nil {
-			open, ok, err := pixelDataBulkReader(obj, elem, opts.ByteOrder)
+			open, ok, err := pixelDataBulkReader(obj, elem, opts.ByteOrder, inlineByteOrderWidth(obj, elem, opts))
 			if err != nil {
 				return Element{}, err
 			}
@@ -394,7 +522,7 @@ func marshalElementContext(obj *object.Object, elem core.Element, opts Options, 
 			}
 		}
 		raw, ok := elem.RawBytes()
-		inlineBudgeted := false
+		inlineBudgeted := opts.inlineAlreadyBudgeted
 		if !ok {
 			if opts.BulkDataURIFunc == nil && !marshalsRawAsJSONValue(elem.VR()) {
 				if size, known, err := inlineValueFieldLength(elem); err != nil {
@@ -414,6 +542,7 @@ func marshalElementContext(obj *object.Object, elem core.Element, opts Options, 
 			if err := budget.checkContext(); err != nil {
 				return Element{}, err
 			}
+			freshRaw = true
 		}
 		switch elem.VR() {
 		case core.VRAT:
@@ -434,6 +563,21 @@ func marshalElementContext(obj *object.Object, elem core.Element, opts Options, 
 		if len(raw) == 0 {
 			return entry, nil
 		}
+		if opts.BulkDataURIFunc == nil && !inlineBudgeted {
+			// Refuse an oversized value before converting it.
+			if err := budget.addInlineBinary(int64(len(raw))); err != nil {
+				return Element{}, err
+			}
+			inlineBudgeted = true
+		}
+		if width := inlineByteOrderWidth(obj, elem, opts); width > 1 {
+			if freshRaw {
+				valueencode.ReverseUnitsInPlace(raw, width)
+			} else {
+				// The object's own bytes are never modified.
+				raw = valueencode.ReverseFixedWidth(raw, width)
+			}
+		}
 		if opts.BulkDataURIFunc != nil {
 			if uri := opts.BulkDataURIFunc(elem.Tag(), elem.VR(), raw); uri != "" {
 				entry.BulkDataURI = uri
@@ -449,6 +593,84 @@ func marshalElementContext(obj *object.Object, elem core.Element, opts Options, 
 	}
 
 	return entry, nil
+}
+
+// inlineByteOrderWidth returns the unit by which the value of elem is
+// reversed into the Little Endian order of InlineBinary and of the bulk data
+// callbacks, or 1 when its bytes are kept: with SourceByteOrderInlineBinary,
+// for a Little Endian object, for encapsulated Pixel Data and for VRs other
+// than OW, OF, OD, OL and OV.
+func inlineByteOrderWidth(obj *object.Object, elem core.Element, opts Options) int {
+	if opts.SourceByteOrderInlineBinary || opts.ByteOrder != binary.BigEndian {
+		return 1
+	}
+	if _, encapsulated := elem.Value.(core.FragmentSequence); encapsulated {
+		return 1
+	}
+	return littleEndianInlineWidth(obj, elem, opts.ByteOrder)
+}
+
+// writeLittleEndianUnits streams what write produces to w with the bytes of
+// every width-sized unit reversed, in bounded chunks, and a trailing partial
+// unit unchanged. A width of 1 or less passes the bytes through.
+func writeLittleEndianUnits(w io.Writer, width int, write func(io.Writer) error) error {
+	if width <= 1 {
+		return write(w)
+	}
+	reversing := &referenceNormalizingWriter{writer: w, width: width}
+	if err := write(reversing); err != nil {
+		return err
+	}
+	if len(reversing.pending) == 0 {
+		return nil
+	}
+	written, err := w.Write(reversing.pending)
+	if err == nil && written != len(reversing.pending) {
+		err = io.ErrShortWrite
+	}
+	return err
+}
+
+// littleEndianInlineWidth returns the unit whose bytes are reversed to give
+// the Little Endian form of a Big Endian OW, OF, OD, OL or OV value of obj, or
+// 1 for any other VR. Bits Allocated is read in order, the byte order the
+// values are interpreted in, which may differ from the object's own.
+func littleEndianInlineWidth(obj *object.Object, elem core.Element, order binary.ByteOrder) int {
+	bits := int64(0)
+	if elem.VR() == core.VROW && elem.Tag() == core.TagPixelData {
+		// An item never inherits its parent's Bits Allocated.
+		if allocated, ok := obj.Get(valueencode.BitsAllocatedTag); ok {
+			bits = valueencode.BitsAllocated(allocated, order)
+		}
+	}
+	return valueencode.LittleEndianUnitWidth(elem.Tag(), elem.VR(), bits)
+}
+
+// unknownPrivateCreator resolves a Private Creator whose VR was not known
+// when it was read (Implicit VR without a private dictionary, or UN). PS3.5
+// 7.8.1 fixes a creator's VR as LO, so its value field is read as LO in the
+// Default Character Repertoire, as dictionary.PrivateCreatorID requires. A
+// value that is not a valid creator (control characters, NUL, non-ASCII,
+// backslash) stays UN and InlineBinary.
+func unknownPrivateCreator(obj *object.Object, elem core.Element, order binary.ByteOrder) (string, bool) {
+	if elem.VR() != core.VRUN || !dictionary.IsPrivateCreatorTag(elem.Tag()) {
+		return "", false
+	}
+	raw, ok := elem.RawBytes()
+	if !ok {
+		if elem.Value != nil || !elem.Header.HasLength() || elem.EncodedLength() > 64 {
+			return "", false
+		}
+		var err error
+		if raw, err = materializeRawValue(obj, elem, order); err != nil {
+			return "", false
+		}
+	}
+	creator, err := dictionary.PrivateCreatorID(string(raw))
+	if err != nil {
+		return "", false
+	}
+	return creator, true
 }
 
 func marshalsRawAsJSONValue(vr core.VR) bool {
@@ -489,8 +711,20 @@ func inlineValueFieldLength(elem core.Element) (int64, bool, error) {
 	return 0, false, nil
 }
 
-func pixelDataBulkReader(obj *object.Object, elem core.Element, order binary.ByteOrder) (func() (io.ReadCloser, error), bool, error) {
+// pixelDataBulkReader opens the Pixel Data value for PixelDataBulkDataURIFunc,
+// with native values reversed by width into Little Endian while they stream.
+func pixelDataBulkReader(obj *object.Object, elem core.Element, order binary.ByteOrder, width int) (func() (io.ReadCloser, error), bool, error) {
 	if raw, ok := elem.RawBytes(); ok {
+		if width > 1 {
+			return func() (io.ReadCloser, error) {
+				return streamingValueReader(func(w io.Writer) error {
+					return writeLittleEndianUnits(w, width, func(w io.Writer) error {
+						_, err := w.Write(raw)
+						return err
+					})
+				}), nil
+			}, true, nil
+		}
 		return func() (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(raw)), nil
 		}, true, nil
@@ -508,8 +742,10 @@ func pixelDataBulkReader(obj *object.Object, elem core.Element, order binary.Byt
 	case nil:
 		return func() (io.ReadCloser, error) {
 			return streamingValueReader(func(w io.Writer) error {
-				_, err := obj.CopyValueTo(elem.Tag(), w)
-				return err
+				return writeLittleEndianUnits(w, width, func(w io.Writer) error {
+					_, err := obj.CopyValueTo(elem.Tag(), w)
+					return err
+				})
 			}), nil
 		}, true, nil
 	default:
@@ -523,6 +759,86 @@ func streamingValueReader(write func(io.Writer) error) io.ReadCloser {
 		writer.CloseWithError(write(writer))
 	}()
 	return reader
+}
+
+// materializeReference allocates once only after all declared-size limits pass.
+func materializeReference(root *object.Object, path []parser.BulkDataPathStep, ref object.BulkDataReference, budget *conversionBudget) ([]byte, error) {
+	if err := budget.checkContext(); err != nil {
+		return nil, err
+	}
+	if ref.Length < 0 || uint64(ref.Length) > uint64(^uint(0)>>1) {
+		return nil, fmt.Errorf("dicomjson: deferred value is too large to materialize")
+	}
+	data := make([]byte, int(ref.Length))
+	writer := &referenceSliceWriter{data: data}
+	n, err := root.CopyBulkDataValueTo(budget.ctx, path, writer)
+	if err != nil {
+		return nil, fmt.Errorf("dicomjson: marshal deferred %s: %w", ref.Tag, err)
+	}
+	if n != ref.Length || writer.offset != len(data) {
+		return nil, fmt.Errorf("dicomjson: deferred source length mismatch")
+	}
+	if ref.NormalizationWidth > 1 {
+		width := ref.NormalizationWidth
+		if width > 1 && len(data)%width == 0 {
+			for start := 0; start < len(data); start += width {
+				for a, b := start, start+width-1; a < b; a, b = a+1, b-1 {
+					data[a], data[b] = data[b], data[a]
+				}
+			}
+		}
+	}
+	if err := budget.checkContext(); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+type referenceSliceWriter struct {
+	data   []byte
+	offset int
+}
+
+// A source replay can supply arbitrarily sized writes. Split them before
+// copying/reversing, and retain at most one partial numeric unit across writes.
+type referenceNormalizingWriter struct {
+	writer  io.Writer
+	width   int
+	pending []byte
+}
+
+func (w *referenceNormalizingWriter) Write(p []byte) (int, error) {
+	if w.width <= 1 {
+		return w.writer.Write(p)
+	}
+	total := len(p)
+	for len(p) > 0 {
+		n := min(len(p), 32<<10)
+		data := append(w.pending, p[:n]...)
+		whole := len(data) - len(data)%w.width
+		if whole > 0 {
+			encoded := valueencode.ReverseFixedWidth(data[:whole], w.width)
+			written, err := w.writer.Write(encoded)
+			if err != nil {
+				return 0, err
+			}
+			if written != len(encoded) {
+				return 0, io.ErrShortWrite
+			}
+		}
+		w.pending = append([]byte(nil), data[whole:]...)
+		p = p[n:]
+	}
+	return total, nil
+}
+
+func (w *referenceSliceWriter) Write(p []byte) (int, error) {
+	if len(p) > len(w.data)-w.offset {
+		return 0, io.ErrShortBuffer
+	}
+	n := copy(w.data[w.offset:], p)
+	w.offset += n
+	return n, nil
 }
 
 func materializeRawValue(obj *object.Object, elem core.Element, order binary.ByteOrder) ([]byte, error) {
@@ -613,15 +929,19 @@ func writeItemHeader(out io.Writer, order binary.ByteOrder, tag core.Tag, length
 	return err
 }
 
-func unmarshalDataSetContext(data []byte, path string, dict dictionary.DataDictionary, opts UnmarshalOptions, budget *conversionBudget, depth int) (core.DataSet, error) {
+func unmarshalDataSetContext(data []byte, dict dictionary.DataDictionary, opts UnmarshalOptions, budget *conversionBudget) (core.DataSet, error) {
 	if err := budget.checkContext(); err != nil {
 		return core.DataSet{}, err
 	}
-	var raw map[string]json.RawMessage
-	if err := decodeJSON(data, &raw); err != nil {
+	reader := json.NewDecoder(bytes.NewReader(data))
+	raw, err := decodeDatasetObject[json.RawMessage](reader, budget, "$")
+	if err != nil {
 		return core.DataSet{}, fmt.Errorf("dicomjson: decode dataset JSON: %w", err)
 	}
-	return unmarshalDataSetMapContext(raw, path, dict, opts, budget, depth)
+	if err := ensureJSONEOF(reader); err != nil {
+		return core.DataSet{}, fmt.Errorf("dicomjson: decode dataset JSON: %w", err)
+	}
+	return unmarshalDataSetMapContext(raw, "", dict, opts, budget, 0)
 }
 
 func unmarshalDataSetMapContext(raw map[string]json.RawMessage, path string, dict dictionary.DataDictionary, opts UnmarshalOptions, budget *conversionBudget, depth int) (core.DataSet, error) {
@@ -635,6 +955,7 @@ func unmarshalDataSetMapContext(raw map[string]json.RawMessage, path string, dic
 	sort.Strings(keys)
 
 	elements := make([]core.Element, 0, len(keys))
+	var inline []int
 	for _, tagStr := range keys {
 		if err := budget.checkContext(); err != nil {
 			return core.DataSet{}, err
@@ -644,16 +965,57 @@ func unmarshalDataSetMapContext(raw map[string]json.RawMessage, path string, dic
 		if err != nil {
 			return core.DataSet{}, err
 		}
-		elem, err := unmarshalElementContext(tag, raw[tagStr], tagPath, dict, opts, budget, depth)
+		elem, fromInline, err := unmarshalElementContext(tag, raw[tagStr], tagPath, dict, opts, budget, depth)
 		if err != nil {
 			return core.DataSet{}, err
 		}
+		if fromInline {
+			inline = append(inline, len(elements))
+		}
 		elements = append(elements, elem)
+	}
+	if len(inline) > 0 && !opts.SourceByteOrderInlineBinary && opts.ByteOrder == binary.BigEndian {
+		toInlineByteOrder(elements, inline, opts.ByteOrder)
 	}
 	return core.DataSet{Elements: elements}, nil
 }
 
-func unmarshalElementContext(tag core.Tag, raw json.RawMessage, path string, dict dictionary.DataDictionary, opts UnmarshalOptions, budget *conversionBudget, depth int) (core.Element, error) {
+// toInlineByteOrder reverses the Little Endian InlineBinary values of
+// elements at the given indexes into the Big Endian order of the data set,
+// by the units Marshal reversed them in. The Bits Allocated of OW Pixel Data
+// is the one of the same data set or item.
+func toInlineByteOrder(elements []core.Element, inline []int, order binary.ByteOrder) {
+	bits := int64(0)
+	for _, elem := range elements {
+		if elem.Tag() == valueencode.BitsAllocatedTag {
+			bits = valueencode.BitsAllocated(elem, order)
+			break
+		}
+	}
+	for _, index := range inline {
+		elem := &elements[index]
+		raw, ok := elem.RawBytes()
+		if !ok {
+			continue
+		}
+		if width := valueencode.LittleEndianUnitWidth(elem.Tag(), elem.VR(), bits); width > 1 {
+			elem.Value = core.RawValue(valueencode.ReverseFixedWidth(raw, width))
+		}
+	}
+}
+
+// unmarshalElementContext decodes one element; fromInline reports a raw
+// value decoded from InlineBinary.
+func unmarshalElementContext(tag core.Tag, raw json.RawMessage, path string, dict dictionary.DataDictionary, opts UnmarshalOptions, budget *conversionBudget, depth int) (core.Element, bool, error) {
+	fromInline := false
+	elem, err := unmarshalElementValueContext(tag, raw, path, dict, opts, budget, depth, &fromInline)
+	if err != nil {
+		return core.Element{}, false, err
+	}
+	return elem, fromInline, nil
+}
+
+func unmarshalElementValueContext(tag core.Tag, raw json.RawMessage, path string, dict dictionary.DataDictionary, opts UnmarshalOptions, budget *conversionBudget, depth int, fromInline *bool) (core.Element, error) {
 	if err := budget.checkContext(); err != nil {
 		return core.Element{}, err
 	}
@@ -732,6 +1094,10 @@ func unmarshalElementContext(tag core.Tag, raw json.RawMessage, path string, dic
 		if len(data) != decodedLength {
 			return core.Element{}, pathError(joinJSONPath(path, "InlineBinary"), "inline binary decoded length %d differs from expected %d", len(data), decodedLength)
 		}
+		if tag == core.TagPixelData && !opts.TransferSyntax.Encapsulated &&
+			(bytes.HasPrefix(data, []byte{0xfe, 0xff, 0x00, 0xe0}) || bytes.HasPrefix(data, []byte{0xff, 0xfe, 0xe0, 0x00})) {
+			return core.Element{}, fmt.Errorf("dicomjson: decode Pixel Data at %s: %w: encapsulated InlineBinary requires an encapsulated transfer syntax", joinJSONPath(path, "InlineBinary"), object.ErrPixelDataEncodingMismatch)
+		}
 		if tag == core.TagPixelData && opts.TransferSyntax.Encapsulated {
 			fragments, err := parseEncapsulatedPixelDataValue(data, opts.TransferSyntax, dict, budget)
 			if err != nil {
@@ -742,6 +1108,7 @@ func unmarshalElementContext(tag core.Tag, raw json.RawMessage, path string, dic
 			elem.Value = fragments
 		} else {
 			elem.Value = core.RawValue(core.CloneBytes(data))
+			*fromInline = true
 		}
 		return elem, nil
 	case !hasValue:
@@ -801,14 +1168,26 @@ func unmarshalStringValuesContext(raw json.RawMessage, path string, vr core.VR, 
 	if err != nil {
 		return nil, err
 	}
+	delimited := vr.UsesTextValueDelimiter()
+	if !delimited && len(items) > 1 {
+		// LT, ST, UT and UR are single-valued: a backslash inside the one value
+		// is literal, so several entries cannot be represented.
+		return nil, pathError(path, "VR %s holds one value, got %d", vr, len(items))
+	}
 	values := make([]string, len(items))
 	for i := range items {
 		if err := budget.checkContext(); err != nil {
 			return nil, err
 		}
-		value, err := decodeNullableStringValue(items[i], indexJSONPath(path, i), vr)
+		itemPath := indexJSONPath(path, i)
+		value, err := decodeNullableStringValue(items[i], itemPath, vr)
 		if err != nil {
 			return nil, err
+		}
+		if delimited && strings.Contains(value, "\\") {
+			// Each JSON entry is one value; a backslash would split it into
+			// several values when the data set is encoded.
+			return nil, pathError(itemPath, "VR %s value contains the backslash value delimiter", vr)
 		}
 		values[i] = value
 	}
@@ -841,25 +1220,7 @@ func unmarshalNumberStringsContext(raw json.RawMessage, path string, vr core.VR,
 }
 
 func validateNumberString(value string, vr core.VR) error {
-	maxLength := 16
-	pattern := dsValuePattern
-	if vr == core.VRIS {
-		maxLength = 12
-		pattern = isValuePattern
-	}
-	if len(value) > maxLength {
-		return fmt.Errorf("%s value is %d bytes, want at most %d", vr, len(value), maxLength)
-	}
-	trimmed := strings.Trim(value, " ")
-	if !pattern.MatchString(trimmed) {
-		return fmt.Errorf("value %q does not match %s syntax", value, vr)
-	}
-	if vr == core.VRIS {
-		if _, err := strconv.ParseInt(trimmed, 10, 32); err != nil {
-			return fmt.Errorf("IS value %q is outside signed 32-bit range: %w", value, err)
-		}
-	}
-	return nil
+	return valueencode.ValidateNumberString(vr, value)
 }
 
 func unmarshalPersonNamesContext(raw json.RawMessage, path string, vr core.VR, budget *conversionBudget) (core.StringValue, error) {
@@ -882,6 +1243,9 @@ func unmarshalPersonNamesContext(raw json.RawMessage, path string, vr core.VR, b
 		var pn PersonNameComponents
 		if err := decodeJSON(items[i], &pn); err != nil {
 			return nil, valueTypePathError(itemPath, vr, items[i], "decode person name: %v", err)
+		}
+		if strings.Contains(pn.Alphabetic+pn.Ideographic+pn.Phonetic, "\\") {
+			return nil, pathError(itemPath, "VR PN value contains the backslash value delimiter")
 		}
 		values[i] = joinPersonName(pn)
 	}

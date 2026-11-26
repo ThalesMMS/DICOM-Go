@@ -30,6 +30,10 @@ const (
 	SelectiveSkip
 	// SelectiveStop emits TokenStop without consuming any value bytes.
 	SelectiveStop
+	// SelectiveSkipSequence discards an unselected SQ or undefined-length UN.
+	// Defined bodies are opaque; undefined bodies retain framing checks. The
+	// returned element contains core.DiscardedValue and cannot be serialized.
+	SelectiveSkipSequence
 )
 
 // SelectiveReaderSelector decides how to handle one data element after its
@@ -40,6 +44,9 @@ type SelectiveReaderSelector func(context.Context, validation.Path, core.Element
 // SelectiveReaderOptions configures NewSelectiveReader.
 type SelectiveReaderOptions struct {
 	Select SelectiveReaderSelector
+	// MaxTokens bounds decoded headers/control and synthetic closing events,
+	// including framing visited inside a skipped sequence. Zero is unlimited.
+	MaxTokens int
 }
 
 type selectiveReaderFrame struct {
@@ -53,6 +60,7 @@ type selectiveReaderState struct {
 	selectf               SelectiveReaderSelector
 	frames                []selectiveReaderFrame
 	stopped               bool
+	maxTokens, tokens     int
 	skippingPixelSequence bool
 }
 
@@ -94,7 +102,7 @@ func NewSelectiveReader(ctx context.Context, source io.Reader, syntax transfer.S
 	if readerOpts.EncapsulatedSink != nil {
 		return nil, fmt.Errorf("%w: encoded frame streaming requires the ordinary Reader", ErrSelectiveReaderOptions)
 	}
-	if source == nil || opts.Select == nil {
+	if source == nil || opts.Select == nil || opts.MaxTokens < 0 {
 		return nil, ErrSelectiveReaderOptions
 	}
 	if ctx == nil {
@@ -107,7 +115,9 @@ func NewSelectiveReader(ctx context.Context, source io.Reader, syntax transfer.S
 	// Selection must happen before any value bytes are consumed. Retaining the
 	// original source also enables seek-only skips on seekable inputs.
 	reader.slurpEligible = false
-	reader.selective = &selectiveReaderState{ctx: ctx, selectf: opts.Select}
+	// The context-aware seek wrapper can refuse to rewind after cancellation.
+	reader.headerInputFile = false
+	reader.selective = &selectiveReaderState{ctx: ctx, selectf: opts.Select, maxTokens: opts.MaxTokens}
 	if readSeeker, ok := source.(io.ReadSeeker); ok {
 		reader.counter.r = &selectiveContextReadSeeker{ctx: ctx, source: readSeeker}
 	} else {
@@ -117,104 +127,121 @@ func NewSelectiveReader(ctx context.Context, source io.Reader, syntax transfer.S
 }
 
 func (r *Reader) nextSelective() (Token, error) {
-	state := r.selective
-	if state.stopped {
-		return Token{}, io.EOF
-	}
-	if err := state.ctx.Err(); err != nil {
-		return Token{}, err
-	}
-	if tok, ok, err := r.updateSeqDelimiters(); ok || err != nil {
-		if err == nil {
-			r.advanceSelectivePath(tok)
+	for {
+		state := r.selective
+		if state.stopped {
+			return Token{}, io.EOF
 		}
-		return tok, err
-	}
-	if err := r.checkTotalBytes(); err != nil {
-		return Token{}, err
-	}
-	headerOffset := r.Position()
-	header, err := r.readHeader()
-	if err != nil {
-		if errors.Is(err, io.EOF) && len(r.seqDelimiters) > 0 {
-			return Token{}, &ParseError{Op: OpReadTag, Offset: r.Position(), Err: io.ErrUnexpectedEOF}
+		if err := state.ctx.Err(); err != nil {
+			return Token{}, err
 		}
-		return Token{}, err
-	}
-	if err := state.ctx.Err(); err != nil {
-		return Token{}, err
-	}
-	if tok, ok, err := r.controlToken(header); ok || err != nil {
-		tok.Offset = headerOffset
-		if err == nil {
-			r.advanceSelectivePath(tok)
-		}
-		return tok, err
-	}
-	if len(r.seqDelimiters) > 0 && r.seqDelimiters[len(r.seqDelimiters)-1].typ == seqTokenTypePixelSequence {
-		return Token{}, &ParseError{
-			Op: OpReadValue, Offset: r.Position(), Tag: header.Tag, VR: header.VR, Length: header.Length,
-			Err: fmt.Errorf("dicom: unexpected tag %s inside encapsulated Pixel Data", header.Tag),
-		}
-	}
-
-	disposition, err := r.callSelectiveReaderSelector(header, headerOffset)
-	if err != nil {
-		return Token{}, err
-	}
-	switch disposition {
-	case SelectiveStop:
-		state.stopped = true
-		return Token{Kind: TokenStop, Header: header, Offset: headerOffset}, nil
-	case SelectiveSkip:
-		if r.privateRoot != nil && dictionary.IsPrivateCreatorTag(header.Tag) {
-			return Token{}, dictionary.ErrPrivateCreator
-		}
-		if isEncapsulatedPixelDataHeader(header) {
-			tok, err := r.readSelectiveSkippedPixelSequenceToken(header, headerOffset)
-			tok.Offset = headerOffset
+		if tok, ok, err := r.updateSeqDelimiters(); ok || err != nil {
+			if err == nil {
+				if state.maxTokens > 0 {
+					if err = r.reserveSelectiveEvent(tok.Header, r.Position()); err != nil {
+						return Token{}, err
+					}
+				}
+				r.advanceSelectivePath(tok)
+			}
 			return tok, err
 		}
-		if header.VR == core.VRSQ || header.Length.IsUndefined() {
+		if err := r.checkTotalBytes(); err != nil {
+			return Token{}, err
+		}
+		headerOffset := r.Position()
+		header, err := r.readHeader()
+		if err != nil {
+			if errors.Is(err, io.EOF) && len(r.seqDelimiters) > 0 {
+				return Token{}, &ParseError{Op: OpReadTag, Offset: r.Position(), Err: io.ErrUnexpectedEOF}
+			}
+			return Token{}, err
+		}
+		if err := state.ctx.Err(); err != nil {
+			return Token{}, err
+		}
+		if state.maxTokens > 0 {
+			if err := r.reserveSelectiveEvent(header, headerOffset); err != nil {
+				return Token{}, err
+			}
+		}
+		if tok, ok, err := r.controlToken(header); ok || err != nil {
+			if err != nil && errors.Is(err, errDelimiterSkipped) {
+				continue
+			}
+			tok.Offset = headerOffset
+			if err == nil {
+				r.advanceSelectivePath(tok)
+			}
+			return tok, err
+		}
+		if len(r.seqDelimiters) > 0 && r.seqDelimiters[len(r.seqDelimiters)-1].typ == seqTokenTypePixelSequence {
+			return Token{}, &ParseError{
+				Op: OpReadValue, Offset: r.Position(), Tag: header.Tag, VR: header.VR, Length: header.Length,
+				Err: fmt.Errorf("dicom: unexpected tag %s inside encapsulated Pixel Data", header.Tag),
+			}
+		}
+
+		disposition, err := r.callSelectiveReaderSelector(header, headerOffset)
+		if err != nil {
+			return Token{}, err
+		}
+		switch disposition {
+		case SelectiveStop:
+			state.stopped = true
+			return Token{Kind: TokenStop, Header: header, Offset: headerOffset}, nil
+		case SelectiveSkip:
+			if r.privateRoot != nil && dictionary.IsPrivateCreatorTag(header.Tag) {
+				return Token{}, dictionary.ErrPrivateCreator
+			}
+			if isEncapsulatedPixelDataHeader(header) {
+				tok, err := r.readSelectiveSkippedPixelSequenceToken(header, headerOffset)
+				tok.Offset = headerOffset
+				return tok, err
+			}
+			if header.VR == core.VRSQ || header.Length.IsUndefined() {
+				return Token{}, r.selectiveDispositionError(header, headerOffset)
+			}
+			tok, err := r.readSelectiveSkippedValueToken(header)
+			tok.Offset = headerOffset
+			return tok, err
+		case SelectiveSkipSequence:
+			return r.readSelectiveSkippedSequenceToken(header, headerOffset)
+		case SelectiveMaterialize:
+			// Continue through the ordinary materialization path below.
+		default:
 			return Token{}, r.selectiveDispositionError(header, headerOffset)
 		}
-		tok, err := r.readSelectiveSkippedValueToken(header)
+
+		if header.VR == core.VRSQ || (header.VR == core.VRUN && header.Length.IsUndefined()) {
+			if _, err := r.pushContainer(seqTokenTypeSequence, header, header.VR == core.VRUN); err != nil {
+				return Token{}, err
+			}
+			r.delimiterCheckPending = true
+			tok := Token{Kind: TokenStartSequence, Header: header, Offset: headerOffset}
+			r.advanceSelectivePath(tok)
+			return tok, nil
+		}
+		if (header.VR == core.VROB || header.VR == core.VROW) && header.Tag == core.TagPixelData && header.Length.IsUndefined() {
+			if err := r.pushPixelSequence(header); err != nil {
+				return Token{}, err
+			}
+			r.pixelSequenceOffsetTablePending = true
+			r.delimiterCheckPending = true
+			tok := Token{Kind: TokenStartPixelSequence, Header: header, Offset: headerOffset}
+			r.advanceSelectivePath(tok)
+			return tok, nil
+		}
+		if header.Length.IsUndefined() {
+			return Token{}, &ParseError{
+				Op: OpReadValue, Offset: r.Position(), Tag: header.Tag, VR: header.VR, Length: header.Length,
+				Err: ErrUnsupportedUndefinedLength,
+			}
+		}
+		tok, err := r.readDefinedValueToken(header)
 		tok.Offset = headerOffset
 		return tok, err
-	case SelectiveMaterialize:
-		// Continue through the ordinary materialization path below.
-	default:
-		return Token{}, r.selectiveDispositionError(header, headerOffset)
 	}
-
-	if header.VR == core.VRSQ || (header.VR == core.VRUN && header.Length.IsUndefined()) {
-		if err := r.pushSequenceTokenWithImplicitVRLittleEndian(seqTokenTypeSequence, header.Length, header.VR == core.VRUN); err != nil {
-			return Token{}, err
-		}
-		r.delimiterCheckPending = true
-		tok := Token{Kind: TokenStartSequence, Header: header, Offset: headerOffset}
-		r.advanceSelectivePath(tok)
-		return tok, nil
-	}
-	if (header.VR == core.VROB || header.VR == core.VROW) && header.Tag == core.TagPixelData && header.Length.IsUndefined() {
-		if err := r.pushSequenceToken(seqTokenTypePixelSequence, header.Length); err != nil {
-			return Token{}, err
-		}
-		r.pixelSequenceOffsetTablePending = true
-		r.delimiterCheckPending = true
-		tok := Token{Kind: TokenStartPixelSequence, Header: header, Offset: headerOffset}
-		r.advanceSelectivePath(tok)
-		return tok, nil
-	}
-	if header.Length.IsUndefined() {
-		return Token{}, &ParseError{
-			Op: OpReadValue, Offset: r.Position(), Tag: header.Tag, VR: header.VR, Length: header.Length,
-			Err: ErrUnsupportedUndefinedLength,
-		}
-	}
-	tok, err := r.readDefinedValueToken(header)
-	tok.Offset = headerOffset
-	return tok, err
 }
 
 func isEncapsulatedPixelDataHeader(header core.ElementHeader) bool {
@@ -224,7 +251,7 @@ func isEncapsulatedPixelDataHeader(header core.ElementHeader) bool {
 }
 
 func (r *Reader) readSelectiveSkippedPixelSequenceToken(header core.ElementHeader, headerOffset int64) (tok Token, err error) {
-	if err := r.pushSequenceToken(seqTokenTypePixelSequence, header.Length); err != nil {
+	if err := r.pushPixelSequence(header); err != nil {
 		return Token{}, err
 	}
 	r.pixelSequenceOffsetTablePending = true

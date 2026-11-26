@@ -774,7 +774,10 @@ func encodeIndexFixture(t interface {
 	Fatal(...any)
 }, syntax transfer.Syntax, elements []core.Element) []byte {
 	t.Helper()
-	file := &object.File{Dataset: object.FromElements(elements, std.Dictionary), TransferSyntax: syntax}
+	dataset := object.FromElements(elements, std.Dictionary)
+	// Callers author the raw numeric values in the syntax's byte order.
+	dataset.SetValueByteOrder(syntax.ByteOrder)
+	file := &object.File{Dataset: dataset, TransferSyntax: syntax}
 	var encoded bytes.Buffer
 	if err := object.WriteFile(&encoded, file); err != nil {
 		t.Fatal(err)

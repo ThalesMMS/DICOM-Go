@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dcmtime"
@@ -34,6 +35,9 @@ type validationSession struct {
 	visited     int
 	maxDepth    int
 	maxElements int
+	reportOnly  bool
+	writeBudget *writeBudget
+	limitErr    error
 }
 
 func ValidateDataSet(ctx context.Context, dataset core.DataSet, opts Options) (Result, error) {
@@ -107,15 +111,23 @@ func (s *validationSession) processElements(dataset core.DataSet, prefix Path, d
 	characterSet, characterSetValid := resolveDataSetCharacterSet(dataset, inheritedCharacterSet, inheritedCharacterSetValid)
 	seen := make(map[core.Tag]struct{}, len(dataset.Elements))
 	occurrences := make(map[core.Tag]int, len(dataset.Elements))
-	result := make([]core.Element, 0, len(dataset.Elements))
+	var result []core.Element
+	if !s.reportOnly {
+		result = make([]core.Element, 0, len(dataset.Elements))
+	}
 	var previous core.Tag
 	previousSet := false
 	for _, original := range dataset.Elements {
 		if err := s.ctx.Err(); err != nil {
 			return nil, err
 		}
+		if s.builder.limitErr != nil {
+			return nil, s.builder.limitErr
+		}
 		if s.builder.shouldStop(s.opts) {
-			result = append(result, original)
+			if !s.reportOnly {
+				result = append(result, original)
+			}
 			continue
 		}
 		s.visited++
@@ -139,7 +151,9 @@ func (s *validationSession) processElements(dataset core.DataSet, prefix Path, d
 		previousSet = true
 		if s.builder.shouldStop(s.opts) {
 			finishOccurrence()
-			result = append(result, element)
+			if !s.reportOnly {
+				result = append(result, element)
+			}
 			continue
 		}
 
@@ -159,7 +173,9 @@ func (s *validationSession) processElements(dataset core.DataSet, prefix Path, d
 			}
 			if s.builder.shouldStop(s.opts) {
 				finishOccurrence()
-				result = append(result, element)
+				if !s.reportOnly {
+					result = append(result, element)
+				}
 				continue
 			}
 		}
@@ -167,19 +183,26 @@ func (s *validationSession) processElements(dataset core.DataSet, prefix Path, d
 		s.validateElement(dataset, path, element, characterSet, characterSetValid)
 		if s.builder.shouldStop(s.opts) {
 			finishOccurrence()
-			result = append(result, element)
+			if !s.reportOnly {
+				result = append(result, element)
+			}
 			continue
 		}
 		if sequence, ok := element.Value.(core.SequenceValue); ok {
-			items := make([]core.DataSet, len(sequence.Items))
+			items := sequence.Items
+			if !s.reportOnly {
+				items = make([]core.DataSet, len(sequence.Items))
+			}
 			for itemIndex, item := range sequence.Items {
 				itemPrefix := appendPath(prefix, PathStep{Tag: element.Tag(), ItemIndex: itemIndex})
 				children, childErr := s.processElements(item, itemPrefix, depth+1, characterSet, characterSetValid)
 				if childErr != nil {
 					return nil, childErr
 				}
-				items[itemIndex] = item
-				items[itemIndex].Elements = children
+				if !s.reportOnly {
+					items[itemIndex] = item
+					items[itemIndex].Elements = children
+				}
 				if !s.builder.shouldStop(s.opts) {
 					if err := s.runDataSetHook(HookItemComplete, itemPrefix, &items[itemIndex]); err != nil {
 						return nil, err
@@ -216,12 +239,22 @@ func (s *validationSession) processElements(dataset core.DataSet, prefix Path, d
 			}
 		}
 		finishOccurrence()
-		result = append(result, element)
+		if !s.reportOnly {
+			result = append(result, element)
+		}
 	}
 	if !s.builder.shouldStop(s.opts) {
 		validated := dataset
-		validated.Elements = result
+		if !s.reportOnly {
+			validated.Elements = result
+		}
 		s.runDataSetRules(validated, prefix)
+	}
+	if s.limitErr != nil {
+		return nil, s.limitErr
+	}
+	if s.reportOnly {
+		return dataset.Elements, nil
 	}
 	return result, nil
 }
@@ -240,6 +273,18 @@ func (s *validationSession) runDataSetRules(dataset core.DataSet, path Path) {
 		if s.builder.shouldStop(s.opts) {
 			return
 		}
+		if s.writeBudget != nil {
+			if err := s.writeBudget.admitCopy(dataset, 1); err != nil {
+				s.limitErr = err
+				s.builder.limitErr = err
+				return
+			}
+			if err := s.writeBudget.admitEvent(HookEvent{Path: path}); err != nil {
+				s.limitErr = err
+				s.builder.limitErr = err
+				return
+			}
+		}
 		findings, panicked := invokeDataSetRule(s.ctx, registration.Rule, DataSetContext{
 			DataSet: cloneDataSet(dataset), Path: path.Clone(), Dictionary: s.opts.Dictionary,
 			ByteOrder: byteOrder(s.opts.ByteOrder), TransferSyntax: s.opts.TransferSyntax,
@@ -249,6 +294,25 @@ func (s *validationSession) runDataSetRules(dataset core.DataSet, path Path) {
 			continue
 		}
 		for _, finding := range findings {
+			if s.writeBudget != nil {
+				if len(path) > int(^uint(0)>>1)-len(finding.Path) {
+					s.limitErr = ErrValidationLimit
+					s.builder.limitErr = s.limitErr
+					return
+				}
+				bytes, err := writeProduct(len(path)+len(finding.Path), unsafe.Sizeof(PathStep{}))
+				if err == nil {
+					bytes, err = writeScale(bytes, 3)
+				}
+				if err == nil {
+					err = s.writeBudget.reserve(0, bytes+128, 0)
+				}
+				if err != nil {
+					s.limitErr = err
+					s.builder.limitErr = err
+					return
+				}
+			}
 			if s.builder.shouldStop(s.opts) {
 				return
 			}
@@ -301,6 +365,16 @@ func (s *validationSession) validateDictionary(dataset core.DataSet, path Path, 
 	if !ok {
 		return
 	}
+	if s.writeBudget != nil {
+		if len(entry.VM) > int(^uint(0)>>1)/64 {
+			s.limitErr = ErrValidationLimit
+			return
+		}
+		if err := s.writeBudget.reserve(0, int64(len(entry.VM))*64+int64(64*16), 0); err != nil {
+			s.limitErr = err
+			return
+		}
+	}
 	expected := []core.VR(nil)
 	if s.opts.ResolveVR != nil {
 		expected = s.opts.ResolveVR(ElementContext{
@@ -314,6 +388,17 @@ func (s *validationSession) validateDictionary(dataset core.DataSet, path Path, 
 	}
 	if len(expected) == 0 && entry.VR != "" {
 		expected = []core.VR{entry.VR}
+	}
+	if s.writeBudget != nil {
+		bytes, err := writeProduct(len(expected), unsafe.Sizeof(core.VR("")))
+		if err == nil {
+			err = s.writeBudget.reserve(0, bytes, 0)
+		}
+		if err != nil {
+			s.limitErr = err
+			s.builder.limitErr = err
+			return
+		}
 	}
 	if element.VR() != core.VRUN && len(expected) > 0 && !containsVR(expected, element.VR()) {
 		s.add(Finding{
@@ -362,6 +447,10 @@ func (s *validationSession) validateValue(path Path, element core.Element, chara
 		if vr.IsStringLike() {
 			if len(raw) > 0 && len(raw)%2 == 0 && raw[len(raw)-1] != vr.PaddingByte() && (raw[len(raw)-1] == 0 || raw[len(raw)-1] == ' ') {
 				s.add(Finding{Path: path, Tag: element.Tag(), VR: vr, Code: CodeValuePadding, Message: "value uses the wrong trailing padding byte"})
+			} else if vr == core.VRUI && invalidUIDPadding(raw) {
+				s.add(Finding{Path: path, Tag: element.Tag(), VR: vr, Code: CodeValuePadding, Message: "UID value carries padding beyond one trailing NUL"})
+			} else if vr.PaddingByte() == ' ' && textNULPadding(vr, raw) {
+				s.add(Finding{Path: path, Tag: element.Tag(), VR: vr, Code: CodeValuePadding, Message: "text value carries trailing NUL padding"})
 			}
 			if vr.UsesSpecificCharacterSet() {
 				decoded, err := decodeEncodedText(characterSet, characterSetValid, vr, core.TrimTextValueBytes(vr, raw))
@@ -373,6 +462,9 @@ func (s *validationSession) validateValue(path Path, element core.Element, chara
 					s.validateTextComponent(path, element, component, false, characterSet, characterSetValid)
 				}
 				return
+			}
+			if rawTextTooLong(vr, raw) {
+				s.add(Finding{Path: path, Tag: element.Tag(), VR: vr, Code: CodeValueLength, Message: "text component exceeds the VR length limit"})
 			}
 			for _, component := range splitTextMultiplicity(vr, raw) {
 				s.validateTextComponent(path, element, component, true, characterSet, characterSetValid)
@@ -416,7 +508,9 @@ func decodeEncodedText(characterSet dicomenc.SpecificCharacterSet, characterSetV
 func (s *validationSession) validateTextComponent(path Path, element core.Element, component string, encodedRaw bool, characterSet dicomenc.SpecificCharacterSet, characterSetValid bool) {
 	vr := element.VR()
 	max := maxTextLength(vr)
-	if max > 0 && textLength(vr, component) > max {
+	// Encoded raw components were measured with their spaces by
+	// rawTextTooLong.
+	if max > 0 && !encodedRaw && textLength(vr, component) > max {
 		s.add(Finding{Path: path, Tag: element.Tag(), VR: vr, Code: CodeValueLength, Message: "text component exceeds the VR length limit"})
 	}
 	if !validTextRepertoire(vr, component, encodedRaw) || (encodedRaw && vr.UsesSpecificCharacterSet() && !validEncodedText(characterSet, characterSetValid, vr, []byte(component))) {
@@ -537,8 +631,7 @@ func (s *validationSession) validatePixelData(path Path, element core.Element) {
 
 func (s *validationSession) runElementHook(point HookPoint, path Path, element core.Element) (HookResult, error) {
 	if s.opts.Hooks == nil {
-		clone := cloneElement(element)
-		return HookResult{Element: &clone}, nil
+		return HookResult{}, nil
 	}
 	result, err := s.opts.Hooks.run(s.ctx, HookEvent{Point: point, Path: path.Clone(), Element: &element}, s.opts.StopFirst)
 	s.addHookResult(result)
@@ -587,20 +680,18 @@ func ValidateFile(ctx context.Context, meta, dataset core.DataSet, syntax transf
 	if err != nil && !errors.Is(err, ErrValidationFailed) {
 		return metaResult.Report, err
 	}
-	if opts.StopFirst && len(metaResult.Report.Findings) > 0 {
+	if opts.StopFirst && metaResult.Report.hasFindings() {
 		if opts.Mode == ModeStrict && metaResult.Report.HasErrors() {
 			return metaResult.Report, &ValidationError{Report: metaResult.Report.Clone()}
 		}
 		return metaResult.Report, nil
 	}
 	dataResult, dataErr := ValidateDataSet(ctx, dataset, opts)
-	report := mergeReports(opts, metaResult.Report, dataResult.Report)
 	if dataErr != nil && !errors.Is(dataErr, ErrValidationFailed) {
-		return report, dataErr
+		return mergeReports(opts, metaResult.Report, dataResult.Report), dataErr
 	}
-	for _, finding := range ValidateFileMetaConsistency(metaResult.DataSet, dataResult.DataSet, syntax).Findings {
-		report = appendFindingBounded(report, opts, finding)
-	}
+	report := mergeReports(opts, metaResult.Report, dataResult.Report,
+		ValidateFileMetaConsistency(metaResult.DataSet, dataResult.DataSet, syntax))
 	if opts.Mode == ModeStrict && report.HasErrors() {
 		return report, &ValidationError{Report: report.Clone()}
 	}
@@ -654,40 +745,27 @@ func mergeReports(opts Options, reports ...Report) Report {
 	return merged
 }
 
-func appendFindingBounded(report Report, opts Options, finding Finding) Report {
-	if opts.StopFirst && len(report.Findings) > 0 {
-		return report
-	}
-	max := opts.MaxFindings
-	if max == 0 {
-		max = DefaultMaxFindings
-	}
-	if finding.Severity == "" {
-		finding.Severity = SeverityError
-	}
-	if opts.Mode == ModeWarn && finding.Severity == SeverityError {
-		finding.Severity = SeverityWarning
-	}
-	if len(report.Findings)+len(report.Changes) >= max {
-		report.Truncated = true
-		report.Dropped++
-		return report
-	}
-	finding.Path = finding.Path.Clone()
-	finding.ExpectedVR = append([]core.VR(nil), finding.ExpectedVR...)
-	report.Findings = append(report.Findings, finding)
-	return report
-}
-
 func validateTextFormat(vr core.VR, value string) (valid bool, rangeError bool) {
 	if value == "" {
 		return true, false
 	}
 	switch vr {
+	case core.VRAE:
+		// PS3.5 6.2: an AE value consisting solely of spaces shall not be used.
+		return strings.Trim(value, " ") != "", false
 	case core.VRAS:
 		return asPattern.MatchString(value), false
 	case core.VRCS:
 		return csPattern.MatchString(value), false
+	case core.VRUR:
+		return validURIReference(value), false
+	}
+	// DA, TM and DT have fixed formats; the space of their repertoire (PS3.5
+	// 6.2) is trailing padding only, never a leading character.
+	if (vr == core.VRDA || vr == core.VRTM || vr == core.VRDT) && strings.HasPrefix(value, " ") {
+		return false, false
+	}
+	switch vr {
 	case core.VRDA:
 		_, err := dcmtime.ParseDA(value)
 		return err == nil, err != nil && len(value) == 8
@@ -725,6 +803,84 @@ func validateTextFormat(vr core.VR, value string) (valid bool, rangeError bool) 
 		}
 	}
 	return true, false
+}
+
+// rawTextTooLong reports an encoded value of a fixed-length VR (AE, AS, CS,
+// DA, DS, DT, IS, TM, UI) with a component longer than the VR allows. The
+// limit of PS3.5 Table 6.2-1 counts the leading and trailing spaces a value
+// may carry, so only the single trailing byte that pads the whole value to
+// even length is left out.
+func rawTextTooLong(vr core.VR, raw []byte) bool {
+	max := maxTextLength(vr)
+	if max <= 0 || vr.UsesSpecificCharacterSet() {
+		return false
+	}
+	if n := len(raw); n > 0 && n%2 == 0 && (raw[n-1] == vr.PaddingByte() || raw[n-1] == ' ' || raw[n-1] == 0) {
+		raw = raw[:n-1]
+	}
+	if !vr.UsesTextValueDelimiter() {
+		return len(raw) > max
+	}
+	for _, component := range bytes.Split(raw, []byte{'\\'}) {
+		if len(component) > max {
+			return true
+		}
+	}
+	return false
+}
+
+// invalidUIDPadding reports a UI value padded with more than the single
+// trailing NUL PS3.5 9.1 allows to reach even length, or with spaces.
+func invalidUIDPadding(raw []byte) bool {
+	raw = bytes.TrimSuffix(raw, []byte{0})
+	return len(raw) > 0 && (raw[len(raw)-1] == 0 || raw[len(raw)-1] == ' ')
+}
+
+// textNULPadding reports whether an encoded value of a space-padded text VR,
+// or one of its values, ends in a run of spaces and NULs that holds a NUL.
+// Readers strip that run as padding (core.TrimTextValueBytes); PS3.5 6.2
+// pads these VRs with spaces only. No supported character set uses NUL inside
+// a multibyte character, so splitting the encoded bytes at '\' cannot turn
+// part of a character into a NUL-padded value.
+func textNULPadding(vr core.VR, raw []byte) bool {
+	values := [][]byte{raw}
+	if vr.UsesTextValueDelimiter() {
+		values = bytes.Split(raw, []byte{'\\'})
+	}
+	for _, value := range values {
+		trimmed := bytes.TrimRight(value, " \x00")
+		if bytes.IndexByte(value[len(trimmed):], 0) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// validURIReference reports whether value is a UR value: an RFC 3986 URI or
+// relative reference using only the characters of RFC 3986 section 2
+// (unreserved, reserved and percent-encoded octets), followed by optional
+// trailing space padding. PS3.5 6.2 permits no leading or embedded spaces.
+func validURIReference(value string) bool {
+	value = strings.TrimRight(value, " ")
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9':
+		case strings.IndexByte("-._~:/?#[]@!$&'()*+,;=", c) >= 0:
+		case c == '%':
+			if i+2 >= len(value) || !isHexDigit(value[i+1]) || !isHexDigit(value[i+2]) {
+				return false
+			}
+			i += 2
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isHexDigit(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
 }
 
 func validTextRepertoire(vr core.VR, value string, encodedRaw bool) bool {
@@ -1027,27 +1183,27 @@ func cloneElement(element core.Element) core.Element {
 	clone := element
 	switch value := element.Value.(type) {
 	case core.RawValue:
-		clone.Value = core.RawValue(core.CloneBytes(value.Bytes()))
+		clone.Value = core.RawValue(cloneRawExact(value.Bytes()))
 	case core.StringValue:
-		clone.Value = core.StringValue(append([]string(nil), value...))
+		clone.Value = core.StringValue(cloneExact(value))
 	case core.Uint16Value:
-		clone.Value = core.Uint16Value(append([]uint16(nil), value...))
+		clone.Value = core.Uint16Value(cloneExact(value))
 	case core.Int16Value:
-		clone.Value = core.Int16Value(append([]int16(nil), value...))
+		clone.Value = core.Int16Value(cloneExact(value))
 	case core.Uint32Value:
-		clone.Value = core.Uint32Value(append([]uint32(nil), value...))
+		clone.Value = core.Uint32Value(cloneExact(value))
 	case core.Int32Value:
-		clone.Value = core.Int32Value(append([]int32(nil), value...))
+		clone.Value = core.Int32Value(cloneExact(value))
 	case core.Uint64Value:
-		clone.Value = core.Uint64Value(append([]uint64(nil), value...))
+		clone.Value = core.Uint64Value(cloneExact(value))
 	case core.Int64Value:
-		clone.Value = core.Int64Value(append([]int64(nil), value...))
+		clone.Value = core.Int64Value(cloneExact(value))
 	case core.Float32Value:
-		clone.Value = core.Float32Value(append([]float32(nil), value...))
+		clone.Value = core.Float32Value(cloneExact(value))
 	case core.Float64Value:
-		clone.Value = core.Float64Value(append([]float64(nil), value...))
+		clone.Value = core.Float64Value(cloneExact(value))
 	case core.TagValue:
-		clone.Value = core.TagValue(append([]core.Tag(nil), value...))
+		clone.Value = core.TagValue(cloneExact(value))
 	case core.SequenceValue:
 		items := make([]core.DataSet, len(value.Items))
 		for i, item := range value.Items {
@@ -1057,9 +1213,28 @@ func cloneElement(element core.Element) core.Element {
 	case core.FragmentSequence:
 		fragments := make([][]byte, len(value.Fragments))
 		for i, fragment := range value.Fragments {
-			fragments[i] = core.CloneBytes(fragment)
+			fragments[i] = cloneRawExact(fragment)
 		}
-		clone.Value = core.FragmentSequence{OffsetTable: core.CloneBytes(value.OffsetTable), Fragments: fragments}
+		clone.Value = core.FragmentSequence{OffsetTable: cloneRawExact(value.OffsetTable), Fragments: fragments}
 	}
 	return clone
+}
+
+// cloneExact preserves the former append-to-nil shape while owning an exact backing.
+func cloneExact[T any](value []T) []T {
+	if len(value) == 0 {
+		return nil
+	}
+	result := make([]T, len(value))
+	copy(result, value)
+	return result
+}
+
+func cloneRawExact(value []byte) []byte {
+	if value == nil {
+		return nil
+	}
+	result := make([]byte, len(value))
+	copy(result, value)
+	return result
 }

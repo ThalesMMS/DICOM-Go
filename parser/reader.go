@@ -1,7 +1,9 @@
 package parser
 
 import (
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -48,14 +50,46 @@ const (
 
 type seqToken struct {
 	typ                    seqTokenType
+	tag                    core.Tag // sequences: the element tag, for diagnostics
+	items                  int      // sequences: items started so far
 	length                 core.Length
 	baseOffset             uint64
 	implicitVRLittleEndian bool
-	privateScope           *dictionary.PrivateReservations
+	// explicitBigEndian marks an item opened by a byte-swapped Item tag
+	// (RecoverDelimiterAnomalies): its content is Explicit VR Big Endian.
+	explicitBigEndian bool
+	privateScope      *dictionary.PrivateReservations
+	// definedIndex is the stack index of the innermost frame at or below this
+	// one with a defined length, and itemIndex that of the innermost item
+	// frame; -1 when there is none. They are fixed when the frame is pushed
+	// so the enclosing container and item are found in O(1) per element
+	// header however deep the nesting is.
+	definedIndex int
+	itemIndex    int
 }
 
+const (
+	// DefaultMaxSequenceDepth is the combined sequence and item nesting depth
+	// a zero ReaderOptions.MaxSequenceDepth allows: 64 nested sequences with
+	// their items, the level DCMTK also enforces by default. Real data sets
+	// stay far below it; deeper input is refused with ErrMaxDepthExceeded.
+	DefaultMaxSequenceDepth = 128
+	// UnlimitedSequenceDepth disables the nesting limit when set as
+	// ReaderOptions.MaxSequenceDepth. Parsing stays linear in the depth, but
+	// callers reading untrusted input should keep a finite limit.
+	UnlimitedSequenceDepth = -1
+)
+
 type ReaderOptions struct {
-	Dictionary dictionary.DataDictionary
+	// AllowIncompletePixelData retains terminal root integer Pixel Data at
+	// physical EOF for inspection under finite limits. ReadDataSet and ReadAll
+	// return retained data plus IncompletePixelDataError; low-level token users
+	// must inspect Reader.IncompletePixelData. Selective/validated/sink/deferred
+	// pixel modes and other grammar repairs are incompatible. Zero is strict.
+	AllowIncompletePixelData bool
+	// BulkDataDescriptor selects additional source-backed primitive values.
+	BulkDataDescriptor *BulkDataDescriptor
+	Dictionary         dictionary.DataDictionary
 	// Creator resolution is enabled only when Dictionary includes a PrivateDataDictionary.
 	// Limits default to 4096 reservations per dataset/item and 128 diagnostics.
 	MaxPrivateCreators           int
@@ -68,13 +102,24 @@ type ReaderOptions struct {
 	// InlineValueBytesThreshold controls when the reader will materialize a
 	// defined-length primitive value into memory.
 	//
-	// If InlineValueBytesThreshold is > 0 and a primitive element has a defined
-	// length strictly greater than this threshold, the reader will not allocate a
-	// value buffer and will instead return an element token with a nil Value.
+	// If InlineValueBytesThreshold is > 0 and an OB, OW, OF, OD or UN element
+	// has a defined length strictly greater than this threshold, the reader
+	// will not allocate a value buffer and will instead return an element token
+	// with a nil Value. Values of other VRs (OL, OV, SV, UV, UC or text, for
+	// instance) are always materialized, subject to MaxElementBytes.
 	//
 	// A zero value preserves the historical behavior of always materializing
 	// defined-length primitive values (subject to MaxElementBytes).
 	InlineValueBytesThreshold int64
+	// DeferNestedValues extends InlineValueBytesThreshold into sequence items.
+	// A nested OB, OW, OF, OD or UN value longer than the threshold is skipped
+	// like a top-level one, and its ValueLocation carries the enclosing item
+	// offset; nested values of other VRs stay materialized. Sequences
+	// themselves are always materialized.
+	DeferNestedValues bool
+	// DeferValueTags, when non-empty, limits InlineValueBytesThreshold to
+	// these tags: values of other tags are materialized whatever their length.
+	DeferValueTags []core.Tag
 	// MaxPixelDataBytes limits native Pixel Data values and the cumulative bytes
 	// of an encapsulated Pixel Data value, including its Basic Offset Table. When
 	// set, this limit replaces MaxElementBytes for Pixel Data value tags. A zero
@@ -91,8 +136,11 @@ type ReaderOptions struct {
 	BaseOffset    int64
 	// MaxSequenceDepth limits the combined nesting depth of sequence and item
 	// frames tracked in seqDelimiters. The count includes both sequence and
-	// item starts. Use it to guard against maliciously deep nesting. A zero
-	// value means unlimited.
+	// item starts (encapsulated Pixel Data counts as a sequence), so a limit
+	// of 2n admits n nested sequences. Deeper input fails with
+	// ErrMaxDepthExceeded. A zero value uses DefaultMaxSequenceDepth; a larger
+	// value raises the limit and UnlimitedSequenceDepth (any negative value)
+	// removes it. Parsing cost is linear in the depth either way.
 	MaxSequenceDepth int
 	// MaxElements limits the number of primitive elements returned by the
 	// reader. Use it to bound work on very large or malformed data sets. A zero
@@ -108,10 +156,21 @@ type ReaderOptions struct {
 	// bytes without materializing them. The returned element keeps its header and
 	// has a nil Value.
 	SkipPixelData bool
-	// DeferPixelData consumes integer, Float, and Double Float Pixel Data payload
-	// bytes without materializing them, while preserving enough stream position
-	// information for object-level APIs to replay the original value from a
-	// seekable source.
+	// SeekUnselectedSequences extends ReadDataSetProjected: an unselected root
+	// sequence with a defined length is passed by one seek instead of parsing
+	// its items, when the source is seekable with a known end and the sequence
+	// ends inside the source and the MaxTotalBytes ceiling. Its header remains
+	// with core.DiscardedValue. Undefined-length sequences, non-seekable and
+	// deflated sources and lengths overrunning the source are parsed as without
+	// the option, so their failures are unchanged. The content of a sequence
+	// passed by seek is not parsed: its malformed items, element limits and
+	// recovery diagnostics are not observed. Other reads ignore the option.
+	SeekUnselectedSequences bool
+	// DeferPixelData consumes top-level integer, Float, and Double Float Pixel
+	// Data payload bytes without materializing them, while preserving enough
+	// stream position information for object-level APIs to replay the original
+	// value from a seekable source. Native Pixel Data nested in sequence items
+	// (for example Icon Image Sequence) is materialized.
 	DeferPixelData bool
 	// DeferWaveformData consumes Waveform Data (5400,1010) payload bytes without
 	// materializing them, including occurrences nested inside Waveform Sequence
@@ -126,7 +185,130 @@ type ReaderOptions struct {
 	// EncapsulatedSink consumes top-level encapsulated Items for bounded assembly.
 	// Without DeferPixelData the result contains core.DiscardedValue.
 	EncapsulatedSink EncapsulatedSink
+	// RecoverContainerOverruns repairs sequences and items whose declared
+	// length runs past their enclosing defined-length sequence or item: they
+	// are read only to the container end, an item header with no body left is
+	// not recorded, and an undefined-length child still open at the container
+	// end is closed there. Each repair is listed by BoundaryRecoveries. Values
+	// crossing a container end are refused in every mode. Without the option
+	// every such case is an ErrContainerOverrun error.
+	RecoverContainerOverruns bool
+	// MaxBoundaryRecoveries caps BoundaryRecoveries; 0 means
+	// DefaultMaxBoundaryRecoveries.
+	MaxBoundaryRecoveries int
+	// RecoverImplicitVRElements reads an element of an Explicit VR Little
+	// Endian data set whose two VR bytes are not a known VR as an Implicit VR
+	// element: the VR comes from the dictionary and the four bytes after the
+	// tag are its length. The switch is taken only when that length fits the
+	// enclosing defined-length container and the source; never for Pixel
+	// Data. Each switch is reported as a BoundaryImplicitVRElement recovery.
+	// Recovery applies to that element only; subsequent headers remain Explicit
+	// VR. A malformed mixed stream can return to Explicit VR immediately.
+	RecoverImplicitVRElements bool
+	// SequenceRecovery selects independent, reported repairs of elements
+	// that should be sequences and of misplaced delimiters (see
+	// SequenceRecoveryOptions). The zero value is strict.
+	SequenceRecovery SequenceRecoveryOptions
+	// VRRecovery selects independent, reported repairs of wrong VRs and
+	// length fields (see VRRecoveryOptions). The zero value is strict.
+	VRRecovery VRRecoveryOptions
+	// RecoverDelimiterAnomalies repairs sequence framing written by broken
+	// encoders, reporting each repair as a BoundaryRecovery:
+	//   - swapped-item-tag: (FEFF,00E0), (FEFF,0DE0) and (FEFF,DDE0) inside
+	//     a sequence or item are read as the Item, Item Delimitation and
+	//     Sequence Delimitation tags written in the wrong byte order;
+	//   - delimiter-length-ignored: an Item or Sequence Delimitation Item
+	//     with a nonzero length is accepted with no value consumed;
+	//   - orphan-delimiter-skipped: a delimiter with no open undefined-length
+	//     item or sequence to close (for example after a defined-length
+	//     sequence) is skipped;
+	//   - item-group-length-skipped: a (FFFE,0000) group length element in a
+	//     sequence is skipped.
+	// At most MaxDelimiterRecoveries repairs are made in one read.
+	RecoverDelimiterAnomalies bool
+	// MaxDelimiterRecoveries caps RecoverDelimiterAnomalies repairs; 0 means
+	// DefaultMaxDelimiterRecoveries. Exceeding it fails with
+	// ErrMaxDelimiterRecoveries.
+	MaxDelimiterRecoveries int
+	// MaxImplicitVRElements caps the number of such switches in one read;
+	// 0 means DefaultMaxImplicitVRElements. Exceeding it fails with
+	// ErrMaxImplicitVRElements.
+	MaxImplicitVRElements int
 }
+
+// SequenceRecoveryOptions are opt-in repairs in the style of DCMTK's
+// dcmConvertUndefinedLengthOBOWtoSQ, dcmConvertVOILUTSequenceOWtoSQ and
+// dcmReplaceWrongDelimitationItem, and of GDCM's NOSHADOWSEQ reading. Each
+// applied repair is a BoundaryRecovery. Implicit VR private elements with an
+// undefined length are always read as sequences (UN, PS3.5 6.2.2), which
+// covers DCMTK's dcmReadImplPrivAttribMaxLengthAsSQ.
+type SequenceRecoveryOptions struct {
+	// UndefinedLengthOBOWAsSQ reads an OB or OW element other than Pixel Data
+	// whose length is undefined as a sequence when its content starts with
+	// an Item tag.
+	UndefinedLengthOBOWAsSQ bool
+	// VOILUTSequenceOWAsSQ reads VOI LUT Sequence (0028,3010) written with a
+	// VR other than SQ as a sequence.
+	VOILUTSequenceOWAsSQ bool
+	// ReplaceWrongDelimiter reads a Sequence Delimitation Item found where an
+	// undefined-length item must end as an Item Delimitation Item, and an Item
+	// Delimitation Item found where an undefined-length sequence must end as
+	// a Sequence Delimitation Item (DCMTK dcmReplaceWrongDelimitationItem).
+	ReplaceWrongDelimiter bool
+	// PrivateSequenceAsBytes checks a defined-length private SQ before
+	// reading it; if its content does not parse, the element is kept as a UN
+	// value with its original bytes instead of failing the read.
+	PrivateSequenceAsBytes bool
+}
+
+// maxPrivateSequenceCheckBytes bounds the value PrivateSequenceAsBytes buffers.
+const maxPrivateSequenceCheckBytes = 16 << 20
+
+// VRRecoveryOptions are opt-in repairs of VR and length headers, in the style
+// of DCMTK's dcmPreferVRFromDataDictionary and
+// dcmPreferLengthFieldSizeFromDataDictionary and of GDCM's broken-writer
+// workarounds. Each applied repair is a BoundaryRecovery carrying the
+// declared and the used VR.
+type VRRecoveryOptions struct {
+	// MapOXToOW reads the non-standard VR "OX" on Pixel Data as OW.
+	MapOXToOW bool
+	// PreferDictionaryVR replaces a valid explicit VR of a public element
+	// with its single dictionary VR when they differ. The length field size
+	// still follows the VR written in the file unless
+	// PreferDictionaryLengthFieldSize is also set.
+	PreferDictionaryVR bool
+	// PreferDictionaryLengthFieldSize reads the length field with the size
+	// of the dictionary VR (2 or 4 bytes) when the written VR differs.
+	PreferDictionaryLengthFieldSize bool
+	// CorrectPrivateULLength reads a private UL element declared with value
+	// length 6 as length 4 (Siemens Leonardo writers; the same workaround as
+	// GDCM).
+	CorrectPrivateULLength bool
+	// ShortLengthUN reads a UN element whose reserved bytes are not zero as
+	// a 16-bit length element, as GDCM 1.x wrote UN.
+	ShortLengthUN bool
+	// CorrectGETextLength reads a public text element in Implicit VR Little
+	// Endian declared with length 13 as length 10 only when bounded lookahead
+	// identifies an ordered, known public header at +10 and no known public
+	// tag at +13. The ten value bytes must be ASCII text; Manufacturer and
+	// Institution Name are excluded. The next defined, even-length value
+	// must fit the source/container/byte budget. Without a known physical
+	// source size it must also be fully present in the lookahead, even when
+	// a container or byte budget is set. Up to four consecutive text values
+	// with the same defect can be recognized within 82 bytes of lookahead;
+	// every link must be unambiguous and reach a normal even-length header.
+	// Every correction is reported as BoundaryGETextLength. Other odd
+	// lengths remain unchanged.
+	CorrectGETextLength bool
+}
+
+// DefaultMaxDelimiterRecoveries caps RecoverDelimiterAnomalies when
+// MaxDelimiterRecoveries is 0.
+const DefaultMaxDelimiterRecoveries = 4096
+
+// DefaultMaxImplicitVRElements caps RecoverImplicitVRElements when
+// MaxImplicitVRElements is 0.
+const DefaultMaxImplicitVRElements = 4096
 
 // ValueLocation identifies raw encoded value bytes in the reader's seekable
 // source. Offsets use the same absolute coordinate space as Reader.Position.
@@ -142,37 +324,58 @@ type ValueLocation struct {
 }
 
 type Reader struct {
-	privateRoot                               *dictionary.PrivateReservations
-	privateInitError                          error
-	maxPrivateCreators, maxPrivateDiagnostics int
-	rejectInvalidPrivateCreators              bool
-	privateDiagnostics                        []PrivateDiagnostic
-	privateDiagnosticsTruncated               bool
-	counter                                   *countingReader
-	syntax                                    transfer.Syntax
-	dec                                       dicomenc.BasicDecoder
-	dict                                      dictionary.DataDictionary
-	maxElementBytes                           int64
-	maxPixelDataBytes                         int64
-	maxVectorGridBytes                        int64
-	inlineThreshold                           int64
-	maxTotalBytes                             int64
-	maxSequenceDepth                          int
-	maxElements                               int
-	maxFragments                              int
-	elementCount                              int
-	fragmentCount                             int
-	pixelDataBytes                            int64
-	strictReservedBytes                       bool
-	oddLengthPolicy                           OddLengthPolicy
-	skipPixelData                             bool
-	deferPixelData                            bool
-	deferWaveformData                         bool
-	frameSink                                 FrameSink
-	frameSinkClosed                           bool
-	encapsulatedSink                          EncapsulatedSink
-	encapsulatedSinkClosed                    bool
-	encodedPixelActive, encodedPixelSeen      bool
+	allowIncompletePixelData                    bool
+	incompletePixelData                         *IncompletePixelData
+	incompleteTerminal                          bool
+	privateRoot                                 *dictionary.PrivateReservations
+	privateInitError                            error
+	maxPrivateCreators, maxPrivateDiagnostics   int
+	rejectInvalidPrivateCreators                bool
+	privateDiagnostics                          []PrivateDiagnostic
+	privateDiagnosticsTruncated                 bool
+	recoverContainerOverruns                    bool
+	recoverImplicitVRElements                   bool
+	recoverDelimiterAnomalies                   bool
+	swappedItemPending                          bool
+	vrRecovery                                  VRRecoveryOptions
+	seqRecovery                                 SequenceRecoveryOptions
+	maxDelimiterRecoveries, delimiterRecoveries int
+	maxImplicitVRElements, implicitVRElements   int
+	maxBoundaryRecoveries                       int
+	boundaryRecoveries                          []BoundaryRecovery
+	boundaryRecoveriesTruncated                 bool
+	counter                                     *countingReader
+	syntax                                      transfer.Syntax
+	dec                                         dicomenc.BasicDecoder
+	dict                                        dictionary.DataDictionary
+	maxElementBytes                             int64
+	maxPixelDataBytes                           int64
+	maxVectorGridBytes                          int64
+	inlineThreshold                             int64
+	bulkDataRules                               []BulkDataRule
+	valueReferences                             map[ValueLocation]ValueReference
+	maxTotalBytes                               int64
+	deflateLimitHasTail                         bool
+	maxSequenceDepth                            int
+	maxElements                                 int
+	maxFragments                                int
+	elementCount                                int
+	fragmentCount                               int
+	pixelDataBytes                              int64
+	strictReservedBytes                         bool
+	oddLengthPolicy                             OddLengthPolicy
+	projection                                  *dataSetProjection
+	skipPixelData                               bool
+	seekUnselectedSequences                     bool
+	deferPixelData                              bool
+	deferWaveformData                           bool
+	deferNestedValues                           bool
+	deferValueTags                              map[core.Tag]struct{}
+	frameSink                                   FrameSink
+	frameSinkClosed                             bool
+	encapsulatedSink                            EncapsulatedSink
+	encapsulatedSinkClosed                      bool
+	encodedPixelActive, encodedPixelSeen        bool
 	// stopBeforePixelData is used only by the transfer syntax probe. It returns
 	// the Pixel Data header as a terminal token without consuming or inspecting
 	// payload bytes. Ordinary Reader APIs leave it false.
@@ -217,10 +420,21 @@ type Reader struct {
 	validationSuppressed int
 	lastReservedOffset   int64
 	lastReservedNonZero  bool
+
+	// headerInput only batches bytes belonging to the current header. It is
+	// enabled for sources whose short-read/error behavior is known; generic
+	// readers retain the original field-by-field I/O contract.
+	headerInput        headerInput
+	headerInputEnabled bool
+	headerInputFile    bool
 }
 
 func NewReader(r io.Reader, syntax transfer.Syntax, opts ReaderOptions) *Reader {
-	cr := &countingReader{r: r, pos: opts.BaseOffset, maxTotalBytes: opts.MaxTotalBytes}
+	opts, incompleteInitError := incompleteReadOptions(opts, syntax)
+	if opts.MaxSequenceDepth == 0 {
+		opts.MaxSequenceDepth = DefaultMaxSequenceDepth
+	}
+	cr := &countingReader{r: r, pos: opts.BaseOffset, maxTotalBytes: opts.MaxTotalBytes, recordErrors: opts.AllowIncompletePixelData}
 	rootOffset := int64(0)
 	sourceEnd := int64(0)
 	if seeker, ok := r.(io.Seeker); ok {
@@ -236,16 +450,21 @@ func NewReader(r io.Reader, syntax transfer.Syntax, opts ReaderOptions) *Reader 
 		!opts.SkipPixelData &&
 		!opts.DeferPixelData &&
 		!opts.DeferWaveformData &&
-		opts.InlineValueBytesThreshold == 0 &&
+		opts.InlineValueBytesThreshold == 0 && opts.BulkDataDescriptor == nil &&
 		opts.MaxElementBytes == 0 &&
 		opts.MaxPixelDataBytes == 0 &&
 		opts.MaxDeformableVectorGridBytes == 0 &&
 		opts.MaxTotalBytes == 0
+	_, regularFile := r.(*os.File)
+	nativeByteOrder := syntax.ByteOrder == nil || syntax.ByteOrder == binary.LittleEndian || syntax.ByteOrder == binary.BigEndian
 	reader := &Reader{
+		allowIncompletePixelData:     opts.AllowIncompletePixelData,
 		maxPrivateCreators:           opts.MaxPrivateCreators,
 		maxPrivateDiagnostics:        opts.MaxPrivateDiagnostics,
 		rejectInvalidPrivateCreators: opts.RejectInvalidPrivateCreators,
 		counter:                      cr,
+		headerInputEnabled:           headerInputSource(r, sourceEnd),
+		headerInputFile:              regularFile && nativeByteOrder && !opts.AllowIncompletePixelData && !opts.RecoverContainerOverruns && !syntax.Deflated,
 		syntax:                       syntax,
 		dec:                          dicomenc.NewBasicDecoder(syntax.ByteOrder),
 		dict:                         opts.Dictionary,
@@ -260,10 +479,21 @@ func NewReader(r io.Reader, syntax transfer.Syntax, opts ReaderOptions) *Reader 
 		strictReservedBytes:          opts.StrictReservedBytes,
 		oddLengthPolicy:              opts.OddLengthPolicy,
 		skipPixelData:                opts.SkipPixelData,
+		seekUnselectedSequences:      opts.SeekUnselectedSequences,
 		deferPixelData:               opts.DeferPixelData,
 		deferWaveformData:            opts.DeferWaveformData,
+		deferNestedValues:            opts.DeferNestedValues,
+		deferValueTags:               tagSet(opts.DeferValueTags),
 		frameSink:                    opts.FrameSink,
 		encapsulatedSink:             opts.EncapsulatedSink,
+		recoverContainerOverruns:     opts.RecoverContainerOverruns,
+		maxBoundaryRecoveries:        opts.MaxBoundaryRecoveries,
+		recoverImplicitVRElements:    opts.RecoverImplicitVRElements,
+		recoverDelimiterAnomalies:    opts.RecoverDelimiterAnomalies,
+		vrRecovery:                   opts.VRRecovery,
+		seqRecovery:                  opts.SequenceRecovery,
+		maxDelimiterRecoveries:       opts.MaxDelimiterRecoveries,
+		maxImplicitVRElements:        opts.MaxImplicitVRElements,
 		seqDelimiters:                make([]seqToken, 0),
 		baseOffset:                   opts.BaseOffset,
 		rootOffset:                   rootOffset,
@@ -271,6 +501,20 @@ func NewReader(r io.Reader, syntax transfer.Syntax, opts ReaderOptions) *Reader 
 		slurpEligible:                slurpEligible,
 	}
 	reader.resetPrivateScopes()
+	if opts.BulkDataDescriptor != nil {
+		_, legacy := transfer.LegacySyntax(syntax.UID)
+		var err error
+		reader.bulkDataRules, err = compileBulkDataDescriptor(opts.BulkDataDescriptor)
+		if err == nil {
+			if _, ok := r.(io.ReadSeeker); !ok || syntax.Deflated || legacy || opts.FrameSink != nil || opts.EncapsulatedSink != nil {
+				err = fmt.Errorf("%w: source must be seekable, standard non-deflated encoding and without frame sinks", ErrInvalidBulkDataDescriptor)
+			}
+		}
+		if err != nil {
+			reader.privateInitError = err
+		}
+	}
+	reader.privateInitError = errors.Join(reader.privateInitError, incompleteInitError)
 	return reader
 }
 
@@ -349,12 +593,61 @@ func sourcePhysicalSize(r io.Reader) (int64, bool) {
 }
 
 type countingReader struct {
+	recordErrors  bool
+	lastError     error
+	firstFailure  error
 	r             io.Reader
 	pos           int64
 	maxTotalBytes int64
+	// fence, when positive, is an absolute offset reads must not cross; it
+	// bounds element headers to their enclosing defined-length container.
+	fence    int64
+	fenceHit bool
+	// pending holds bytes returned by unread; they are served before r.
+	pending []byte
+}
+
+// unread returns b to the front of the stream (header repairs that read
+// ahead). Callers keep it to a few bytes.
+func (r *countingReader) unread(b []byte) {
+	r.pending = append(append([]byte(nil), b...), r.pending...)
+	r.pos -= int64(len(b))
 }
 
 func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.read(p)
+	if r.recordErrors && err != nil {
+		r.lastError = err
+		if r.firstFailure == nil && !terminalEOFCause(err) {
+			r.firstFailure = err
+		}
+	}
+	return n, err
+}
+func (r *countingReader) read(p []byte) (int, error) {
+	if len(r.pending) > 0 && len(p) > 0 {
+		n := copy(p, r.pending)
+		if r.fence > 0 && r.pos+int64(n) > r.fence {
+			n = int(max(r.fence-r.pos, 0))
+			if n == 0 {
+				r.fenceHit = true
+				return 0, io.ErrUnexpectedEOF
+			}
+		}
+		r.pending = r.pending[n:]
+		r.pos += int64(n)
+		return n, nil
+	}
+	if r.fence > 0 {
+		remaining := r.fence - r.pos
+		if remaining <= 0 {
+			r.fenceHit = true
+			return 0, io.ErrUnexpectedEOF
+		}
+		if int64(len(p)) > remaining {
+			p = p[:remaining]
+		}
+	}
 	if r.maxTotalBytes > 0 {
 		remaining := r.maxTotalBytes - r.pos
 		if remaining <= 0 {
@@ -376,6 +669,38 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	n, err := r.r.Read(p)
 	r.pos += int64(n)
 	return n, err
+}
+
+// seekPast advances past n value bytes by seeking the source instead of
+// reading them, so a skipped or deferred value (Pixel Data above all) costs
+// one seek rather than reading its whole payload. It applies only when that
+// is indistinguishable from reading: the source is seekable with a known end
+// (sourceEnd > 0, a regular file or a sized in-memory reader) and the n bytes
+// end before the source end, the enclosing container fence and the
+// MaxTotalBytes ceiling. Otherwise it reports false and the caller reads the
+// bytes, which keeps the exact truncation and limit errors.
+func (r *countingReader) seekPast(n, sourceEnd int64) bool {
+	if n <= 0 || sourceEnd <= 0 {
+		return false
+	}
+	end := r.pos + n
+	if end > sourceEnd || (r.fence > 0 && end > r.fence) || (r.maxTotalBytes > 0 && end >= r.maxTotalBytes) {
+		return false
+	}
+	seeker, ok := r.r.(io.Seeker)
+	if !ok {
+		return false
+	}
+	// Bytes returned by unread are already past the source position.
+	buffered := min(int64(len(r.pending)), n)
+	if remaining := n - buffered; remaining > 0 {
+		if _, err := seeker.Seek(remaining, io.SeekCurrent); err != nil {
+			return false
+		}
+	}
+	r.pending = r.pending[buffered:]
+	r.pos = end
+	return true
 }
 
 func (r *countingReader) Position() int64 {

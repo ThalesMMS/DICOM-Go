@@ -6,6 +6,7 @@ import (
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/object"
+	"github.com/ThalesMMS/dicom-go/pixeldata"
 )
 
 var (
@@ -234,6 +235,11 @@ type VisualFeaturesCleaner func(context.Context, *object.Object) error
 
 // BasicProfileOptions configures a bounded, auditable Basic Profile plan.
 type BasicProfileOptions struct {
+	// BeforeSource and BeforePublish optionally authorize BasicProfilePath
+	// effects. An error aborts the path operation before that effect.
+	BeforeSource  func(context.Context) error
+	BeforePublish func(context.Context) error
+
 	SelectedOptions            []ProfileOption
 	RequirementResolver        AttributeRequirementResolver
 	RequireResolvedConditional bool
@@ -243,7 +249,26 @@ type BasicProfileOptions struct {
 	SafePrivateRegistry        *SafePrivateRegistry
 	PixelCleaner               ProfilePixelCleaner
 	VisualFeaturesCleaner      VisualFeaturesCleaner
-	Limits                     ProfileLimits
+	// PixelRedaction applies operator-specified rectangles to the Pixel
+	// Data (see PixelRedaction). It cannot be combined with
+	// ProfileOptionCleanPixelData and PixelCleaner; an attested redaction
+	// covering every frame records the Clean Pixel Data Option itself.
+	PixelRedaction *PixelRedaction
+	// Pseudonymizer replaces the zeroed Patient's Name and Patient ID with
+	// template pseudonyms (see PseudonymTemplate). It is shared across a
+	// transaction so one patient keeps one pseudonym.
+	Pseudonymizer *Pseudonymizer
+	// EncryptedAttributes makes the de-identification reversible: the
+	// original values of every attribute the profile removes or replaces
+	// (Pixel Data excepted) are encrypted for the recipient certificates
+	// into a new Encrypted Attributes Sequence (0400,0500) item (PS3.15
+	// E.1.1). Reidentify recovers them with a recipient private key.
+	EncryptedAttributes *EncryptedAttributesOptions
+	Limits              ProfileLimits
+
+	// preRedacted carries a file-level redaction that already replaced the
+	// Pixel Data (and possibly the transfer syntax) into the plan.
+	preRedacted *pixeldata.RedactionReport
 }
 
 // DefaultBasicProfileOptions returns the Basic Profile with no retention or
@@ -282,6 +307,9 @@ type ProfileSummary struct {
 	PrivateRetained int `json:"private_retained"`
 	DatesShifted    int `json:"dates_shifted"`
 	PixelMasks      int `json:"pixel_masks"`
+	// PatientPseudonyms counts objects whose Patient's Name and Patient ID
+	// were replaced by a template pseudonym. Values are never reported.
+	PatientPseudonyms int `json:"patient_pseudonyms,omitempty"`
 }
 
 // ProfileReport is the PHI-redacted result shared by dry-run and Apply.
@@ -300,10 +328,27 @@ type ProfileReport struct {
 	Actions                   []ProfileActionRecord `json:"actions,omitempty"`
 	ResidualRisks             []ResidualRisk        `json:"residual_risks,omitempty"`
 	Summary                   ProfileSummary        `json:"summary"`
+	// CSA counts the Siemens CSA headers retained through the safe-private
+	// registry, which are scrubbed (see CSAScrubReport).
+	CSA CSAScrubReport `json:"csa"`
+	// PixelRedaction reports BasicProfileOptions.PixelRedaction; nil when
+	// none was requested.
+	PixelRedaction *PixelRedactionReport `json:"pixel_redaction,omitempty"`
+	// EncryptedAttributes reports the Encrypted Attributes item that
+	// BasicProfileOptions.EncryptedAttributes added; nil otherwise.
+	EncryptedAttributes *EncryptedAttributesReport `json:"encrypted_attributes,omitempty"`
 }
 
 func (report ProfileReport) clone() ProfileReport {
 	out := report
+	if report.PixelRedaction != nil {
+		redaction := *report.PixelRedaction
+		out.PixelRedaction = &redaction
+	}
+	if report.EncryptedAttributes != nil {
+		encrypted := *report.EncryptedAttributes
+		out.EncryptedAttributes = &encrypted
+	}
 	out.Options = append([]ProfileOption(nil), report.Options...)
 	out.Actions = append([]ProfileActionRecord(nil), report.Actions...)
 	for index := range out.Actions {

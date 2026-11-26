@@ -1,6 +1,7 @@
 package dicomdir
 
 import (
+	"context"
 	"math"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -15,6 +16,8 @@ type encodedReference struct {
 	sopInstanceUID             string
 	transferSyntaxUID          string
 	relatedGeneralSOPClassUIDs []string
+	offset                     uint32
+	mrdrOffset                 uint32
 }
 
 type directoryTraversalFrame struct {
@@ -27,6 +30,23 @@ type directoryTraversalFrame struct {
 // validateDirectoryDataSet validates the offset graph without using the
 // compatibility flat-order fallback exposed by References.
 func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error) {
+	return validateDirectoryDataSetLegacy(dataset, false)
+}
+
+func validateDirectoryDataSetLegacy(dataset *object.Object, legacy bool, admission ...Limits) ([]encodedReference, error) {
+	return validateDirectoryDataSetLegacyContext(context.Background(), dataset, legacy, admission...)
+}
+
+func validateDirectoryDataSetLegacyContext(ctx context.Context, dataset *object.Object, legacy bool, admission ...Limits) ([]encodedReference, error) {
+	limits := Limits{}
+	if len(admission) > 0 {
+		limits = admission[0]
+	}
+	if err := normalizeFileSetLimits(&limits); err != nil {
+		return nil, err
+	}
+	keyBytes := int64(0)
+	entityKeys := directoryEntityKeyValidator{}
 	if dataset == nil {
 		return nil, ErrInvalidRecord
 	}
@@ -57,6 +77,9 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 	}
 	byOffset := make(map[uint32]*object.Object, len(items))
 	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if item == nil {
 			return nil, ErrInvalidRecord
 		}
@@ -65,6 +88,10 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 			return nil, ErrInvalidRecord
 		}
 		byOffset[uint32(offset)] = item
+	}
+	mrdrs, err := inspectLegacyMRDR(byOffset, legacy)
+	if err != nil {
+		return nil, err
 	}
 
 	rootLast := uint32(0)
@@ -89,7 +116,13 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 	references := make([]encodedReference, 0)
 	fileIDs := make(map[string]bool)
 	sopInstances := make(map[string]bool)
+	fileTargets := make(map[string]uint32)
+	fileSelections := map[string]FileRecord{}
+	mrdrCounts := make(map[uint32]uint32)
 	for len(pending) != 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		frame := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
 		if frame.offset == 0 {
@@ -117,7 +150,7 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 		next, nextOK := uint32Value(item, tagOffsetNextDirectoryRecord)
 		lower, lowerOK := uint32Value(item, tagOffsetLowerLevelRecord)
 		inUse, inUseOK := uint16Value(item, tagRecordInUseFlag)
-		if !nextOK || !lowerOK || !inUseOK || inUse == 0 {
+		if !nextOK || !lowerOK || !inUseOK || inUse == 0 && (!legacy || lower != 0 || !standardFileRecordType(recordType)) {
 			return nil, ErrInvalidRecord
 		}
 		if next != 0 {
@@ -126,6 +159,9 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 				selection: frame.selection,
 			})
 		}
+		if inUse == 0 {
+			continue
+		} // safe retired leaf omission; next was already scheduled.
 		childFrame := directoryTraversalFrame{offset: lower, parentType: recordType, selection: frame.selection}
 		switch recordType {
 		case RecordTypePatient:
@@ -156,20 +192,31 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 			childFrame.selection.SeriesInstanceUID = seriesUID
 			childFrame.selection.SeriesNumber, _ = item.GetString(tagSeriesNumberFS)
 		default:
-			if recordType == RecordTypeImage {
-				instanceNumber, instanceOK := requiredStringWithVR(item, tagInstanceNumberFS, core.VRIS)
-				if !instanceOK {
-					return nil, ErrInvalidRecord
-				}
-				childFrame.selection.InstanceNumber = instanceNumber
-			}
+			childFrame.selection.InstanceNumber, _ = item.GetString(tagInstanceNumberFS)
 		}
 		if lower != 0 {
 			pending = append(pending, childFrame)
 		} else if recordType != RecordTypePatient && recordType != RecordTypeStudy && recordType != RecordTypeSeries {
 			// Leaf records have no lower entity by definition.
 		}
+		if recordType == RecordTypePatient || recordType == RecordTypeStudy || recordType == RecordTypeSeries {
+			if err := entityKeys.admit(recordType, childFrame.selection); err != nil {
+				return nil, err
+			}
+		}
 		fileIDValues, hasFileID := stringsWithVR(item, tagReferencedFileID, core.VRCS)
+		mrdrOffset, hasMRDR, resolveErr := logicalMRDRTarget(item, mrdrs, legacy)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if hasMRDR {
+			if hasFileID || !standardFileRecordType(recordType) {
+				return nil, ErrInvalidRecord
+			}
+			fileIDValues, _ = mrdrs[mrdrOffset].GetStrings(tagReferencedFileID)
+			hasFileID = true
+			mrdrCounts[mrdrOffset]++
+		}
 		if !hasFileID {
 			if recordType != RecordTypePatient && recordType != RecordTypeStudy && recordType != RecordTypeSeries {
 				return nil, ErrInvalidRecord
@@ -189,6 +236,34 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 		if !classOK || !instanceOK || !syntaxOK {
 			return nil, ErrInvalidRecord
 		}
+		mapped, supported := recordTypeForSOPClass(classUID)
+		if !supported || mapped != recordType {
+			return nil, ErrUnsupportedSOPClass
+		}
+		childFrame.selection.RecordType, childFrame.selection.SOPClassUID = recordType, classUID
+		childFrame.selection.SOPInstanceUID, childFrame.selection.TransferSyntaxUID = instanceUID, syntaxUID
+		childFrame.selection.FileID = fileID
+		if err := entityKeys.admit(recordType, childFrame.selection); err != nil {
+			return nil, err
+		}
+		remaining := limits.MaxTotalRecordKeyBytes - keyBytes
+		if remaining <= 0 {
+			return nil, ErrResourceLimit
+		}
+		keyLimits := limits
+		if remaining < keyLimits.MaxRecordKeyBytes {
+			keyLimits.MaxRecordKeyBytes = remaining
+		}
+		keys, ownedBytes, keyErr := captureDirectoryRecordKeys(item, recordType, keyLimits, ctx)
+		if keyErr != nil {
+			return nil, keyErr
+		}
+		childFrame.selection.keys = keys
+		childFrame.selection.keyBytes = ownedBytes
+		keyBytes += ownedBytes
+		if keyErr = validateDirectoryKeys(recordType, keys, classUID, limits); keyErr != nil {
+			return nil, keyErr
+		}
 		relatedUIDs, hasRelatedUIDs := stringsWithVR(item, tagReferencedRelatedGeneralSOPClassUIDInFile, core.VRUI)
 		if hasRelatedUIDs {
 			if len(relatedUIDs) == 0 {
@@ -201,16 +276,32 @@ func validateDirectoryDataSet(dataset *object.Object) ([]encodedReference, error
 				}
 			}
 		}
-		if fileIDs[fileID.String()] || sopInstances[instanceUID] {
+		childFrame.selection.RelatedGeneralSOPClassUIDs = append([]string(nil), relatedUIDs...)
+		if prior, exists := fileSelections[fileID.String()]; exists {
+			if prior.SOPClassUID != classUID || prior.SOPInstanceUID != instanceUID || prior.TransferSyntaxUID != syntaxUID || !encodedSelectionMatchesRecord(prior, childFrame.selection) || !directoryKeysEqual(prior.keys, keys) || !equalStrings(prior.RelatedGeneralSOPClassUIDs, relatedUIDs) {
+				return nil, ErrInvalidRecord
+			}
+		}
+		fileSelections[fileID.String()] = childFrame.selection
+		if (fileIDs[fileID.String()] || sopInstances[instanceUID]) && (!hasMRDR || fileTargets[fileID.String()] != mrdrOffset) {
 			return nil, ErrInvalidRecord
 		}
 		fileIDs[fileID.String()] = true
+		fileTargets[fileID.String()] = mrdrOffset
 		sopInstances[instanceUID] = true
 		references = append(references, encodedReference{
 			fileID: fileID, recordType: recordType, selection: childFrame.selection, sopClassUID: classUID,
 			sopInstanceUID: instanceUID, transferSyntaxUID: syntaxUID,
 			relatedGeneralSOPClassUIDs: append([]string(nil), relatedUIDs...),
+			offset:                     frame.offset, mrdrOffset: mrdrOffset,
 		})
+	}
+	for offset, mrdr := range mrdrs {
+		count, ok := uint32Value(mrdr, tagNumberOfReferences)
+		if !ok || count != mrdrCounts[offset] || visited[offset] {
+			return nil, ErrInvalidRecord
+		}
+		visited[offset] = true
 	}
 	if len(visited) != len(items) {
 		return nil, ErrInvalidRecord
@@ -277,7 +368,7 @@ func hasRequiredSeriesKeys(item *object.Object) bool {
 
 func validHierarchyChild(parent, child RecordType, root bool) bool {
 	if root {
-		return child == RecordTypePatient
+		return child == RecordTypePatient || rootFileRecordType(child)
 	}
 	switch parent {
 	case RecordTypePatient:
@@ -285,7 +376,9 @@ func validHierarchyChild(parent, child RecordType, root bool) bool {
 	case RecordTypeStudy:
 		return child == RecordTypeSeries
 	case RecordTypeSeries:
-		return child == RecordTypeImage
+		// SURFACE SCAN follows its patient/study/series IOD placement; F.4's
+		// SERIES enumeration omits it despite the F.5.43 and F.4 row.
+		return standardFileRecordType(child) && !rootFileRecordType(child)
 	default:
 		return false
 	}
@@ -301,4 +394,29 @@ func uint16Value(obj *object.Object, tag core.Tag) (uint16, bool) {
 		return 0, false
 	}
 	return obj.ValueByteOrder().Uint16(raw), true
+}
+
+func validateDirectoryFileSetUID(dataset *object.Object, uid string) error {
+	if !validUID(uid) {
+		return ErrInvalidRecord
+	}
+	items, ok := dataset.GetSequence(tagDirectoryRecordSequence)
+	if !ok {
+		return ErrInvalidRecord
+	}
+	for _, item := range items {
+		flag, ok := uint16Value(item, tagRecordInUseFlag)
+		if !ok {
+			return ErrInvalidRecord
+		}
+		if flag == 0 {
+			continue
+		}
+		for _, tag := range []core.Tag{tagStudyInstanceUIDFS, tagSeriesInstanceUIDFS, tagReferencedSOPInstanceUIDInFile} {
+			if value, ok := item.GetUID(tag); ok && value == uid {
+				return ErrInvalidRecord
+			}
+		}
+	}
+	return nil
 }

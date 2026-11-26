@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/ThalesMMS/dicom-go/parser"
@@ -27,8 +26,18 @@ type TransferSyntaxRecoveryOptions struct {
 	AllowMissingPreamble          bool
 	AllowMissingFileMeta          bool
 	AllowMissingTransferSyntaxUID bool
+	// AllowUnknownTransferSyntaxUID infers the syntax of a data set whose
+	// declared UID is not registered. A legacy UID (transfer.LegacySyntax) is
+	// never inferred; it needs AllowLegacySyntaxes.
 	AllowUnknownTransferSyntaxUID bool
 	AllowDeclaredMismatch         bool
+	// AllowLegacySyntaxes accepts the legacy encodings of the transfer
+	// package: a File Meta Transfer Syntax UID naming the GE private syntax
+	// 1.2.840.113619.5.2 is read as declared, and ACR-NEMA Implicit VR Big
+	// Endian joins the default probe candidates. The data set is then
+	// normalized to Implicit VR Little Endian, which becomes the effective
+	// syntax, and TransferSyntaxResolution.Legacy records what was read.
+	AllowLegacySyntaxes bool
 
 	Probe parser.TransferSyntaxProbeOptions
 
@@ -64,6 +73,9 @@ type TransferSyntaxResolution struct {
 	DeclaredUID string
 	Confidence  float64
 	Probe       parser.TransferSyntaxProbeReport
+	// Legacy is the legacy encoding the data set was read with when it was
+	// normalized to Syntax (see TransferSyntaxRecoveryOptions.AllowLegacySyntaxes).
+	Legacy transfer.Syntax
 }
 
 // Inferred reports whether the effective syntax came from bounded inference.
@@ -93,6 +105,9 @@ func (r TransferSyntaxResolution) String() string {
 	fmt.Fprintf(&b, "source=%s", r.Source)
 	if r.Syntax.UID != "" {
 		fmt.Fprintf(&b, " syntax=%s", r.Syntax.UID)
+	}
+	if r.Legacy.UID != "" {
+		fmt.Fprintf(&b, " legacy=%s", r.Legacy.UID)
 	}
 	if r.Confidence != 0 {
 		fmt.Fprintf(&b, " confidence=%.3f", r.Confidence)
@@ -132,13 +147,16 @@ func ReadDataSetWithTransferSyntaxRecovery(
 	readOptions ReadFileOptions,
 	recoveryOptions TransferSyntaxRecoveryOptions,
 ) (result *Object, resolution TransferSyntaxResolution, err error) {
+	if err := rejectPrefixOptions(readOptions); err != nil {
+		return nil, TransferSyntaxResolution{}, err
+	}
 	finishFrames := finalizeFrameSink(&readOptions)
 	defer finishFrames(&err)
 	source, start, originallySeekable, err := prepareTransferSyntaxRecoverySource(r, readOptions, recoveryOptions)
 	if err != nil {
 		return nil, TransferSyntaxResolution{}, err
 	}
-	report, err := probeTransferSyntaxAt(source, start, recoveryOptions.Probe, readOptions.MaxTotalBytes, 0)
+	report, err := probeTransferSyntaxAt(source, start, recoveryOptions.probeOptions(), readOptions.MaxTotalBytes, 0)
 	resolution = resolutionFromProbe(report, TransferSyntaxSourceInferredRawDataSet, "")
 	if err != nil {
 		return nil, resolution, err
@@ -150,6 +168,7 @@ func ReadDataSetWithTransferSyntaxRecovery(
 	if err != nil {
 		return nil, resolution, err
 	}
+	normalizeLegacyResolution(&resolution)
 	stored := resolution.Clone()
 	obj.transferSyntaxResolution = &stored
 	return obj, resolution, nil
@@ -163,9 +182,12 @@ func OpenDataSetWithTransferSyntaxRecovery(
 	readOptions ReadFileOptions,
 	recoveryOptions TransferSyntaxRecoveryOptions,
 ) (result *Object, resolution TransferSyntaxResolution, err error) {
+	if err := rejectPrefixOptions(readOptions); err != nil {
+		return nil, TransferSyntaxResolution{}, err
+	}
 	finishFrames := finalizeFrameSink(&readOptions)
 	defer finishFrames(&err)
-	f, err := os.Open(path)
+	f, err := OpenSourceFile(path)
 	if err != nil {
 		return nil, TransferSyntaxResolution{}, err
 	}
@@ -193,11 +215,17 @@ func OpenDataSetWithTransferSyntaxRecovery(
 // ReadFileWithTransferSyntaxRecovery inspects only Part 10 structure before
 // deciding whether an authorized probe is necessary. Dataset values and
 // caller callbacks are processed exactly once by the final parse.
+// A read failure is how a probe rejects a candidate syntax, so
+// ReadFileOptions.AllowPartialRead is ignored and no partial File is returned.
 func ReadFileWithTransferSyntaxRecovery(
 	r io.Reader,
 	readOptions ReadFileOptions,
 	recoveryOptions TransferSyntaxRecoveryOptions,
 ) (result *File, resolution TransferSyntaxResolution, err error) {
+	if err := rejectPrefixOptions(readOptions); err != nil {
+		return nil, TransferSyntaxResolution{}, err
+	}
+	readOptions.AllowPartialRead = false
 	finishFrames := finalizeFrameSink(&readOptions)
 	defer finishFrames(&err)
 	if !recoveryOptions.enablesFileRecovery() {
@@ -264,6 +292,9 @@ func ReadFileWithTransferSyntaxRecovery(
 	declaredUID, _ := meta.GetString(tagTransferSyntaxUID)
 	declaredUID = transfer.NormalizeUID(declaredUID)
 	declaredSyntax, resolveErr := resolveFileMetaTransferSyntax(meta)
+	if legacy, ok := transfer.LegacySyntax(declaredUID); ok && recoveryOptions.AllowLegacySyntaxes {
+		declaredSyntax, resolveErr = legacy, nil
+	}
 
 	switch {
 	case errors.Is(resolveErr, ErrMissingTransferSyntax) && recoveryOptions.AllowMissingTransferSyntaxUID:
@@ -272,7 +303,7 @@ func ReadFileWithTransferSyntaxRecovery(
 			TransferSyntaxSourceInferredMissingUID, declaredUID,
 			readOptions, recoveryOptions, originallySeekable,
 		)
-	case errors.Is(resolveErr, transfer.ErrUnknownTransferSyntax) && recoveryOptions.AllowUnknownTransferSyntaxUID:
+	case errors.Is(resolveErr, transfer.ErrUnknownTransferSyntax) && recoveryOptions.AllowUnknownTransferSyntaxUID && !isLegacySyntaxUID(declaredUID):
 		return recoverFileDataSetAt(
 			source, streamBase, datasetOffset, prefix[:part10PreambleLength], meta,
 			TransferSyntaxSourceInferredUnknownUID, declaredUID,
@@ -352,6 +383,9 @@ func recoverFileWithoutPart10Preamble(
 	declaredUID, _ := meta.GetString(tagTransferSyntaxUID)
 	declaredUID = transfer.NormalizeUID(declaredUID)
 	declaredSyntax, resolveErr := resolveFileMetaTransferSyntax(meta)
+	if legacy, ok := transfer.LegacySyntax(declaredUID); ok && recoveryOptions.AllowLegacySyntaxes {
+		declaredSyntax, resolveErr = legacy, nil
+	}
 	switch {
 	case resolveErr == nil:
 		return readDeclaredOrMismatchAt(
@@ -365,7 +399,7 @@ func recoverFileWithoutPart10Preamble(
 			TransferSyntaxSourceInferredMissingUID, declaredUID,
 			readOptions, recoveryOptions, originallySeekable,
 		)
-	case errors.Is(resolveErr, transfer.ErrUnknownTransferSyntax) && recoveryOptions.AllowUnknownTransferSyntaxUID:
+	case errors.Is(resolveErr, transfer.ErrUnknownTransferSyntax) && recoveryOptions.AllowUnknownTransferSyntaxUID && !isLegacySyntaxUID(declaredUID):
 		return recoverFileDataSetAt(
 			source, streamBase, datasetOffset, nil, meta,
 			TransferSyntaxSourceInferredUnknownUID, declaredUID,
@@ -393,7 +427,7 @@ func readDeclaredOrMismatchAt(
 		report, probeErr := probeTransferSyntaxAt(
 			source,
 			streamBase+datasetOffset,
-			recoveryOptions.Probe,
+			recoveryOptions.probeOptions(),
 			readOptions.MaxTotalBytes,
 			datasetOffset,
 		)
@@ -497,6 +531,7 @@ func readDeclaredFileDataSetAt(
 	if err != nil {
 		return nil, resolution, wrapDataSetError(err)
 	}
+	normalizeLegacyResolution(&resolution)
 	return newResolvedFile(preamble, meta, dataset, resolution), resolution, nil
 }
 
@@ -545,9 +580,12 @@ func OpenFileWithTransferSyntaxRecovery(
 	readOptions ReadFileOptions,
 	recoveryOptions TransferSyntaxRecoveryOptions,
 ) (result *File, resolution TransferSyntaxResolution, err error) {
+	if err := rejectPrefixOptions(readOptions); err != nil {
+		return nil, TransferSyntaxResolution{}, err
+	}
 	finishFrames := finalizeFrameSink(&readOptions)
 	defer finishFrames(&err)
-	f, err := os.Open(path)
+	f, err := OpenSourceFile(path)
 	if err != nil {
 		return nil, TransferSyntaxResolution{}, err
 	}
@@ -587,7 +625,7 @@ func recoverFileDataSetAt(
 	report, probeErr := probeTransferSyntaxAt(
 		source,
 		streamBase+datasetOffset,
-		recoveryOptions.Probe,
+		recoveryOptions.probeOptions(),
 		readOptions.MaxTotalBytes,
 		datasetOffset,
 	)
@@ -618,6 +656,7 @@ func readRecoveredFileFromReport(
 	if err != nil {
 		return nil, resolution, wrapDataSetError(err)
 	}
+	normalizeLegacyResolution(&resolution)
 	return newResolvedFile(preamble, meta, dataset, resolution), resolution, nil
 }
 
@@ -684,7 +723,7 @@ func prepareTransferSyntaxRecoverySource(
 		start, err := seeker.Seek(0, io.SeekCurrent)
 		return seeker, start, true, err
 	}
-	if readOptions.DeferPixelData || readOptions.DeferWaveformData {
+	if readOptions.DeferPixelData || readOptions.DeferWaveformData || readOptions.BulkDataDescriptor != nil {
 		return nil, 0, false, ErrDeferredValueRequiresSeekable
 	}
 	limit := recoveryOptions.MaxNonSeekableBytes
@@ -743,10 +782,13 @@ func safeDeclaredSyntaxUID(uid string) string {
 	if uid == "" {
 		return ""
 	}
-	if _, ok := transfer.DefaultRegistry.Get(uid); !ok {
-		return ""
+	if _, ok := transfer.DefaultRegistry.Get(uid); ok {
+		return uid
 	}
-	return uid
+	if _, ok := transfer.LegacySyntax(uid); ok {
+		return uid
+	}
+	return ""
 }
 
 func declaredTransferSyntaxResolution(syntax transfer.Syntax) TransferSyntaxResolution {
@@ -763,5 +805,29 @@ func (o TransferSyntaxRecoveryOptions) enablesFileRecovery() bool {
 		o.AllowMissingFileMeta ||
 		o.AllowMissingTransferSyntaxUID ||
 		o.AllowUnknownTransferSyntaxUID ||
-		o.AllowDeclaredMismatch
+		o.AllowDeclaredMismatch ||
+		o.AllowLegacySyntaxes
+}
+
+// isLegacySyntaxUID reports a declared legacy UID. Inferring a standard
+// syntax for it would misread its values (the GE private syntax swaps Pixel
+// Data), so only AllowLegacySyntaxes reads it.
+func isLegacySyntaxUID(uid string) bool {
+	_, ok := transfer.LegacySyntax(uid)
+	return ok
+}
+
+// probeOptions adds ACR-NEMA Implicit VR Big Endian to the default probe
+// candidates when legacy syntaxes are allowed. Explicit candidates are kept.
+func (o TransferSyntaxRecoveryOptions) probeOptions() parser.TransferSyntaxProbeOptions {
+	probe := o.Probe
+	if o.AllowLegacySyntaxes && len(probe.Candidates) == 0 {
+		probe.Candidates = []transfer.Syntax{
+			transfer.ImplicitVRLittleEndian,
+			transfer.ExplicitVRLittleEndian,
+			transfer.ExplicitVRBigEndian,
+			transfer.ImplicitVRBigEndianACRNEMA,
+		}
+	}
+	return probe
 }

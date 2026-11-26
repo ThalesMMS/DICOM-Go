@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/internal/packedbits"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
@@ -51,7 +52,10 @@ func (m FrameMetadata) BytesPerSample() int {
 }
 
 func (m FrameMetadata) FrameSize() int64 {
-	if strings.EqualFold(strings.TrimSpace(m.PhotometricInterpretation), "YBR_FULL_422") && m.BitsAllocated >= 8 {
+	// Native 4:2:2 (YBR_FULL_422, retired YBR_PARTIAL_422) stores two
+	// samples per pixel.
+	photometric := strings.ToUpper(strings.TrimSpace(m.PhotometricInterpretation))
+	if (photometric == "YBR_FULL_422" || photometric == "YBR_PARTIAL_422") && m.BitsAllocated >= 8 {
 		samples := int64(m.Rows) * int64(m.Columns) * 2
 		return samples * int64(m.BytesPerSample())
 	}
@@ -62,8 +66,10 @@ func (m FrameMetadata) FrameSize() int64 {
 	return samples * int64(m.BytesPerSample())
 }
 
-// TotalSize returns zero when the frame count is invalid or the product would
-// overflow int64.
+// TotalSize returns the sum of the separately delivered frame sizes. For Bits
+// Allocated 1 the native Value Field can be smaller, because frames pack
+// across byte boundaries. It returns zero when the frame count is invalid or
+// the product would overflow int64.
 func (m FrameMetadata) TotalSize() int64 {
 	frameSize := m.FrameSize()
 	frames := int64(m.NumberOfFrames)
@@ -73,8 +79,43 @@ func (m FrameMetadata) TotalSize() int64 {
 	return frameSize * frames
 }
 
+// packedFrameBits is the bit count of one Bits Allocated 1 frame.
+func (m FrameMetadata) packedFrameBits() int64 {
+	return int64(m.Rows) * int64(m.Columns) * int64(m.SamplesPerPixel)
+}
+
+// nativeValueSize returns the byte count of a native Pixel Data value holding
+// every frame, before an even-length pad byte. Bits Allocated 1 frames are
+// contiguous in one bit stream, so only their total bit count is rounded up
+// to a byte; other layouts store whole-byte frames. It returns zero when the
+// size is invalid or would overflow int64.
+func (m FrameMetadata) nativeValueSize() int64 {
+	if m.BitsAllocated != 1 {
+		return m.TotalSize()
+	}
+	bits, frames := m.packedFrameBits(), int64(m.NumberOfFrames)
+	if bits <= 0 || frames <= 0 || bits > math.MaxInt64/frames {
+		return 0
+	}
+	return packedbits.Bytes(bits * frames)
+}
+
+// unalignedPackedFrames reports Bits Allocated 1 frames after the first that
+// start inside a byte of the stored value.
+func (m FrameMetadata) unalignedPackedFrames() bool {
+	return m.BitsAllocated == 1 && m.NumberOfFrames > 1 && m.packedFrameBits()%8 != 0
+}
+
 // Frame is emitted by a FrameSink for each native Pixel Data frame read by the
-// parser. Data is a per-frame buffer owned by the receiver.
+// parser. Data is a per-frame buffer owned by the receiver, Metadata.FrameSize()
+// bytes long.
+//
+// Bits Allocated 1 frames are stored back to back in one LSB-first bit stream,
+// so a frame may start inside a byte shared with the previous frame. Data
+// always holds exactly one frame starting at bit zero of Data[0]. When the
+// frame bit count is not a multiple of eight and there are several frames,
+// every frame is bit-shifted into its own buffer and the unused tail bits are
+// zero; otherwise Data holds the stored bytes unchanged.
 type Frame struct {
 	Index          int
 	Data           []byte

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("(0019,\"A\\B\",10)\tUS\tX\t1\n(0019,\"\",10)\tUS\tX\t1\n(0018,\"ACME\",10)\tUS\tX\t1\n(0019,\"ACME\",0100)\tUS\tX\t1\n(0019,\"ACME\",00F0-1010)\tUS\tX\t1\n")

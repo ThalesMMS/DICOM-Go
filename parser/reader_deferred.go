@@ -2,11 +2,13 @@ package parser
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
 // ValueLocation returns the recorded raw value location for tag when the reader
@@ -18,6 +20,32 @@ func (r *Reader) ValueLocation(tag core.Tag) (ValueLocation, bool) {
 	}
 	location, ok := r.valueLocations[tag]
 	return location, ok
+}
+
+// RootValueLocation returns the unique recorded raw value location for tag at
+// the data set root. Nested item occurrences do not make a root lookup ambiguous.
+// It returns a zero location and false for nil readers, no root occurrence, or
+// duplicate root occurrences. The returned value is independent metadata.
+//
+// This allocation-free query does not access the source. It scans only the
+// already recorded occurrences of tag and follows the Reader's existing
+// lifecycle/concurrency requirements; it is not safe during concurrent parsing.
+func (r *Reader) RootValueLocation(tag core.Tag) (ValueLocation, bool) {
+	if r == nil {
+		return ValueLocation{}, false
+	}
+	var root ValueLocation
+	found := false
+	for _, location := range r.allValueLocations[tag] {
+		if location.ItemOffsetSet {
+			continue
+		}
+		if found {
+			return ValueLocation{}, false
+		}
+		root, found = location, true
+	}
+	return root, found
 }
 
 // ValueLocations returns every recorded raw value location for tag in source
@@ -78,15 +106,7 @@ func (r *Reader) recordValueLocation(header core.ElementHeader, valueOffset, len
 		ValueOffset: valueOffset,
 		Length:      length,
 	}
-	for i := len(r.seqDelimiters) - 1; i >= 0; i-- {
-		frame := r.seqDelimiters[i]
-		if frame.typ != seqTokenTypeItem || frame.baseOffset < 8 {
-			continue
-		}
-		location.ItemOffset = int64(frame.baseOffset - 8)
-		location.ItemOffsetSet = true
-		break
-	}
+	location.ItemOffset, location.ItemOffsetSet = r.itemOffset()
 	if r.allValueLocations == nil {
 		r.allValueLocations = map[core.Tag][]ValueLocation{}
 	}
@@ -96,6 +116,19 @@ func (r *Reader) recordValueLocation(header core.ElementHeader, valueOffset, len
 		}
 		r.seenValueLocations[location] = struct{}{}
 	}
+	if r.valueReferences == nil {
+		r.valueReferences = make(map[ValueLocation]ValueReference)
+	}
+	order := r.syntax.ByteOrder
+	if r.implicitVRLittleEndianActive() {
+		order = binary.LittleEndian
+	} else if r.explicitBigEndianActive() {
+		order = binary.BigEndian
+	}
+	if r.syntax.UID == transfer.PrivateGEImplicitVRBigEndianPixelData.UID && header.Tag == core.TagPixelData {
+		order = binary.BigEndian
+	}
+	r.valueReferences[location] = ValueReference{UndefinedLength: header.Length.IsUndefined(), ExplicitVR: r.syntax.ExplicitVR && !r.implicitVRLittleEndianActive() || r.explicitBigEndianActive(), TransferSyntaxUID: r.syntax.UID, Tag: header.Tag, VR: header.VR, Length: length, Path: r.bulkPath(header.Tag), ByteOrder: order}
 	r.allValueLocations[header.Tag] = append(r.allValueLocations[header.Tag], location)
 	if r.ambiguousValueLocations[header.Tag] {
 		return
@@ -284,4 +317,38 @@ func (r *Reader) copyPixelSequenceValueTo(header core.ElementHeader, valueStart 
 	}
 	r.counter.pos = valueEnd
 	return copied, nil
+}
+
+// deferLargeValue reports whether a defined-length primitive value is left
+// on the source under InlineValueBytesThreshold. Only OB, OW, OF, OD and UN
+// values are deferred, at the data set root and, with DeferNestedValues, in
+// sequence items alike; a large value of any other VR (OL, OV, SV, UV, UC or
+// a text VR, for instance) is materialized within MaxElementBytes instead of
+// failing the parse (#1980).
+func (r *Reader) deferLargeValue(header core.ElementHeader) bool {
+	if r.inlineThreshold <= 0 || int64(header.Length) <= r.inlineThreshold {
+		return false
+	}
+	switch header.VR {
+	case core.VROB, core.VROW, core.VROF, core.VROD, core.VRUN:
+	default:
+		return false
+	}
+	if r.deferValueTags != nil {
+		if _, ok := r.deferValueTags[header.Tag]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func tagSet(tags []core.Tag) map[core.Tag]struct{} {
+	if len(tags) == 0 {
+		return nil
+	}
+	set := make(map[core.Tag]struct{}, len(tags))
+	for _, tag := range tags {
+		set[tag] = struct{}{}
+	}
+	return set
 }

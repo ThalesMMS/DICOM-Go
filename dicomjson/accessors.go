@@ -47,12 +47,15 @@ func valueString(value any) string {
 		}
 		return strings.TrimSpace(v.String())
 	case map[string]any:
-		for _, key := range []string{"Alphabetic", "Ideographic", "Phonetic"} {
-			if s, ok := v[key].(string); ok && strings.TrimSpace(s) != "" {
-				return strings.TrimSpace(s)
-			}
+		// A PN value keeps its ideographic and phonetic groups in the DICOM
+		// form "alphabetic=ideographic=phonetic", as a C-FIND returns it.
+		group := func(key string) string {
+			text, _ := v[key].(string)
+			return strings.TrimSpace(text)
 		}
-		return ""
+		return joinPersonName(PersonNameComponents{
+			Alphabetic: group("Alphabetic"), Ideographic: group("Ideographic"), Phonetic: group("Phonetic"),
+		})
 	default:
 		if value == nil {
 			return ""

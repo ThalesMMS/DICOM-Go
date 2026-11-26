@@ -12,16 +12,65 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dictionary/std"
 	"github.com/ThalesMMS/dicom-go/index"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/parser"
+	"github.com/ThalesMMS/dicom-go/pixeldata"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
 const mediaStorageDirectoryStorageUID = "1.2.840.10008.1.3.10"
+
+// Distinct candidates can describe the same root, including path aliases.
+// Serialize publication across candidates so their final fingerprint checks
+// cannot both pass before either replacement becomes visible.
+var directoryPublications struct {
+	sync.Mutex
+	active  []os.FileInfo
+	changed chan struct{}
+}
+
+func lockDirectoryPublication(ctx context.Context, root os.FileInfo) (func(), error) {
+	for {
+		directoryPublications.Lock()
+		busy := false
+		for _, active := range directoryPublications.active {
+			busy = busy || os.SameFile(active, root)
+		}
+		if !busy {
+			directoryPublications.active = append(directoryPublications.active, root)
+			directoryPublications.Unlock()
+			return func() {
+				directoryPublications.Lock()
+				for i, active := range directoryPublications.active {
+					if os.SameFile(active, root) {
+						directoryPublications.active = append(directoryPublications.active[:i], directoryPublications.active[i+1:]...)
+						break
+					}
+				}
+				if directoryPublications.changed != nil {
+					close(directoryPublications.changed)
+					directoryPublications.changed = nil
+				}
+				directoryPublications.Unlock()
+			}, nil
+		}
+		if directoryPublications.changed == nil {
+			directoryPublications.changed = make(chan struct{})
+		}
+		changed := directoryPublications.changed
+		directoryPublications.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
 
 var (
 	tagFileSetID                                 = core.NewTag(0x0004, 0x1130)
@@ -40,27 +89,64 @@ var (
 
 // WriteOptions bounds one two-pass DICOMDIR encoding.
 type WriteOptions struct {
-	// MaxBytes bounds each encoded DICOMDIR pass and the final write. Zero uses
-	// 64 MiB, which is well above ordinary directories but finite.
+	// PublicationGuard runs after the staged index and source checks, before
+	// the final root and destination checks and atomic replacement.
+	// Returning an error preserves the existing DICOMDIR. It is not called by
+	// WriteDICOMDIR, which does not publish a filesystem destination.
+	// The callback must not call CommitDICOMDIR recursively.
+	PublicationGuard func(context.Context, string) error
+	// LegacyMRDR explicitly permits rewriting an imported retired MRDR graph.
+	LegacyMRDR bool
+	// MaxBytes is the inclusive bound on each encoded DICOMDIR pass and
+	// the final output. Zero uses 64 MiB.
 	MaxBytes int64
+	// Profile, when set, validates every referenced instance against a PS3.11
+	// Media Storage Application Profile before anything is written (a
+	// *ProfileError lists the violations) and adds the directory keys the
+	// profile requires. Empty writes the profile-neutral directory.
+	Profile Profile
+	// Icons adds an Icon Image Sequence to IMAGE and RT DOSE records. Profiles that
+	// require icons (STD-XA1K) enable it and fix the size themselves.
+	Icons bool
+	// IconSize is the icon width and height, 1 to 128; zero uses 64.
+	IconSize int
+	// Decoders decodes compressed Pixel Data for icons; nil uses the
+	// built-in decoders.
+	Decoders pixeldata.Registry
+	// BlankIconOnFailure writes a black icon, reported in
+	// WriteReport.Diagnostics, when an image cannot be rendered; by default
+	// the write fails with ErrIconUnavailable.
+	BlankIconOnFailure bool
 }
 
 // WriteReport describes the final encoded DICOMDIR bytes. CommitDICOMDIR may
 // return a populated report with ErrTransaction when atomic replacement
 // succeeded but the final directory durability sync failed.
 type WriteReport struct {
-	BytesWritten int64
-	Records      int
-	SHA256       [32]byte
-	revision     uint64
+	BytesWritten      int64
+	Records           int
+	LogicalReferences int
+	MRDRRecords       int
+	SHA256            [32]byte
+	// Icons counts the Icon Image Sequences written.
+	Icons int
+	// Diagnostics lists value-free notes such as blank icons.
+	Diagnostics   []Diagnostic
+	revision      uint64
+	extraElements int
 }
 
 type directoryNode struct {
-	typ      RecordType
-	record   FileRecord
-	children []*directoryNode
-	next     *directoryNode
-	offset   uint32
+	typ        RecordType
+	record     FileRecord
+	extras     recordExtras
+	children   []*directoryNode
+	next       *directoryNode
+	offset     uint32
+	imported   core.DataSet
+	mrdr       *directoryNode
+	references uint32
+	inactive   bool
 }
 
 // WriteDICOMDIR validates and writes a deterministic Basic Directory IOD.
@@ -81,15 +167,31 @@ func WriteDICOMDIR(ctx context.Context, destination io.Writer, fileSet *FileSet,
 	}
 
 	fileSet.mu.RLock()
-	records := append([]sourceSnapshot(nil), fileSet.records...)
+	records := snapshotFileRecords(fileSet.records)
 	uid := fileSet.uid
 	id := fileSet.id
 	descriptor := append(FileID(nil), fileSet.descriptor...)
 	descriptorCharacterSet := fileSet.descriptorCharacterSet
 	revision := fileSet.revision
+	imported := fileSet.directory
 	fileSet.mu.RUnlock()
+	if imported != nil && !imported.matches(ctx) {
+		if err := ctx.Err(); err != nil {
+			return WriteReport{}, err
+		}
+		return WriteReport{}, ErrSourceChanged
+	}
+	if imported != nil && imported.hasMRDR() && !options.LegacyMRDR {
+		return WriteReport{}, ErrLegacyMRDRRequiresOptIn
+	}
 
 	if err := fileSet.validateDescriptor(ctx); err != nil {
+		return WriteReport{}, err
+	}
+	if err := plannedDirectoryKeyBytes(imported, records, fileSet.options.Limits.MaxTotalRecordKeyBytes); err != nil {
+		return WriteReport{}, err
+	}
+	if _, err := plannedDirectoryRecordCount(imported, records, fileSet.options.Limits.MaxDirectoryRecords); err != nil {
 		return WriteReport{}, err
 	}
 	if _, err := fileSet.validateRecordsSnapshot(ctx, records); err != nil {
@@ -98,11 +200,51 @@ func WriteDICOMDIR(ctx context.Context, destination io.Writer, fileSet *FileSet,
 	if err := fileSet.revalidateSources(ctx, records); err != nil {
 		return WriteReport{}, err
 	}
+	extras, diagnostics, _, err := fileSet.recordExtras(ctx, records, options)
+	if err != nil {
+		return WriteReport{}, err
+	}
 	roots, flat, err := buildDirectoryHierarchy(records)
 	if err != nil {
 		return WriteReport{}, err
 	}
-	encoded, err := encodeDirectoryTwoPass(ctx, roots, flat, uid, id, descriptor, descriptorCharacterSet, maxBytes)
+	if imported != nil {
+		roots, flat, err = mergeImportedDirectory(imported, roots)
+		if err != nil {
+			return WriteReport{}, err
+		}
+	}
+	if len(flat) > fileSet.options.Limits.MaxDirectoryRecords {
+		return WriteReport{}, ErrResourceLimit
+	}
+	for _, node := range flat {
+		if len(node.children) == 0 {
+			node.extras = extras[fileIDKey(node.record.FileID)]
+		}
+	}
+	extraElements, icons := 0, 0
+	for _, node := range flat {
+		switch node.typ {
+		case RecordTypePatient:
+			node.extras.patient = mergeLevelKeys(leafNodes(node), func(e recordExtras) []core.Element { return e.patient })
+			extraElements += countDirectoryElements(node.extras.patient)
+		case RecordTypeSeries:
+			node.extras.series = mergeLevelKeys(leafNodes(node), func(e recordExtras) []core.Element { return e.series })
+			extraElements += countDirectoryElements(node.extras.series)
+		case RecordTypeStudy:
+		default:
+			extraElements += countDirectoryElements(node.extras.image)
+			extraElements += countDirectoryElements(node.record.keys.Elements)
+		}
+		extraElements += countDirectoryElements(node.imported.Elements)
+		for _, e := range directoryRecordDataSet(node, 0, 0).Elements {
+			if e.Tag() == tagIconImageSequence {
+				icons++
+				break
+			}
+		}
+	}
+	encoded, err := encodeDirectoryTwoPass(ctx, roots, flat, uid, id, descriptor, descriptorCharacterSet, maxBytes, fileSet.options.Limits)
 	if err != nil {
 		return WriteReport{}, err
 	}
@@ -111,6 +253,12 @@ func WriteDICOMDIR(ctx context.Context, destination io.Writer, fileSet *FileSet,
 	}
 	if !fileSet.revisionMatches(revision) {
 		return WriteReport{}, redactedFileSetError{class: ErrSourceChanged}
+	}
+	if imported != nil && !imported.matches(ctx) {
+		if err := ctx.Err(); err != nil {
+			return WriteReport{}, err
+		}
+		return WriteReport{}, ErrSourceChanged
 	}
 	written, err := writeAllContext(ctx, destination, encoded)
 	if err != nil {
@@ -122,7 +270,31 @@ func WriteDICOMDIR(ctx context.Context, destination io.Writer, fileSet *FileSet,
 		}
 		return WriteReport{}, redactedFileSetError{class: ErrDICOMDIRWrite}
 	}
-	return WriteReport{BytesWritten: written, Records: len(flat), SHA256: sha256.Sum256(encoded), revision: revision}, nil
+	logical, mrdr := 0, 0
+	for _, node := range flat {
+		if node.typ == recordTypeMRDR {
+			mrdr++
+		} else if standardFileRecordType(node.typ) {
+			logical++
+		}
+	}
+	if mrdr > 0 {
+		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticUnsupported, Message: "retired MRDR compatibility graph emitted"})
+	}
+	return WriteReport{BytesWritten: written, Records: len(flat), LogicalReferences: logical, MRDRRecords: mrdr, SHA256: sha256.Sum256(encoded), Icons: icons, Diagnostics: diagnostics, revision: revision, extraElements: extraElements}, nil
+}
+
+// countDirectoryElements includes the contents of profile and icon sequences.
+func countDirectoryElements(elements []core.Element) int {
+	count := len(elements)
+	for _, element := range elements {
+		if sequence, ok := element.Value.(core.SequenceValue); ok {
+			for _, item := range sequence.Items {
+				count += countDirectoryElements(item.Elements)
+			}
+		}
+	}
+	return count
 }
 
 func (f *FileSet) revisionMatches(revision uint64) bool {
@@ -132,8 +304,13 @@ func (f *FileSet) revisionMatches(revision uint64) bool {
 }
 
 func normalizeWriteOptions(options WriteOptions) (int64, error) {
-	if options.MaxBytes < 0 {
+	if options.MaxBytes < 0 || options.IconSize != 0 && !validIconSize(options.IconSize) {
 		return 0, ErrInvalidOptions
+	}
+	if options.Profile != "" {
+		if _, err := profileRulesFor(options.Profile); err != nil {
+			return 0, err
+		}
 	}
 	if options.MaxBytes == 0 {
 		return 64 << 20, nil
@@ -168,6 +345,10 @@ func buildDirectoryHierarchy(records []sourceSnapshot) ([]*directoryNode, []*dir
 	root := make([]*directoryNode, 0)
 	for _, stored := range records {
 		r := stored.record
+		if rootFileRecordType(r.RecordType) {
+			root = append(root, &directoryNode{typ: r.RecordType, record: r})
+			continue
+		}
 		patient := patients[r.PatientID]
 		if patient == nil {
 			patient = &directoryNode{typ: RecordTypePatient, record: r}
@@ -226,7 +407,7 @@ func sameSeriesKeys(a, b FileRecord) bool {
 	return a.Modality == b.Modality && a.SeriesNumber == b.SeriesNumber
 }
 
-func encodeDirectoryTwoPass(ctx context.Context, roots, flat []*directoryNode, uid, id string, descriptor FileID, descriptorCharacterSet string, maxBytes int64) ([]byte, error) {
+func encodeDirectoryTwoPass(ctx context.Context, roots, flat []*directoryNode, uid, id string, descriptor FileID, descriptorCharacterSet string, maxBytes int64, admission ...Limits) ([]byte, error) {
 	passOne, err := encodeDirectory(ctx, roots, flat, uid, id, descriptor, descriptorCharacterSet, maxBytes)
 	if err != nil {
 		return nil, err
@@ -251,7 +432,7 @@ func encodeDirectoryTwoPass(ctx context.Context, roots, flat []*directoryNode, u
 			return nil, redactedFileSetError{class: ErrDICOMDIRWrite}
 		}
 	}
-	if err := validateEncodedDirectory(passTwo, roots, flat); err != nil {
+	if err := validateEncodedDirectory(passTwo, roots, flat, admission...); err != nil {
 		return nil, err
 	}
 	return passTwo, nil
@@ -344,12 +525,19 @@ func directoryRecordDataSet(node *directoryNode, next, lower uint32) core.DataSe
 		ulElement(tagOffsetNextDirectoryRecord, next), usElement(tagRecordInUseFlag, 0xFFFF),
 		ulElement(tagOffsetLowerLevelRecord, lower), textElement(tagDirectoryRecordType, core.VRCS, node.typ.String()),
 	}
-	if node.record.SpecificCharacterSet != "" {
-		elements = append(elements, textValuesElement(tagSpecificCharacterSetFS, core.VRCS, strings.Split(node.record.SpecificCharacterSet, `\`)))
+	// Common selection strings and owned leaf keys are decoded Unicode. Each
+	// directory record declares UTF-8 independently of the referenced file.
+	if len(node.imported.Elements) > 0 {
+		elements = append(elements, textElement(tagSpecificCharacterSetFS, core.VRCS, "ISO_IR 192"))
+	} else if node.record.SpecificCharacterSet != "" {
+		elements = append(elements, textValuesElement(tagSpecificCharacterSetFS, core.VRCS, strings.Split(node.record.SpecificCharacterSet, "\\")))
 	}
 	switch node.typ {
+	case recordTypeMRDR:
+		elements = append(elements, textValuesElement(tagReferencedFileID, core.VRCS, []string(node.record.FileID)), ulElement(tagNumberOfReferences, node.references))
 	case RecordTypePatient:
 		elements = append(elements, textElement(tagPatientNameFS, core.VRPN, node.record.PatientName), textElement(tagPatientIDFS, core.VRLO, node.record.PatientID))
+		elements = append(elements, node.extras.patient...)
 	case RecordTypeStudy:
 		elements = append(elements,
 			textElement(tagStudyDateFS, core.VRDA, node.record.StudyDate), textElement(tagStudyTimeFS, core.VRTM, node.record.StudyTime),
@@ -357,19 +545,47 @@ func directoryRecordDataSet(node *directoryNode, next, lower uint32) core.DataSe
 			textElement(tagStudyIDFS, core.VRSH, node.record.StudyID), textElement(tagAccessionNumberFS, core.VRSH, node.record.AccessionNumber))
 	case RecordTypeSeries:
 		elements = append(elements, textElement(tagModalityFS, core.VRCS, node.record.Modality), uiElementValue(tagSeriesInstanceUIDFS, node.record.SeriesInstanceUID), textElement(tagSeriesNumberFS, core.VRIS, node.record.SeriesNumber))
+		elements = append(elements, node.extras.series...)
 	default:
+		if node.mrdr == nil {
+			elements = append(elements, textValuesElement(tagReferencedFileID, core.VRCS, []string(node.record.FileID)))
+		} else {
+			elements = append(elements, ulElement(tagMRDRDirectoryRecordOffset, nodeOffset(node.mrdr)))
+		}
 		elements = append(elements,
-			textValuesElement(tagReferencedFileID, core.VRCS, []string(node.record.FileID)),
 			uiElementValue(tagReferencedSOPClassUIDInFile, node.record.SOPClassUID), uiElementValue(tagReferencedSOPInstanceUIDInFile, node.record.SOPInstanceUID),
 			uiElementValue(tagReferencedTransferSyntaxUIDInFile, node.record.TransferSyntaxUID))
-		if node.record.InstanceNumber != "" {
+		if node.record.InstanceNumber != "" && len(node.record.keys.Elements) == 0 {
 			elements = append(elements, textElement(tagInstanceNumberFS, core.VRIS, node.record.InstanceNumber))
 		}
 		if len(node.record.RelatedGeneralSOPClassUIDs) != 0 {
 			elements = append(elements, textValuesElement(tagReferencedRelatedGeneralSOPClassUIDInFile, core.VRUI, node.record.RelatedGeneralSOPClassUIDs))
 		}
+		elements = append(elements, node.extras.image...)
+		elements = append(elements, node.record.keys.Elements...)
 	}
-	sort.SliceStable(elements, func(i, j int) bool { return elements[i].Tag().Less(elements[j].Tag()) })
+	// Retain opaque and optional imported keys, then overlay defined keys.
+	// Conditional schema keys are removed before extraction so stale values
+	// cannot survive a Refresh when their source condition becomes false.
+	reserved := map[core.Tag]bool{tagReferencedFileID: true, tagReferencedSOPClassUIDInFile: true, tagReferencedSOPInstanceUIDInFile: true,
+		tagReferencedTransferSyntaxUIDInFile: true, tagReferencedRelatedGeneralSOPClassUIDInFile: true, tagMRDRDirectoryRecordOffset: true, tagNumberOfReferences: true}
+	for _, rule := range directoryKeyRules(node.typ) {
+		reserved[rule.tag] = true
+	}
+	merged := make(map[core.Tag]core.Element, len(elements)+len(node.imported.Elements))
+	for _, e := range node.imported.Elements {
+		if !reserved[e.Tag()] && !e.Tag().IsGroupLength() {
+			merged[e.Tag()] = e
+		}
+	}
+	for _, e := range elements {
+		merged[e.Tag()] = e
+	}
+	elements = elements[:0]
+	for _, e := range merged {
+		elements = append(elements, e)
+	}
+	sort.Slice(elements, func(i, j int) bool { return elements[i].Tag().Less(elements[j].Tag()) })
 	return core.DataSet{Elements: elements}
 }
 
@@ -393,15 +609,11 @@ func uiElementValue(tag core.Tag, value string) core.Element {
 }
 
 func ulElement(tag core.Tag, value uint32) core.Element {
-	raw := make([]byte, 4)
-	binary.LittleEndian.PutUint32(raw, value)
-	return core.NewRawElement(tag, core.VRUL, raw)
+	return object.ULElement(tag, binary.LittleEndian, value)
 }
 
 func usElement(tag core.Tag, value uint16) core.Element {
-	raw := make([]byte, 2)
-	binary.LittleEndian.PutUint16(raw, value)
-	return core.NewRawElement(tag, core.VRUS, raw)
+	return object.USElement(tag, binary.LittleEndian, value)
 }
 
 func encodedDirectoryOffsets(encoded []byte, want int) ([]uint32, error) {
@@ -427,7 +639,7 @@ func encodedDirectoryOffsets(encoded []byte, want int) ([]uint32, error) {
 	return offsets, nil
 }
 
-func validateEncodedDirectory(encoded []byte, roots, flat []*directoryNode) error {
+func validateEncodedDirectory(encoded []byte, roots, flat []*directoryNode, admission ...Limits) error {
 	file, err := object.ReadFile(bytes.NewReader(encoded))
 	if err != nil {
 		return redactedFileSetError{class: ErrDICOMDIRWrite}
@@ -437,6 +649,10 @@ func validateEncodedDirectory(encoded []byte, roots, flat []*directoryNode) erro
 		return redactedFileSetError{class: ErrDICOMDIRWrite}
 	}
 	metaClass, _ := file.Meta.GetUID(tagMediaStorageSOPClassUIDDirectory)
+	metaInstance, _ := file.Meta.GetUID(tagMediaStorageSOPInstanceUIDDirectory)
+	if validateDirectoryFileSetUID(file.Dataset, metaInstance) != nil {
+		return redactedFileSetError{class: ErrDICOMDIRWrite}
+	}
 	if metaClass != mediaStorageDirectoryStorageUID {
 		return redactedFileSetError{class: ErrDICOMDIRWrite}
 	}
@@ -457,47 +673,34 @@ func validateEncodedDirectory(encoded []byte, roots, flat []*directoryNode) erro
 		}
 		byOffset[uint32(offset)] = item
 	}
-	visited := map[uint32]bool{}
-	pending := []uint32{first}
-	for len(pending) != 0 {
-		offset := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-		if offset == 0 || visited[offset] {
-			if offset != 0 && visited[offset] {
-				return redactedFileSetError{class: ErrDICOMDIRWrite}
-			}
-			continue
-		}
-		item := byOffset[offset]
-		if item == nil {
-			return redactedFileSetError{class: ErrDICOMDIRWrite}
-		}
-		visited[offset] = true
-		next, ok := uint32Value(item, tagOffsetNextDirectoryRecord)
-		if !ok {
-			return redactedFileSetError{class: ErrDICOMDIRWrite}
-		}
-		lower, ok := uint32Value(item, tagOffsetLowerLevelRecord)
-		if !ok {
-			return redactedFileSetError{class: ErrDICOMDIRWrite}
-		}
-		if next != 0 {
-			pending = append(pending, next)
-		}
-		if lower != 0 {
-			pending = append(pending, lower)
+	legacy := false
+	for _, node := range flat {
+		if node.typ == recordTypeMRDR {
+			legacy = true
 		}
 	}
-	if len(visited) != len(flat) {
-		return redactedFileSetError{class: ErrDICOMDIRWrite}
-	}
-	references, err := validateDirectoryDataSet(file.Dataset)
+	references, err := validateDirectoryDataSetLegacy(file.Dataset, legacy, admission...)
 	if err != nil {
 		return redactedFileSetError{class: ErrDICOMDIRWrite}
 	}
+	// Check every relocated edge, including physical MRDR targets.
+	for _, node := range flat {
+		item := byOffset[node.offset]
+		next, okNext := uint32Value(item, tagOffsetNextDirectoryRecord)
+		lower, okLower := uint32Value(item, tagOffsetLowerLevelRecord)
+		if !okNext || !okLower || next != nodeOffset(node.next) || lower != firstChildOffset(node) {
+			return ErrDICOMDIRWrite
+		}
+		if node.mrdr != nil {
+			target, ok := uint32Value(item, tagMRDRDirectoryRecordOffset)
+			if !ok || target != nodeOffset(node.mrdr) {
+				return ErrDICOMDIRWrite
+			}
+		}
+	}
 	expected := make([]FileRecord, 0)
 	for _, node := range flat {
-		if node.typ != RecordTypePatient && node.typ != RecordTypeStudy && node.typ != RecordTypeSeries {
+		if standardFileRecordType(node.typ) {
 			expected = append(expected, node.record)
 		}
 	}
@@ -509,7 +712,7 @@ func validateEncodedDirectory(encoded []byte, roots, flat []*directoryNode) erro
 		if !equalFileID(got.fileID, want.FileID) || got.recordType != want.RecordType ||
 			!encodedSelectionMatchesRecord(got.selection, want) || got.sopClassUID != want.SOPClassUID ||
 			got.sopInstanceUID != want.SOPInstanceUID || got.transferSyntaxUID != want.TransferSyntaxUID ||
-			!equalStrings(got.relatedGeneralSOPClassUIDs, want.RelatedGeneralSOPClassUIDs) {
+			!equalStrings(got.relatedGeneralSOPClassUIDs, want.RelatedGeneralSOPClassUIDs) || !directoryKeysEqual(got.selection.keys, want.keys) {
 			return redactedFileSetError{class: ErrDICOMDIRWrite}
 		}
 	}
@@ -555,8 +758,12 @@ func (f *FileSet) revalidateSources(ctx context.Context, records []sourceSnapsho
 		if readErr != nil || closeErr != nil {
 			return sourceValidationError{sourceIndex: sourceIndex}
 		}
-		current, currentErr := fileRecordFromIndex(stored.record.FileID, result)
-		if currentErr != nil || !sameReferencedIdentity(stored.record, current) {
+		current, currentErr := fileRecordFromIndex(stored.record.FileID, result, f.options.InventMissingKeys || len(stored.record.InventedKeys) > 0)
+		adoptInventedKeys(&current, stored.record)
+		if currentErr == nil {
+			currentErr = f.readDirectoryKeys(ctx, &current)
+		}
+		if currentErr != nil || !sameReferencedIdentity(stored.record, current) || !directoryKeysEqual(stored.record.keys, current.keys) {
 			return sourceValidationError{sourceIndex: sourceIndex}
 		}
 	}
@@ -601,6 +808,15 @@ func CommitDICOMDIR(ctx context.Context, fileSet *FileSet, options WriteOptions)
 	if rootErr != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(fileSet.rootInfo, rootInfo) {
 		return WriteReport{}, redactedFileSetError{class: ErrSourceChanged}
 	}
+	fileSet.mu.RLock()
+	imported := fileSet.directory
+	fileSet.mu.RUnlock()
+	if imported != nil && !imported.matches(ctx) {
+		if err := ctx.Err(); err != nil {
+			return WriteReport{}, err
+		}
+		return WriteReport{}, ErrSourceChanged
+	}
 	destination := filepath.Join(fileSet.root, "DICOMDIR")
 	var previous fsSnapshot
 	if info, statErr := os.Lstat(destination); statErr == nil {
@@ -616,7 +832,12 @@ func CommitDICOMDIR(ctx context.Context, fileSet *FileSet, options WriteOptions)
 		return WriteReport{}, redactedFileSetError{class: ErrTransaction}
 	}
 	tempPath := temp.Name()
-	defer func() { _ = os.Remove(tempPath) }()
+	defer func() {
+		root, err := os.Lstat(fileSet.root)
+		if err == nil && os.SameFile(fileSet.rootInfo, root) {
+			_ = os.Remove(tempPath)
+		}
+	}()
 	if chmodErr := temp.Chmod(0o600); chmodErr != nil {
 		temp.Close()
 		return WriteReport{}, redactedFileSetError{class: ErrTransaction}
@@ -637,10 +858,10 @@ func CommitDICOMDIR(ctx context.Context, fileSet *FileSet, options WriteOptions)
 		fileSet.mu.RUnlock()
 		return WriteReport{}, redactedFileSetError{class: ErrSourceChanged}
 	}
-	records := append([]sourceSnapshot(nil), fileSet.records...)
+	records := snapshotFileRecords(fileSet.records)
 	fileSetOptions := fileSet.options
 	fileSet.mu.RUnlock()
-	readOptions, limitErr := directoryReadOptions(maxBytes, directoryRecordCount(records))
+	readOptions, limitErr := directoryReadOptions(maxBytes, report.Records, report.extraElements)
 	if limitErr != nil {
 		return WriteReport{}, limitErr
 	}
@@ -656,10 +877,33 @@ func CommitDICOMDIR(ctx context.Context, fileSet *FileSet, options WriteOptions)
 	if err := ctx.Err(); err != nil {
 		return WriteReport{}, err
 	}
+	unlock, err := lockDirectoryPublication(ctx, fileSet.rootInfo)
+	if err != nil {
+		return WriteReport{}, err
+	}
+	defer unlock()
+	if options.PublicationGuard != nil {
+		if err := options.PublicationGuard(ctx, destination); err != nil {
+			return WriteReport{}, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return WriteReport{}, err
+	}
 	fileSet.mu.RLock()
 	defer fileSet.mu.RUnlock()
 	if fileSet.revision != report.revision {
 		return WriteReport{}, redactedFileSetError{class: ErrSourceChanged}
+	}
+	currentRoot, rootErr := os.Lstat(fileSet.root)
+	if rootErr != nil || !os.SameFile(fileSet.rootInfo, currentRoot) || currentRoot.Mode()&os.ModeSymlink != 0 {
+		return WriteReport{}, ErrSourceChanged
+	}
+	if imported != nil && !imported.matches(ctx) {
+		if err := ctx.Err(); err != nil {
+			return WriteReport{}, err
+		}
+		return WriteReport{}, ErrSourceChanged
 	}
 	if !sameDestinationSnapshot(destination, previous) {
 		return WriteReport{}, redactedFileSetError{class: ErrTransaction}
@@ -692,29 +936,19 @@ func sameDestinationSnapshot(path string, snapshot fsSnapshot) bool {
 // ParseFileSet strictly imports a DICOMDIR authored within the supported IMAGE
 // hierarchy and revalidates every active reference against its source file.
 func ParseFileSet(path string) (*FileSet, error) {
-	absPath, err := filepath.Abs(path)
-	if err != nil || filepath.Base(absPath) != "DICOMDIR" {
-		return nil, redactedFileSetError{class: ErrInvalidRecord}
-	}
-	if err := exactFileIDSpelling(context.Background(), filepath.Dir(absPath), FileID{"DICOMDIR"}); err != nil {
-		return nil, redactedFileSetError{class: ErrInvalidRecord}
-	}
-	readOptions, err := directoryReadOptions(64<<20, defaultMaxFileSetFiles*4)
-	if err != nil {
-		return nil, err
-	}
-	return parseFileSet(context.Background(), absPath, readOptions, Options{})
+	return ParseFileSetWithOptions(context.Background(), path, Options{})
 }
 
-func directoryReadOptions(maxBytes int64, maxRecords int) (object.ReadFileOptions, error) {
-	if maxBytes <= 0 || maxRecords < 0 || maxRecords > (math.MaxInt-32)/16 {
+func directoryReadOptions(maxBytes int64, maxRecords, extraElements int) (object.ReadFileOptions, error) {
+	const elementsPerRecord = 16
+	if maxBytes <= 0 || maxRecords < 0 || extraElements < 0 || extraElements > math.MaxInt-32 || maxRecords > (math.MaxInt-32-extraElements)/elementsPerRecord {
 		return object.ReadFileOptions{}, ErrResourceLimit
 	}
 	return object.ReadFileOptions{
 		MaxElementBytes:  16 << 20,
 		MaxTotalBytes:    maxBytes,
 		MaxSequenceDepth: 64,
-		MaxElements:      maxRecords*16 + 32,
+		MaxElements:      maxRecords*elementsPerRecord + 32 + extraElements,
 		MaxFragments:     200_000,
 		SkipPixelData:    true,
 	}, nil
@@ -724,102 +958,12 @@ func parseFileSet(ctx context.Context, path string, readOptions object.ReadFileO
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, redactedFileSetError{class: ErrInvalidRecord}
-	}
-	root := filepath.Dir(absPath)
-	handle, _, err := OpenReferencedFile(root, Reference{FileID: []string{filepath.Base(absPath)}})
-	if err != nil {
-		return nil, redactedFileSetError{class: ErrInvalidRecord}
-	}
-	file, readErr := object.ReadFileWithOptions(handle, readOptions)
-	closeErr := handle.Close()
-	if readErr != nil {
-		if isParserResourceLimit(readErr) {
-			return nil, redactedFileSetError{class: ErrResourceLimit}
-		}
-		return nil, redactedFileSetError{class: ErrInvalidRecord}
-	}
-	if closeErr != nil {
-		return nil, redactedFileSetError{class: ErrInvalidRecord}
-	}
-	defer file.Close()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	classUID, classOK := requiredUID(file.Meta, tagMediaStorageSOPClassUIDDirectory)
-	uid, uidOK := requiredUID(file.Meta, tagMediaStorageSOPInstanceUIDDirectory)
-	transferSyntaxUID, syntaxOK := requiredUID(file.Meta, tagTransferSyntaxUIDDirectory)
-	if !classOK || !uidOK || !syntaxOK || classUID != mediaStorageDirectoryStorageUID || !validUID(uid) ||
-		transferSyntaxUID != transfer.ExplicitVRLittleEndian.UID || file.TransferSyntax.UID != transfer.ExplicitVRLittleEndian.UID {
-		return nil, ErrInvalidRecord
-	}
-	id, idOK := typeTwoStringWithVR(file.Dataset, tagFileSetID, core.VRCS)
-	if !idOK {
-		return nil, ErrInvalidRecord
-	}
-	descriptorValues, descriptorPresent := stringsWithVR(file.Dataset, tagFileSetDescriptorFileID, core.VRCS)
-	if file.Dataset.Has(tagFileSetDescriptorFileID) && !descriptorPresent {
-		return nil, ErrInvalidRecord
-	}
-	var descriptor FileID
-	if len(descriptorValues) != 0 {
-		descriptor, err = NewFileID(descriptorValues...)
-		if err != nil {
-			return nil, err
-		}
-	}
-	descriptorCharacterSet, descriptorCharacterSetOK := stringWithVR(file.Dataset, tagDescriptorCharacterSet, core.VRCS)
-	if file.Dataset.Has(tagDescriptorCharacterSet) && (!descriptorCharacterSetOK || descriptorCharacterSet == "") {
-		return nil, ErrInvalidRecord
-	}
-	if len(descriptor) == 0 && file.Dataset.Has(tagDescriptorCharacterSet) {
-		return nil, ErrInvalidRecord
-	}
-	declared, err := validateDirectoryDataSet(file.Dataset)
+	snapshot, err := readDirectorySnapshot(ctx, path, sourceOptions, sourceOptions.LegacyMRDR, readOptions.MaxTotalBytes)
 	if err != nil {
 		return nil, err
 	}
-	sourceOptions.FileSetUID = uid
-	sourceOptions.FileSetID = id
-	sourceOptions.DescriptorFileID = descriptor
-	sourceOptions.DescriptorCharacterSet = descriptorCharacterSet
-	parsed, err := NewFileSet(root, sourceOptions)
-	if err != nil {
-		return nil, err
-	}
-	fileIDs := make([]FileID, len(declared))
-	for i := range declared {
-		fileIDs[i] = declared[i].fileID
-	}
-	if _, err := validateExactFileIDSpellings(ctx, root, fileIDs); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, redactedFileSetError{class: ErrInvalidRecord}
-	}
-	for _, reference := range declared {
-		if err := parsed.add(ctx, reference.fileID, false); err != nil {
-			return nil, err
-		}
-		parsed.mu.RLock()
-		added := parsed.records[len(parsed.records)-1].record
-		parsed.mu.RUnlock()
-		if added.RecordType != reference.recordType || added.SOPClassUID != reference.sopClassUID ||
-			added.SOPInstanceUID != reference.sopInstanceUID || added.TransferSyntaxUID != reference.transferSyntaxUID ||
-			!encodedSelectionMatchesRecord(reference.selection, added) ||
-			!equalStrings(added.RelatedGeneralSOPClassUIDs, reference.relatedGeneralSOPClassUIDs) {
-			return nil, ErrInvalidRecord
-		}
-	}
-	if err := parsed.validateDescriptor(ctx); err != nil {
-		return nil, err
-	}
-	return parsed, nil
+	set, _, err := prepareImportedFileSet(ctx, snapshot, nil, FileSetUpdateOptions{Mode: FileSetAppend, SourceOptions: sourceOptions, LegacyMRDR: sourceOptions.LegacyMRDR, MaxBytes: readOptions.MaxTotalBytes})
+	return set, err
 }
 
 func isParserResourceLimit(err error) bool {
@@ -852,6 +996,9 @@ func (f *FileSet) sortedRecordsSnapshot() []sourceSnapshot {
 func directoryRecordCount(records []sourceSnapshot) int {
 	patients, studies, series := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, stored := range records {
+		if rootFileRecordType(stored.record.RecordType) {
+			continue
+		}
 		patients[stored.record.PatientID] = true
 		studies[stored.record.StudyInstanceUID] = true
 		series[stored.record.SeriesInstanceUID] = true

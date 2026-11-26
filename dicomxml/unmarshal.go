@@ -3,9 +3,7 @@ package dicomxml
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -17,10 +15,12 @@ import (
 	"unicode"
 
 	"github.com/ThalesMMS/dicom-go/core"
-	"github.com/ThalesMMS/dicom-go/dicomjson"
 	"github.com/ThalesMMS/dicom-go/dictionary"
 	"github.com/ThalesMMS/dicom-go/dictionary/std"
+	"github.com/ThalesMMS/dicom-go/internal/valueencode"
 	"github.com/ThalesMMS/dicom-go/object"
+
+	"golang.org/x/text/encoding/ianaindex"
 )
 
 var (
@@ -32,9 +32,12 @@ type nativeAttribute struct {
 	tag, vr, keyword, privateCreator string
 	values                           []string
 	persons                          []nativePersonName
-	items                            [][]nativeAttribute
-	inline                           *string
+	items                            []core.DataSet
+	inline                           []byte
+	element                          core.Element
 	bulk                             *BulkDataReference
+	// inlineBinary marks an element whose value came from InlineBinary.
+	inlineBinary bool
 }
 
 type nativePersonName struct {
@@ -58,6 +61,10 @@ func Decode(r io.Reader, dict dictionary.DataDictionary, opts UnmarshalOptions) 
 }
 
 func DecodeContext(ctx context.Context, r io.Reader, dict dictionary.DataDictionary, opts UnmarshalOptions) (*object.Object, error) {
+	return decodeContext(ctx, r, dict, opts, nil)
+}
+
+func decodeContext(ctx context.Context, r io.Reader, dict dictionary.DataDictionary, opts UnmarshalOptions, visit func(Attribute) error) (*object.Object, error) {
 	if r == nil {
 		return nil, &Error{Op: "decode", Err: fmt.Errorf("%w: nil reader", ErrInvalidXML)}
 	}
@@ -81,46 +88,17 @@ func DecodeContext(ctx context.Context, r io.Reader, dict dictionary.DataDiction
 		return nil, &Error{Op: "decode", Err: fmt.Errorf("%w: ResolveBulkData requires a resolver", ErrInvalidXML)}
 	}
 
-	limited := &maxBytesReader{reader: &contextReader{ctx: b.ctx, reader: r}, remaining: b.limits.MaxXMLBytes + 1}
-	data, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, &Error{Op: "decode", Err: err}
-	}
-	if int64(len(data)) > b.limits.MaxXMLBytes {
-		return nil, &Error{Op: "decode", Err: fmt.Errorf("%w: got more than %d", ErrMaxXMLBytesExceeded, b.limits.MaxXMLBytes)}
-	}
-	attrs, err := parseDocument(data, b, dict, opts.AllowMissingKeyword)
+	limited := &maxBytesReader{reader: &contextReader{ctx: b.ctx, reader: r}, remaining: b.limits.MaxXMLBytes}
+	elements, err := parseDocument(limited, b, dict, opts, visit)
 	if err != nil {
 		return nil, err
 	}
-	dataset, err := nativeDatasetToJSON(b.ctx, attrs, dict, opts, b, "/NativeDicomModel")
-	if err != nil {
-		return nil, err
+	if visit != nil {
+		return nil, nil
 	}
-	encodedJSON, err := json.Marshal(dataset)
-	if err != nil {
-		return nil, &Error{Op: "decode", Err: fmt.Errorf("bridge DICOM JSON: %w", err)}
-	}
-	obj, err := dicomjson.UnmarshalContext(b.ctx, encodedJSON, dict, dicomjson.UnmarshalOptions{
-		TextOptions:    opts.TextOptions,
-		ByteOrder:      opts.ByteOrder,
-		TransferSyntax: opts.TransferSyntax,
-		Limits: dicomjson.Limits{
-			MaxJSONBytes:         jsonLimit(b.limits.MaxXMLBytes),
-			MaxInlineBinaryBytes: b.limits.MaxTotalBinaryBytes,
-			MaxTotalBinaryBytes:  b.limits.MaxTotalBinaryBytes,
-			MaxSequenceDepth:     b.limits.MaxSequenceDepth,
-			MaxElements:          b.limits.MaxElements,
-			MaxSequenceItems:     b.limits.MaxSequenceItems,
-		},
-	})
-	if err != nil {
-		translated := translateJSONLimit(err)
-		if translated == err && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			translated = fmt.Errorf("%w: %v", ErrInvalidXML, err)
-		}
-		return nil, &Error{Op: "decode", Err: translated}
-	}
+	obj := object.FromElementsWithTextOptions(elements, dict, opts.TextOptions)
+	obj.SetValueByteOrder(opts.ByteOrder)
+
 	if opts.BulkDataPolicy == ResolveBulkData {
 		if err := resolveObjectBulkData(b.ctx, obj, dict, opts, b); err != nil {
 			return nil, err
@@ -151,8 +129,16 @@ type maxBytesReader struct {
 }
 
 func (r *maxBytesReader) Read(p []byte) (int, error) {
-	if r.remaining <= 0 {
-		return 0, io.EOF
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.remaining == 0 {
+		var probe [1]byte
+		n, err := r.reader.Read(probe[:])
+		if n != 0 {
+			return 0, ErrMaxXMLBytesExceeded
+		}
+		return 0, err
 	}
 	if int64(len(p)) > r.remaining {
 		p = p[:r.remaining]
@@ -162,16 +148,28 @@ func (r *maxBytesReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func parseDocument(data []byte, b *budget, dict dictionary.DataDictionary, allowMissingKeyword bool) ([]nativeAttribute, error) {
-	dec := xml.NewDecoder(bytes.NewReader(data))
+// CharsetReader decodes an XML document whose declaration names an encoding
+// other than UTF-8 (DCMTK dcm2xml writes ISO-8859-1, for example), using the
+// IANA character set registry; unknown encodings are an error.
+func CharsetReader(label string, input io.Reader) (io.Reader, error) {
+	enc, err := ianaindex.IANA.Encoding(label)
+	if err != nil || enc == nil {
+		return nil, fmt.Errorf("unsupported XML encoding %q", label)
+	}
+	return enc.NewDecoder().Reader(input), nil
+}
+
+func parseDocument(reader io.Reader, b *budget, dict dictionary.DataDictionary, opts UnmarshalOptions, visit func(Attribute) error) ([]core.Element, error) {
+	dec := xml.NewDecoder(reader)
 	dec.Strict = true
+	dec.CharsetReader = CharsetReader
 	for {
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil, &Error{Op: "decode", Err: fmt.Errorf("%w: missing root element", ErrInvalidXML)}
 			}
-			return nil, &Error{Op: "decode", Err: fmt.Errorf("%w: %v", ErrInvalidXML, err)}
+			return nil, decodeTokenError("", err)
 		}
 		switch token := token.(type) {
 		case xml.ProcInst:
@@ -190,14 +188,14 @@ func parseDocument(data []byte, b *budget, dict dictionary.DataDictionary, allow
 			if token.Name.Space != Namespace || token.Name.Local != "NativeDicomModel" {
 				return nil, invalidXML("/", "root must be NativeDicomModel in namespace %q", Namespace)
 			}
-			if err := validateRootAttributes(token.Attr); err != nil {
+			if err := validateRootAttributes(token.Attr, opts.AllowForeignRootAttributes); err != nil {
 				return nil, err
 			}
-			attrs, err := parseDataSet(dec, token, b, dict, allowMissingKeyword, 0, "/NativeDicomModel")
+			attrs, err := parseDataSet(dec, token, b, dict, opts, 0, "/NativeDicomModel", visit)
 			if err != nil {
 				return nil, err
 			}
-			if err := ensureDocumentEOF(dec); err != nil {
+			if err := ensureDocumentEOF(dec, b); err != nil {
 				return nil, err
 			}
 			return attrs, nil
@@ -205,10 +203,19 @@ func parseDocument(data []byte, b *budget, dict dictionary.DataDictionary, allow
 	}
 }
 
-func validateRootAttributes(attrs []xml.Attr) error {
+// xmlSchemaInstanceNamespace holds the schemaLocation hints some servers add
+// to the root element.
+const xmlSchemaInstanceNamespace = "http://www.w3.org/2001/XMLSchema-instance"
+
+func validateRootAttributes(attrs []xml.Attr, allowForeign bool) error {
 	space := false
 	defaultNamespace := false
 	for _, attr := range attrs {
+		if allowForeign && (attr.Name.Space == "xmlns" || attr.Name.Space == xmlSchemaInstanceNamespace) {
+			// A prefix declaration or an XML Schema instance hint carries no
+			// DICOM content.
+			continue
+		}
 		// encoding/xml may expose an explicit default namespace declaration as
 		// an attribute in addition to resolving StartElement.Name.Space.
 		if attr.Name.Space == "" && attr.Name.Local == "xmlns" && attr.Value == Namespace {
@@ -227,20 +234,20 @@ func validateRootAttributes(attrs []xml.Attr) error {
 		}
 		return invalidXML("/NativeDicomModel", "unexpected root attribute %s", attr.Name.Local)
 	}
-	if !space {
+	if !space && !allowForeign {
 		return invalidXML("/NativeDicomModel", `missing xml:space="preserve"`)
 	}
 	return nil
 }
 
-func ensureDocumentEOF(dec *xml.Decoder) error {
+func ensureDocumentEOF(dec *xml.Decoder, b *budget) error {
 	for {
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
-			return invalidXML("/", "%v", err)
+			return decodeTokenError("/", err)
 		}
 		switch token := token.(type) {
 		case xml.CharData:
@@ -255,15 +262,17 @@ func ensureDocumentEOF(dec *xml.Decoder) error {
 	}
 }
 
-func parseDataSet(dec *xml.Decoder, parent xml.StartElement, b *budget, dict dictionary.DataDictionary, allowMissingKeyword bool, depth int, path string) ([]nativeAttribute, error) {
+func parseDataSet(dec *xml.Decoder, parent xml.StartElement, b *budget, dict dictionary.DataDictionary, opts UnmarshalOptions, depth int, path string, visit func(Attribute) error) ([]core.Element, error) {
 	var attrs []nativeAttribute
+	// Bits Allocated of this data set or item, for OW Pixel Data.
+	var bits int64
 	for {
 		if err := b.check(); err != nil {
 			return nil, &Error{Op: "decode", Path: path, Err: err}
 		}
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if err != nil {
-			return nil, invalidXML(path, "%v", err)
+			return nil, decodeTokenError(path, err)
 		}
 		switch token := token.(type) {
 		case xml.Directive:
@@ -280,24 +289,62 @@ func parseDataSet(dec *xml.Decoder, parent xml.StartElement, b *budget, dict dic
 			if token.Name.Space != Namespace || token.Name.Local != "DicomAttribute" {
 				return nil, invalidXML(path, "unexpected element %s", token.Name.Local)
 			}
-			attr, err := parseAttribute(dec, token, b, dict, allowMissingKeyword, depth, path)
-			if err != nil {
-				return nil, err
-			}
-			attrs = append(attrs, attr)
 			if err := b.addElements(1, depth); err != nil {
 				return nil, &Error{Op: "decode", Path: path, Err: err}
 			}
+			attr, err := parseAttribute(dec, token, b, dict, opts, depth, path)
+			if err != nil {
+				return nil, err
+			}
+			if attr.element.Tag() == valueencode.BitsAllocatedTag {
+				bits = valueencode.BitsAllocated(attr.element, opts.ByteOrder)
+			}
+			if visit != nil {
+				attrPath := path + "/DicomAttribute[@tag='" + attr.tag + "']"
+				elem := attr.element
+				if attr.inlineBinary {
+					elem = toValueByteOrder(elem, bits, opts)
+				}
+				if opts.BulkDataPolicy == ResolveBulkData {
+					elem, err = resolveElementBulkData(b.ctx, elem, dict, opts, b, attrPath, bits)
+					if err != nil {
+						return nil, err
+					}
+				}
+				// The visitor owns the value. Retain only creator text needed
+				// to validate final private allocation and duplicate tags.
+				if attr.privateCreator == "" && dictionary.IsPrivateCreatorTag(elem.Tag()) {
+					if value, ok := elem.Value.(core.StringValue); ok {
+						attr.element.Value = append(core.StringValue(nil), value...)
+					} else {
+						attr.element.Value = nil
+					}
+				} else {
+					attr.element.Value = nil
+				}
+				if err := visit(Attribute{Element: elem, PrivateCreator: attr.privateCreator, Path: attrPath}); err != nil {
+					return nil, &Error{Op: "decode", Path: attrPath, Err: err}
+				}
+			}
+			attrs = append(attrs, attr)
 		case xml.EndElement:
 			if token.Name != parent.Name {
 				return nil, invalidXML(path, "unexpected closing element %s", token.Name.Local)
 			}
-			return attrs, nil
+			if visit == nil {
+				// The whole data set is known, in whatever order it was written.
+				for i := range attrs {
+					if attrs[i].inlineBinary {
+						attrs[i].element = toValueByteOrder(attrs[i].element, bits, opts)
+					}
+				}
+			}
+			return assembleDataSet(attrs, b, path)
 		}
 	}
 }
 
-func parseAttribute(dec *xml.Decoder, start xml.StartElement, b *budget, dict dictionary.DataDictionary, allowMissingKeyword bool, depth int, parentPath string) (nativeAttribute, error) {
+func parseAttribute(dec *xml.Decoder, start xml.StartElement, b *budget, dict dictionary.DataDictionary, opts UnmarshalOptions, depth int, parentPath string) (nativeAttribute, error) {
 	var out nativeAttribute
 	seen := map[string]bool{}
 	for _, attr := range start.Attr {
@@ -325,10 +372,16 @@ func parseAttribute(dec *xml.Decoder, start xml.StartElement, b *budget, dict di
 		return out, invalidXML(parentPath, "tag %q must be eight uppercase hexadecimal digits", out.tag)
 	}
 	tag, _ := core.ParseTag(out.tag)
-	if tag.IsGroupLength() {
+	// A private data element at block offset 00 normalizes to gggg0000; with
+	// its privateCreator it is not a group length.
+	if tag.IsGroupLength() && out.privateCreator == "" {
 		return out, invalidXML(parentPath, "group length attributes are prohibited")
 	}
 	path := parentPath + "/DicomAttribute[@tag='" + out.tag + "']"
+	if out.vr == "" && out.privateCreator != "" {
+		// The normalized tag names no dictionary entry of its own.
+		return out, invalidXML(path, "VR is required for a private data element")
+	}
 	if out.vr == "" {
 		entry, ok := dict.ByTag(tag)
 		if !ok || entry.VR == "" {
@@ -338,29 +391,29 @@ func parseAttribute(dec *xml.Decoder, start xml.StartElement, b *budget, dict di
 	}
 	vr, err := core.ParseVR(out.vr)
 	if err != nil {
-		return out, invalidXML(path, "%v", err)
+		return out, decodeTokenError(path, err)
 	}
 	if out.keyword != "" {
 		if entry, ok := dict.ByTag(tag); ok && entry.Keyword != "" && out.keyword != entry.Keyword {
 			return out, invalidXML(path, "keyword %q does not match %q", out.keyword, entry.Keyword)
 		}
-	} else if entry, ok := dict.ByTag(tag); ok && entry.Keyword != "" && !allowMissingKeyword {
+	} else if entry, ok := dict.ByTag(tag); ok && entry.Keyword != "" && !opts.AllowMissingKeyword {
 		return out, invalidXML(path, "keyword %q is required for known tag %s", entry.Keyword, out.tag)
 	}
 	if out.privateCreator != "" {
-		if !tag.IsPrivate() || tag.Element > 0x00ff {
+		if !dictionary.IsPrivateGroup(tag.Group) || tag.Element > 0x00ff {
 			return out, invalidXML(path, "privateCreator requires a normalized private tag gggg00ee")
 		}
-	} else if tag.IsPrivate() && tag.Element >= 0x1000 {
+	} else if dictionary.IsPrivateDataTag(tag) {
 		return out, invalidXML(path, "private data tag must be normalized and include privateCreator")
 	}
 
 	kind := ""
 	expected := 1
 	for {
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if err != nil {
-			return out, invalidXML(path, "%v", err)
+			return out, decodeTokenError(path, err)
 		}
 		switch token := token.(type) {
 		case xml.Directive:
@@ -409,11 +462,11 @@ func parseAttribute(dec *xml.Decoder, start xml.StartElement, b *budget, dict di
 				if err := b.addItem(depth + 1); err != nil {
 					return out, &Error{Op: "decode", Path: path, Err: err}
 				}
-				item, err := parseDataSet(dec, token, b, dict, allowMissingKeyword, depth+1, fmt.Sprintf("%s/Item[%d]", path, expected))
+				item, err := parseDataSet(dec, token, b, dict, opts, depth+1, fmt.Sprintf("%s/Item[%d]", path, expected), nil)
 				if err != nil {
 					return out, err
 				}
-				out.items = append(out.items, item)
+				out.items = append(out.items, core.DataSet{Elements: item})
 				expected++
 			case "PersonName":
 				if vr != core.VRPN {
@@ -435,35 +488,17 @@ func parseAttribute(dec *xml.Decoder, start xml.StartElement, b *budget, dict di
 				if len(token.Attr) != 0 {
 					return out, invalidXML(path, "InlineBinary has unexpected attributes")
 				}
-				encoded, err := parseTextElementLimit(dec, token, b, path+"/InlineBinary", b.limits.MaxXMLBytes, ErrMaxXMLBytesExceeded)
+				decoded, err := parseInlineBinary(dec, token, b, path+"/InlineBinary")
 				if err != nil {
 					return out, err
 				}
-				encoded = stripXMLWhitespace(encoded)
-				decodedLength, err := exactBase64DecodedLength(encoded)
-				if err != nil {
-					return out, invalidXML(path+"/InlineBinary", "invalid base64: %v", err)
-				}
-				if err := b.addBinary(decodedLength, true); err != nil {
-					return out, &Error{Op: "decode", Path: path + "/InlineBinary", Err: err}
-				}
-				if decodedLength == 0 {
-					return out, invalidXML(path+"/InlineBinary", "InlineBinary must not represent a zero-length Value Field")
-				}
-				decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
-				if err != nil {
-					return out, invalidXML(path+"/InlineBinary", "invalid base64: %v", err)
-				}
-				if int64(len(decoded)) != decodedLength {
-					return out, invalidXML(path+"/InlineBinary", "decoded length mismatch")
-				}
-				out.inline = &encoded
+				out.inline = decoded
 				expected++
 			case "BulkData":
 				if expected != 1 || vr == core.VRSQ {
 					return out, invalidXML(path, "BulkData is not valid for VR %s or multiplicity", vr)
 				}
-				ref, err := parseBulkData(dec, token, tag, vr, path+"/BulkData")
+				ref, err := parseBulkData(dec, token, tag, vr, b, path+"/BulkData")
 				if err != nil {
 					return out, err
 				}
@@ -476,7 +511,12 @@ func parseAttribute(dec *xml.Decoder, start xml.StartElement, b *budget, dict di
 			if token.Name != start.Name {
 				return out, invalidXML(path, "unexpected closing element %s", token.Name.Local)
 			}
-			return out, nil
+			elem, err := attributeElement(out, dict, opts, b, path)
+			if err != nil {
+				return out, err
+			}
+			// Keep only the final value and private-allocation metadata.
+			return nativeAttribute{tag: out.tag, privateCreator: out.privateCreator, element: elem, inlineBinary: out.inline != nil}, nil
 		}
 	}
 }
@@ -499,9 +539,9 @@ func parseTextElement(dec *xml.Decoder, start xml.StartElement, b *budget, path 
 func parseTextElementLimit(dec *xml.Decoder, start xml.StartElement, b *budget, path string, limit int64, limitErr error) (string, error) {
 	var text strings.Builder
 	for {
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if err != nil {
-			return "", invalidXML(path, "%v", err)
+			return "", decodeTokenError(path, err)
 		}
 		switch token := token.(type) {
 		case xml.CharData:
@@ -522,31 +562,14 @@ func parseTextElementLimit(dec *xml.Decoder, start xml.StartElement, b *budget, 
 	}
 }
 
-func exactBase64DecodedLength(encoded string) (int64, error) {
-	if len(encoded)%4 != 0 {
-		return 0, fmt.Errorf("length is not a multiple of four")
-	}
-	padding := 0
-	if len(encoded) > 0 && encoded[len(encoded)-1] == '=' {
-		padding++
-	}
-	if len(encoded) > 1 && encoded[len(encoded)-2] == '=' {
-		padding++
-	}
-	if strings.Contains(encoded[:len(encoded)-padding], "=") {
-		return 0, fmt.Errorf("padding occurs before the end")
-	}
-	return int64(base64.StdEncoding.DecodedLen(len(encoded)) - padding), nil
-}
-
 func parsePersonName(dec *xml.Decoder, start xml.StartElement, b *budget, path string) (nativePersonName, error) {
 	var pn nativePersonName
 	groupIndex := map[string]int{"Alphabetic": 0, "Ideographic": 1, "Phonetic": 2}
 	last := -1
 	for {
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if err != nil {
-			return pn, invalidXML(path, "%v", err)
+			return pn, decodeTokenError(path, err)
 		}
 		switch token := token.(type) {
 		case xml.CharData:
@@ -582,9 +605,9 @@ func parseNameGroup(dec *xml.Decoder, start xml.StartElement, b *budget, path st
 	indices := map[string]int{"FamilyName": 0, "GivenName": 1, "MiddleName": 2, "NamePrefix": 3, "NameSuffix": 4}
 	last := -1
 	for {
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if err != nil {
-			return values, invalidXML(path, "%v", err)
+			return values, decodeTokenError(path, err)
 		}
 		switch token := token.(type) {
 		case xml.CharData:
@@ -615,7 +638,7 @@ func parseNameGroup(dec *xml.Decoder, start xml.StartElement, b *budget, path st
 	}
 }
 
-func parseBulkData(dec *xml.Decoder, start xml.StartElement, tag core.Tag, vr core.VR, path string) (BulkDataReference, error) {
+func parseBulkData(dec *xml.Decoder, start xml.StartElement, tag core.Tag, vr core.VR, b *budget, path string) (BulkDataReference, error) {
 	ref := BulkDataReference{Tag: tag, VR: vr}
 	for _, attr := range start.Attr {
 		if attr.Name.Space != "" {
@@ -651,9 +674,9 @@ func parseBulkData(dec *xml.Decoder, start xml.StartElement, tag core.Tag, vr co
 		}
 	}
 	for {
-		token, err := dec.Token()
+		token, err := checkedToken(dec, b)
 		if err != nil {
-			return ref, invalidXML(path, "%v", err)
+			return ref, decodeTokenError(path, err)
 		}
 		switch token := token.(type) {
 		case xml.CharData:
@@ -673,101 +696,14 @@ func parseBulkData(dec *xml.Decoder, start xml.StartElement, tag core.Tag, vr co
 	}
 }
 
-func nativeDatasetToJSON(ctx context.Context, attrs []nativeAttribute, dict dictionary.DataDictionary, opts UnmarshalOptions, b *budget, path string) (map[string]dicomjson.Element, error) {
-	out := make(map[string]dicomjson.Element, len(attrs))
-	alloc := newPrivateAllocator(attrs)
-	for _, attr := range attrs {
-		if err := ctx.Err(); err != nil {
-			return nil, &Error{Op: "decode", Path: path, Err: err}
-		}
-		tag, _ := core.ParseTag(attr.tag)
-		if attr.privateCreator != "" {
-			var err error
-			tag, err = alloc.allocate(tag, attr.privateCreator)
-			if err != nil {
-				return nil, &Error{Op: "decode", Path: path, Err: err}
-			}
-			creatorTag := core.NewTag(tag.Group, tag.Element>>8)
-			key := creatorTag.HexString()
-			if _, exists := out[key]; !exists {
-				out[key] = dicomjson.Element{VR: core.VRLO.String(), Value: []any{attr.privateCreator}}
-			}
-		}
-		key := tag.HexString()
-		if existing, exists := out[key]; exists {
-			if isMatchingPrivateCreator(tag, attr, existing) {
-				continue
-			}
-			return nil, invalidXML(path, "duplicate resolved tag %s", key)
-		}
-		entry := dicomjson.Element{VR: attr.vr}
-		switch {
-		case attr.bulk != nil:
-			ref := *attr.bulk
-			ref.Tag = tag
-			switch opts.BulkDataPolicy {
-			case PreserveBulkData, ResolveBulkData:
-				if ref.URI != "" {
-					entry.BulkDataURI = ref.URI
-				} else {
-					entry.BulkDataURI = "urn:uuid:" + ref.UUID
-				}
-			case RejectBulkData:
-				return nil, &Error{Op: "decode", Path: path + "/DicomAttribute[@tag='" + attr.tag + "']/BulkData", Err: ErrBulkDataRejected}
-			}
-		case attr.inline != nil:
-			if tag == core.TagPixelData && !opts.TransferSyntax.Encapsulated && looksEncapsulatedValueField(*attr.inline) {
-				return nil, &Error{Op: "decode", Path: path + "/DicomAttribute[@tag='" + attr.tag + "']/InlineBinary", Err: ErrTransferSyntaxRequired}
-			}
-			entry.InlineBinary = *attr.inline
-		case attr.vr == core.VRSQ.String():
-			entry.Value = make([]any, 0, len(attr.items))
-			for i, item := range attr.items {
-				nested, err := nativeDatasetToJSON(ctx, item, dict, opts, b, fmt.Sprintf("%s/DicomAttribute[@tag='%s']/Item[%d]", path, attr.tag, i+1))
-				if err != nil {
-					return nil, err
-				}
-				entry.Value = append(entry.Value, nested)
-			}
-		case attr.vr == core.VRPN.String():
-			entry.Value = make([]any, 0, len(attr.persons))
-			for _, pn := range attr.persons {
-				value := dicomjson.PersonNameComponents{}
-				if pn.groups[0] != nil {
-					value.Alphabetic = joinNameComponents(*pn.groups[0])
-				}
-				if pn.groups[1] != nil {
-					value.Ideographic = joinNameComponents(*pn.groups[1])
-				}
-				if pn.groups[2] != nil {
-					value.Phonetic = joinNameComponents(*pn.groups[2])
-				}
-				entry.Value = append(entry.Value, value)
-			}
-		default:
-			entry.Value = make([]any, len(attr.values))
-			for i, value := range attr.values {
-				entry.Value[i] = value
-			}
-		}
-		out[key] = entry
-	}
-	return out, nil
-}
-
-func isMatchingPrivateCreator(tag core.Tag, attr nativeAttribute, existing dicomjson.Element) bool {
-	if !tag.IsPrivate() || tag.Element < 0x0010 || tag.Element > 0x00ff || attr.vr != core.VRLO.String() || len(attr.values) != 1 {
-		return false
-	}
-	return existing.VR == core.VRLO.String() && len(existing.Value) == 1 && existing.Value[0] == attr.values[0]
-}
-
 func resolveObjectBulkData(ctx context.Context, obj *object.Object, dict dictionary.DataDictionary, opts UnmarshalOptions, b *budget) error {
 	if obj == nil {
 		return nil
 	}
-	for _, elem := range obj.SortedElements() {
-		resolved, err := resolveElementBulkData(ctx, elem, dict, opts, b, "/NativeDicomModel/DicomAttribute[@tag='"+elem.Tag().HexString()+"']")
+	elements := obj.SortedElements()
+	bits := elementsBitsAllocated(elements, opts.ByteOrder)
+	for _, elem := range elements {
+		resolved, err := resolveElementBulkData(ctx, elem, dict, opts, b, "/NativeDicomModel/DicomAttribute[@tag='"+elem.Tag().HexString()+"']", bits)
 		if err != nil {
 			return err
 		}
@@ -776,7 +712,10 @@ func resolveObjectBulkData(ctx context.Context, obj *object.Object, dict diction
 	return nil
 }
 
-func resolveElementBulkData(ctx context.Context, elem core.Element, dict dictionary.DataDictionary, opts UnmarshalOptions, b *budget, path string) (core.Element, error) {
+// resolveElementBulkData replaces BulkData references in elem, and in the
+// items of a sequence, with the resolved Value Field. bitsAllocated is that of
+// the data set or item holding elem.
+func resolveElementBulkData(ctx context.Context, elem core.Element, dict dictionary.DataDictionary, opts UnmarshalOptions, b *budget, path string, bitsAllocated int64) (core.Element, error) {
 	if err := ctx.Err(); err != nil {
 		return core.Element{}, &Error{Op: "decode", Path: path, Err: err}
 	}
@@ -789,7 +728,7 @@ func resolveElementBulkData(ctx context.Context, elem core.Element, dict diction
 		}
 		reader, err := opts.BulkDataResolver(ctx, ref)
 		if err != nil {
-			return core.Element{}, &Error{Op: "decode", Path: path, Err: fmt.Errorf("%w: %v", ErrBulkDataResolver, err)}
+			return core.Element{}, &Error{Op: "decode", Path: path, Err: fmt.Errorf("%w: %w", ErrBulkDataResolver, err)}
 		}
 		if reader == nil {
 			return core.Element{}, &Error{Op: "decode", Path: path, Err: fmt.Errorf("%w: resolver returned nil reader", ErrBulkDataResolver)}
@@ -806,24 +745,28 @@ func resolveElementBulkData(ctx context.Context, elem core.Element, dict diction
 			if !opts.TransferSyntax.Encapsulated {
 				return core.Element{}, &Error{Op: "decode", Path: path, Err: ErrTransferSyntaxRequired}
 			}
-			parsed, err := decodeEncapsulatedBulkData(ctx, elem, data, dict, opts, b)
+			fragments, err := decodeFragments(data, dict, opts, b)
 			if err != nil {
 				return core.Element{}, &Error{Op: "decode", Path: path, Err: err}
 			}
-			return parsed, nil
+			elem.Value = fragments
+			elem.Header.Length = core.UndefinedLength
+			elem.Header.LengthSet = true
+			return elem, nil
 		}
 		if err := validateResolvedValueLength(elem.VR(), len(data)); err != nil {
 			return core.Element{}, &Error{Op: "decode", Path: path, Err: err}
 		}
-		elem.Value = core.RawValue(core.CloneBytes(data))
+		elem.Value = core.RawValue(data)
 		elem.Header.Length = core.Length(len(data))
 		elem.Header.LengthSet = true
-		return elem, nil
+		return toValueByteOrder(elem, bitsAllocated, opts), nil
 	case core.SequenceValue:
 		for itemIndex := range value.Items {
+			itemBits := elementsBitsAllocated(value.Items[itemIndex].Elements, opts.ByteOrder)
 			for elementIndex := range value.Items[itemIndex].Elements {
 				nested := value.Items[itemIndex].Elements[elementIndex]
-				resolved, err := resolveElementBulkData(ctx, nested, dict, opts, b, fmt.Sprintf("%s/Item[%d]/DicomAttribute[@tag='%s']", path, itemIndex+1, nested.Tag().HexString()))
+				resolved, err := resolveElementBulkData(ctx, nested, dict, opts, b, fmt.Sprintf("%s/Item[%d]/DicomAttribute[@tag='%s']", path, itemIndex+1, nested.Tag().HexString()), itemBits)
 				if err != nil {
 					return core.Element{}, err
 				}
@@ -833,26 +776,6 @@ func resolveElementBulkData(ctx context.Context, elem core.Element, dict diction
 		elem.Value = value
 	}
 	return elem, nil
-}
-
-func decodeEncapsulatedBulkData(ctx context.Context, elem core.Element, data []byte, dict dictionary.DataDictionary, opts UnmarshalOptions, b *budget) (core.Element, error) {
-	dataset := map[string]dicomjson.Element{elem.Tag().HexString(): {VR: elem.VR().String(), InlineBinary: base64.StdEncoding.EncodeToString(data)}}
-	encoded, err := json.Marshal(dataset)
-	if err != nil {
-		return core.Element{}, err
-	}
-	obj, err := dicomjson.UnmarshalContext(ctx, encoded, dict, dicomjson.UnmarshalOptions{
-		TextOptions: opts.TextOptions, ByteOrder: opts.ByteOrder, TransferSyntax: opts.TransferSyntax,
-		Limits: dicomjson.Limits{MaxJSONBytes: jsonLimit(b.limits.MaxXMLBytes), MaxInlineBinaryBytes: int64(len(data)), MaxTotalBinaryBytes: int64(len(data)), MaxSequenceItems: b.limits.MaxSequenceItems},
-	})
-	if err != nil {
-		return core.Element{}, err
-	}
-	resolved, ok := obj.Get(elem.Tag())
-	if !ok {
-		return core.Element{}, fmt.Errorf("resolved Pixel Data is missing")
-	}
-	return resolved, nil
 }
 
 func validateResolvedValueLength(vr core.VR, size int) error {
@@ -876,9 +799,12 @@ func readResolvedBulk(reader io.Reader, b *budget) ([]byte, error) {
 	if remaining < 0 {
 		remaining = 0
 	}
-	data, err := io.ReadAll(io.LimitReader(&contextReader{ctx: b.ctx, reader: reader}, remaining+1))
+	data, err := io.ReadAll(&maxBytesReader{reader: &contextReader{ctx: b.ctx, reader: reader}, remaining: remaining})
+	if errors.Is(err, ErrMaxXMLBytesExceeded) {
+		return nil, ErrMaxBinaryBytesExceeded
+	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrBulkDataResolver, err)
+		return nil, fmt.Errorf("%w: %w", ErrBulkDataResolver, err)
 	}
 	if int64(len(data)) > remaining {
 		return nil, ErrMaxBinaryBytesExceeded
@@ -906,15 +832,23 @@ func newPrivateAllocator(attrs []nativeAttribute) *privateAllocator {
 	a := &privateAllocator{byGroup: map[uint16]map[string]uint16{}, used: map[uint16]map[uint16]bool{}}
 	for _, attr := range attrs {
 		tag, err := core.ParseTag(attr.tag)
-		if err != nil || !tag.IsPrivate() || tag.Element < 0x0010 || tag.Element > 0x00ff || len(attr.values) == 0 {
+		if err != nil || attr.privateCreator != "" || !dictionary.IsPrivateCreatorTag(tag) {
 			continue
 		}
 		if a.byGroup[tag.Group] == nil {
 			a.byGroup[tag.Group] = map[string]uint16{}
 			a.used[tag.Group] = map[uint16]bool{}
 		}
-		a.byGroup[tag.Group][attr.values[0]] = tag.Element
+		// A creator slot is occupied whatever its value, so that a block is
+		// never allocated over a creator kept as UN or empty.
 		a.used[tag.Group][tag.Element] = true
+		values, textual := attr.element.Value.(core.StringValue)
+		if attr.privateCreator == "" && attr.element.VR() == core.VRLO && textual && len(values) == 1 {
+			// A creator repeated in the group resolves to its first block.
+			if _, ok := a.byGroup[tag.Group][values[0]]; !ok {
+				a.byGroup[tag.Group][values[0]] = tag.Element
+			}
+		}
 	}
 	return a
 }
@@ -950,26 +884,6 @@ func inlineVR(vr core.VR) bool {
 	}
 }
 
-func stripXMLWhitespace(value string) string {
-	return strings.Map(func(r rune) rune {
-		if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
-			return -1
-		}
-		return r
-	}, value)
-}
-
-func looksEncapsulatedValueField(encoded string) bool {
-	if len(encoded) < 8 {
-		return false
-	}
-	prefix, err := base64.StdEncoding.DecodeString(encoded[:8])
-	if err != nil || len(prefix) < 4 {
-		return false
-	}
-	return looksEncapsulatedBytes(prefix)
-}
-
 func looksEncapsulatedBytes(data []byte) bool {
 	return len(data) >= 4 && (bytes.Equal(data[:4], []byte{0xfe, 0xff, 0x00, 0xe0}) ||
 		bytes.Equal(data[:4], []byte{0xff, 0xfe, 0xe0, 0x00}))
@@ -977,4 +891,15 @@ func looksEncapsulatedBytes(data []byte) bool {
 
 func invalidXML(path, format string, args ...any) error {
 	return &Error{Op: "decode", Path: path, Err: fmt.Errorf("%w: %s", ErrInvalidXML, fmt.Sprintf(format, args...))}
+}
+
+func checkedToken(dec *xml.Decoder, b *budget) (xml.Token, error) {
+	if err := b.check(); err != nil {
+		return nil, err
+	}
+	return dec.Token()
+}
+
+func decodeTokenError(path string, err error) error {
+	return &Error{Op: "decode", Path: path, Err: fmt.Errorf("%w: %w", ErrInvalidXML, err)}
 }

@@ -18,6 +18,19 @@ type Datetime struct {
 	// We use the negated version here for safer defaults - by default, without setting
 	// this field explicitly, the timezone will be included.
 	NoOffset bool
+	// LeapSecond reports a seconds component of 60 (a leap second). As in
+	// Time, the value is then held as hh:mm:59.999999999 so that it neither
+	// rolls over into the next minute or day nor sorts before earlier values
+	// of its minute; DCM and String render the seconds as 60.
+	LeapSecond bool
+
+	// leapFraction is the fraction of a leap second in nanoseconds.
+	leapFraction int
+}
+
+// clock returns the Time rendering dt's time of day.
+func (dt Datetime) clock() Time {
+	return Time{Time: dt.Time, Precision: dt.Precision, LeapSecond: dt.LeapSecond, leapFraction: dt.leapFraction}
 }
 
 // DCM converts time.Time value to dicom DT string. Values are truncated to the
@@ -33,7 +46,7 @@ func (dt Datetime) DCM() string {
 
 	// Check that at lead
 	if isIncluded(PrecisionHours, dt.Precision) {
-		builder.WriteString(Time{Time: dt.Time, Precision: dt.Precision}.DCM())
+		builder.WriteString(dt.clock().DCM())
 	}
 
 	// If we are not rendering the offset, return the current value
@@ -58,7 +71,7 @@ func (dt Datetime) String() string {
 	// Check that at lead
 	if isIncluded(PrecisionHours, dt.Precision) {
 		builder.WriteRune(' ')
-		builder.WriteString(Time{Time: dt.Time, Precision: dt.Precision}.String())
+		builder.WriteString(dt.clock().String())
 	}
 
 	// If we are not rendering the offset, return the current value
@@ -73,7 +86,8 @@ func (dt Datetime) String() string {
 }
 
 // ParseDatetime converts DICOM DT (datetime) value to time.Time, PrecisionLevel, and
-// offset presence as UTC.
+// offset presence as UTC. A leap second (SS=60) is clamped to
+// hh:mm:59.999999999 with LeapSecond set.
 func ParseDatetime(dtString string) (Datetime, error) {
 	matches := dtRegex.FindStringSubmatch(dtString)
 	if len(matches) == 0 {
@@ -93,6 +107,7 @@ func ParseDatetime(dtString string) (Datetime, error) {
 	if !validDateComponents(year, month, day) || !validTimeComponents(hours, minutes, seconds, nanos) {
 		return Datetime{}, ErrParseDT
 	}
+	leap, leapFraction := clampLeapSecond(&seconds, &nanos)
 
 	var hasOffset bool
 
@@ -136,8 +151,10 @@ func ParseDatetime(dtString string) (Datetime, error) {
 	)
 
 	return Datetime{
-		Time:      parsed,
-		Precision: precision,
-		NoOffset:  !hasOffset,
+		Time:         parsed,
+		Precision:    precision,
+		NoOffset:     !hasOffset,
+		LeapSecond:   leap,
+		leapFraction: leapFraction,
 	}, nil
 }

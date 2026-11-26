@@ -2,15 +2,17 @@ package dicomdir
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
-	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -114,6 +116,16 @@ type Limits struct {
 	MaxDepth       int
 	MaxPathBytes   int
 	MaxDiagnostics int
+	// Directory/key budgets account logical payload plus per-element/item
+	// allowances, including retained imports and planned logical aliases.
+	// Zero selects finite defaults. These are not RSS limits: common index
+	// metadata, decoder caches, temporary graphs/encoding passes and source
+	// bulk/profile/icon decoding have separately bounded lifetimes.
+	MaxDirectoryRecords    int
+	MaxRecordKeyBytes      int64
+	MaxTotalRecordKeyBytes int64
+	MaxRecordKeyElements   int
+	MaxRecordKeyDepth      int
 }
 
 // Options configures a new FileSet snapshot and its metadata-only indexer.
@@ -124,6 +136,19 @@ type Options struct {
 	DescriptorCharacterSet string
 	Limits                 Limits
 	IndexOptions           index.Options
+	// InventMissingKeys fills directory keys that are Type 1 in the
+	// DICOMDIR but absent or empty in the file (many are Type 2 in image
+	// IODs, and de-identified files lack them), as DCMTK dcmgpdir +I does,
+	// instead of refusing the file. Patient ID and Study ID derive from the
+	// Study Instance UID, and Series and Instance Number from their UIDs.
+	// Missing Study Date and Time use the study's source values, or Series,
+	// Acquisition or Content values when they agree across its files;
+	// otherwise they use 19000101 and 000000. FileRecord.InventedKeys names
+	// the filled keys. Source values are never replaced.
+	InventMissingKeys bool
+	// LegacyMRDR permits importing retired MRDR graphs. New FileSets still
+	// author direct references; emission also requires WriteOptions.LegacyMRDR.
+	LegacyMRDR bool
 }
 
 // ScanOptions controls recursive discovery beneath the file-set root.
@@ -186,6 +211,12 @@ type FileRecord struct {
 	SOPInstanceUID             string
 	TransferSyntaxUID          string
 	RelatedGeneralSOPClassUIDs []string
+	// InventedKeys names the keys Options.InventMissingKeys filled
+	// ("patient_id", "study_date", "study_time", "study_id",
+	// "series_number", "instance_number"); nil when none.
+	InventedKeys []string
+	keys         core.DataSet
+	keyBytes     int64
 }
 
 // Query selects records by exact directory selection keys.
@@ -242,6 +273,8 @@ type FileSet struct {
 	identities             map[fileIdentity]struct{}
 	diagnostics            []Diagnostic
 	revision               uint64
+	keyBytes               int64
+	directory              *directorySnapshot
 }
 
 // NewFileSet creates a snapshot rooted at an existing non-symlink directory.
@@ -319,6 +352,25 @@ func normalizeFileSetLimits(limits *Limits) error {
 	if limits.MaxFiles < 0 || limits.MaxDirectories < 0 || limits.MaxDepth < 0 || limits.MaxPathBytes < 0 || limits.MaxDiagnostics < 0 {
 		return ErrInvalidOptions
 	}
+	if limits.MaxDirectoryRecords < 0 || limits.MaxRecordKeyBytes < 0 || limits.MaxTotalRecordKeyBytes < 0 ||
+		limits.MaxRecordKeyElements < 0 || limits.MaxRecordKeyDepth < 0 || limits.MaxRecordKeyDepth > 128 {
+		return ErrInvalidOptions
+	}
+	if limits.MaxDirectoryRecords == 0 {
+		limits.MaxDirectoryRecords = defaultMaxDirectoryRecords
+	}
+	if limits.MaxRecordKeyBytes == 0 {
+		limits.MaxRecordKeyBytes = defaultMaxRecordKeyBytes
+	}
+	if limits.MaxTotalRecordKeyBytes == 0 {
+		limits.MaxTotalRecordKeyBytes = defaultMaxTotalRecordKeyBytes
+	}
+	if limits.MaxRecordKeyElements == 0 {
+		limits.MaxRecordKeyElements = defaultMaxRecordKeyElements
+	}
+	if limits.MaxRecordKeyDepth == 0 {
+		limits.MaxRecordKeyDepth = defaultMaxRecordKeyDepth
+	}
 	if limits.MaxFiles == 0 {
 		limits.MaxFiles = defaultMaxFileSetFiles
 	}
@@ -350,11 +402,11 @@ func portableOptionalLabel(value string) bool {
 func validUID(uid string) bool { return core.IsValidUID(uid) }
 
 func mintFileSetUID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
+	uid, err := core.NewUID()
+	if err != nil {
 		return "", redactedFileSetError{class: ErrInvalidOptions}
 	}
-	return "2.25." + new(big.Int).SetBytes(raw[:]).String(), nil
+	return uid, nil
 }
 
 type redactedFileSetError struct{ class error }
@@ -414,25 +466,30 @@ func (f *FileSet) Records() []FileRecord {
 	}
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	out := make([]FileRecord, len(f.records))
-	for i := range f.records {
-		out[i] = cloneFileRecord(f.records[i].record)
+	records := snapshotFileRecords(f.records)
+	out := make([]FileRecord, len(records))
+	for i := range records {
+		out[i] = cloneFileRecord(records[i].record)
 	}
 	return out
 }
 
 func cloneFileRecord(record FileRecord) FileRecord {
+	record.keys = cloneDirectoryKeys(record.keys)
 	record.FileID = append(FileID(nil), record.FileID...)
 	record.RelatedGeneralSOPClassUIDs = append([]string(nil), record.RelatedGeneralSOPClassUIDs...)
+	record.InventedKeys = append([]string(nil), record.InventedKeys...)
 	return record
 }
 
 // Add indexes an existing portable File ID without loading Pixel Data.
 func (f *FileSet) Add(ctx context.Context, id FileID) error {
-	return f.add(ctx, id, true)
+	return f.add(ctx, id, true, nil)
 }
 
-func (f *FileSet) add(ctx context.Context, id FileID, verifySpelling bool) error {
+// add indexes the file at id. recorded, when parsing a DICOMDIR, is the
+// record it declares for the file: keys the file lacks take its values.
+func (f *FileSet) add(ctx context.Context, id FileID, verifySpelling bool, recorded *FileRecord) error {
 	if f == nil {
 		return ErrInvalidOptions
 	}
@@ -517,11 +574,42 @@ func (f *FileSet) add(ctx context.Context, id FileID, verifySpelling bool) error
 	if closeErr != nil {
 		return redactedFileSetError{class: ErrInvalidRecord}
 	}
-	record, err := fileRecordFromIndex(id, result)
+	record, err := fileRecordFromIndex(id, result, f.options.InventMissingKeys || recorded != nil)
 	if err != nil {
 		return err
 	}
-	if err := validateFileRecord(record); err != nil {
+	if recorded != nil {
+		adoptInventedKeys(&record, *recorded)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	remaining := f.options.Limits.MaxTotalRecordKeyBytes - f.keyBytes
+	if f.directory != nil {
+		remaining -= f.directory.keyBytes
+	}
+	if remaining <= 0 {
+		return ErrResourceLimit
+	}
+	keyLimits := f.options.Limits
+	if remaining < keyLimits.MaxRecordKeyBytes {
+		keyLimits.MaxRecordKeyBytes = remaining
+	}
+	if err := f.readDirectoryKeysWithLimits(ctx, &record, keyLimits); err != nil {
+		return err
+	}
+	check, _, checkErr := OpenReferencedFile(f.root, Reference{FileID: []string(id)})
+	if checkErr != nil {
+		return ErrSourceChanged
+	}
+	current, statErr := check.Stat()
+	_ = check.Close()
+	if statErr != nil || !os.SameFile(info, current) || current.Size() != info.Size() || !current.ModTime().Equal(info.ModTime()) {
+		return ErrSourceChanged
+	}
+	if err := validateFileRecord(record, f.options.Limits); err != nil {
 		return err
 	}
 	for i, uid := range record.RelatedGeneralSOPClassUIDs {
@@ -531,9 +619,14 @@ func (f *FileSet) add(ctx context.Context, id FileID, verifySpelling bool) error
 		return redactedFileSetError{class: ErrInvalidRecord}
 	}
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if len(f.records) >= f.options.Limits.MaxFiles {
+		return ErrResourceLimit
+	}
+	importedBytes := int64(0)
+	if f.directory != nil {
+		importedBytes = f.directory.keyBytes
+	}
+	if record.keyBytes > f.options.Limits.MaxTotalRecordKeyBytes-f.keyBytes-importedBytes {
 		return ErrResourceLimit
 	}
 	if _, exists := f.fileIDs[id.String()]; exists {
@@ -546,6 +639,9 @@ func (f *FileSet) add(ctx context.Context, id FileID, verifySpelling bool) error
 		return redactedFileSetError{class: ErrInvalidRecord}
 	}
 	for role, uid := range recordUIDRoles(record) {
+		if uid == "" {
+			continue
+		}
 		if previousRole, exists := f.uidRoles[uid]; exists && previousRole != role {
 			return redactedFileSetError{class: ErrInvalidRecord}
 		}
@@ -553,10 +649,14 @@ func (f *FileSet) add(ctx context.Context, id FileID, verifySpelling bool) error
 	f.records = append(f.records, sourceSnapshot{
 		info: info, identity: identity, size: info.Size(), modTime: info.ModTime(), record: cloneFileRecord(record),
 	})
+	f.keyBytes += record.keyBytes
 	f.fileIDs[id.String()] = struct{}{}
 	f.sopInstances[record.SOPInstanceUID] = struct{}{}
 	f.identities[identity] = struct{}{}
 	for role, uid := range recordUIDRoles(record) {
+		if uid == "" {
+			continue
+		}
 		f.uidRoles[uid] = role
 	}
 	f.revision++
@@ -727,6 +827,10 @@ var fileSetSelectorTags = []struct {
 	{"modality", tagModalityFS}, {"series_uid", tagSeriesInstanceUIDFS}, {"series_number", tagSeriesNumberFS},
 	{"instance_number", tagInstanceNumberFS}, {"sop_class", tagSOPClassUIDFS}, {"sop_instance", tagSOPInstanceUIDFS},
 	{"related_general_sop_class", tagRelatedGeneralSOPClassUIDFS},
+	// Fallbacks of an invented Study Date and Time.
+	{"series_date", core.NewTag(0x0008, 0x0021)}, {"acquisition_date", core.NewTag(0x0008, 0x0022)},
+	{"content_date", core.NewTag(0x0008, 0x0023)}, {"series_time", core.NewTag(0x0008, 0x0031)},
+	{"acquisition_time", core.NewTag(0x0008, 0x0032)}, {"content_time", core.NewTag(0x0008, 0x0033)},
 }
 
 func requiredFileSetSelectors() []index.Selector {
@@ -754,12 +858,26 @@ func selectedStrings(result index.Result, id string) ([]string, bool) {
 	return append([]string(nil), strings...), true
 }
 
-func fileRecordFromIndex(id FileID, result index.Result) (FileRecord, error) {
+func fileRecordFromIndex(id FileID, result index.Result, invent bool) (FileRecord, error) {
+	class := core.NormalizeUID(result.Record.FileMeta.MediaStorageSOPClassUID)
+	recordType, supported := recordTypeForSOPClass(class)
+	if !supported {
+		return FileRecord{}, ErrUnsupportedSOPClass
+	}
 	for _, scalarID := range []string{
 		"patient_id", "study_date", "study_time", "study_uid", "study_id",
 		"modality", "series_uid", "series_number", "instance_number", "sop_class", "sop_instance",
 	} {
+		if rootFileRecordType(recordType) && scalarID != "sop_class" && scalarID != "sop_instance" {
+			continue
+		}
+		if scalarID == "instance_number" && recordType != RecordTypeImage {
+			continue
+		}
 		if len(result.Record.Selected["dicomdir."+scalarID]) == 0 {
+			if invent && inventableKeys[scalarID] {
+				continue
+			}
 			return FileRecord{}, errors.Join(ErrInvalidRecord, ErrMissingRequiredKey)
 		}
 		if !selectedScalarVM(result, scalarID) {
@@ -783,18 +901,6 @@ func fileRecordFromIndex(id FileID, result index.Result) (FileRecord, error) {
 	}
 	sopClass := metaClass
 	sopInstance := metaInstance
-	recordType, ok := recordTypeForSOPClass(sopClass)
-	if !ok {
-		return FileRecord{}, ErrUnsupportedSOPClass
-	}
-	// The author currently declares the complete PS3.3 type inventory for
-	// classification, but emits the mandatory selection-key schema only for
-	// IMAGE records. Refusing other leaf types is safer than writing a record
-	// that merely has the right Directory Record Type but omits its Type 1/2
-	// keys.
-	if recordType != RecordTypeImage {
-		return FileRecord{}, ErrUnsupportedSOPClass
-	}
 	record := FileRecord{
 		FileID: append(FileID(nil), id...), RecordType: recordType,
 		StudyInstanceUID: result.Record.Study.InstanceUID, AccessionNumber: result.Record.Study.AccessionNumber,
@@ -810,7 +916,147 @@ func fileRecordFromIndex(id FileID, result index.Result) (FileRecord, error) {
 	record.SpecificCharacterSet, _ = selectedString(result, "charset")
 	record.StudyID, _ = selectedString(result, "study_id")
 	record.RelatedGeneralSOPClassUIDs, _ = selectedStrings(result, "related_general_sop_class")
+	// Trailing NUL or SPACE is padding, not value; some writers pad text
+	// with NUL, which the strict record validation refuses.
+	for _, field := range []*string{
+		&record.PatientName, &record.PatientID, &record.StudyDate, &record.StudyTime, &record.StudyDescription,
+		&record.StudyID, &record.AccessionNumber, &record.Modality, &record.SeriesNumber, &record.InstanceNumber,
+		&record.SpecificCharacterSet,
+	} {
+		*field = strings.TrimRight(*field, " \x00")
+	}
+	if invent {
+		if !rootFileRecordType(recordType) {
+			inventMissingKeys(&record, result)
+		}
+	}
+	if rootFileRecordType(recordType) {
+		record.PatientID, record.PatientName, record.StudyDate, record.StudyTime, record.StudyDescription = "", "", "", "", ""
+		record.StudyInstanceUID, record.StudyID, record.AccessionNumber, record.SeriesInstanceUID = "", "", "", ""
+		record.Modality, record.SeriesNumber, record.InstanceNumber = "", "", ""
+	}
+	hasInstanceKey := false
+	for _, rule := range directoryKeyRules(recordType) {
+		if rule.tag == tagInstanceNumberFS {
+			hasInstanceKey = true
+		}
+	}
+	if !hasInstanceKey {
+		record.InstanceNumber = ""
+		kept := record.InventedKeys[:0]
+		for _, key := range record.InventedKeys {
+			if key != "instance_number" {
+				kept = append(kept, key)
+			}
+		}
+		record.InventedKeys = kept
+	}
 	return record, nil
+}
+
+var inventableKeys = map[string]bool{
+	"patient_id": true, "study_date": true, "study_time": true, "study_id": true, "series_number": true, "instance_number": true,
+}
+
+// inventMissingKeys fills the empty inventable keys of record from values
+// the file determines (Options.InventMissingKeys).
+func inventMissingKeys(record *FileRecord, result index.Result) {
+	fill := func(key string, field *string, value func() string) {
+		if strings.TrimSpace(*field) == "" {
+			*field = value()
+			record.InventedKeys = append(record.InventedKeys, key)
+		}
+	}
+	firstOf := func(fallback string, ids ...string) func() string {
+		return func() string {
+			for _, id := range ids {
+				if value, ok := selectedString(result, id); ok && strings.TrimSpace(value) != "" {
+					return strings.TrimSpace(value)
+				}
+			}
+			return fallback
+		}
+	}
+	fill("patient_id", &record.PatientID, func() string { return "PAT" + uidDigest(record.StudyInstanceUID) })
+	fill("study_date", &record.StudyDate, firstOf("19000101", "series_date", "acquisition_date", "content_date"))
+	fill("study_time", &record.StudyTime, firstOf("000000", "series_time", "acquisition_time", "content_time"))
+	fill("study_id", &record.StudyID, func() string { return "S" + uidDigest(record.StudyInstanceUID) })
+	fill("series_number", &record.SeriesNumber, func() string { return uidNumber(record.SeriesInstanceUID) })
+	fill("instance_number", &record.InstanceNumber, func() string { return uidNumber(record.SOPInstanceUID) })
+}
+
+// snapshotFileRecords reconciles invented study dates and times on a copy.
+// Keep the original candidates so reconciliation is independent of insertion
+// order and can be recomputed after removal. Genuine conflicting study keys
+// remain invalid.
+func snapshotFileRecords(records []sourceSnapshot) []sourceSnapshot {
+	out := append([]sourceSnapshot(nil), records...)
+	for _, field := range []struct {
+		key, fallback string
+		value         func(*FileRecord) *string
+	}{
+		{"study_date", "19000101", func(r *FileRecord) *string { return &r.StudyDate }},
+		{"study_time", "000000", func(r *FileRecord) *string { return &r.StudyTime }},
+	} {
+		type studyValue struct {
+			value              string
+			explicit, conflict bool
+		}
+		studies := make(map[string]studyValue)
+		for _, stored := range out {
+			r := stored.record
+			value := *field.value(&r)
+			explicit := !slices.Contains(r.InventedKeys, field.key)
+			previous, exists := studies[r.StudyInstanceUID]
+			if !exists || explicit && !previous.explicit {
+				previous = studyValue{value: value, explicit: explicit}
+			} else if explicit == previous.explicit && value != previous.value {
+				previous.conflict = true
+			}
+			studies[r.StudyInstanceUID] = previous
+		}
+		for i := range out {
+			r := &out[i].record
+			if !slices.Contains(r.InventedKeys, field.key) {
+				continue
+			}
+			value := studies[r.StudyInstanceUID]
+			if value.conflict {
+				*field.value(r) = field.fallback
+			} else {
+				*field.value(r) = value.value
+			}
+		}
+	}
+	return out
+}
+
+// adoptInventedKeys replaces the keys invented for dst with the values src
+// holds for them: a DICOMDIR's recorded values stand for keys its files
+// lack, whichever tool invented them.
+func adoptInventedKeys(dst *FileRecord, src FileRecord) {
+	fields := map[string][2]*string{
+		"patient_id": {&dst.PatientID, &src.PatientID}, "study_date": {&dst.StudyDate, &src.StudyDate},
+		"study_time": {&dst.StudyTime, &src.StudyTime}, "study_id": {&dst.StudyID, &src.StudyID},
+		"series_number": {&dst.SeriesNumber, &src.SeriesNumber}, "instance_number": {&dst.InstanceNumber, &src.InstanceNumber},
+	}
+	for _, key := range dst.InventedKeys {
+		if pair, ok := fields[key]; ok && *pair[1] != "" {
+			*pair[0] = *pair[1]
+		}
+	}
+}
+
+// uidDigest is 12 hexadecimal digits of the UID's SHA-256.
+func uidDigest(uid string) string {
+	sum := sha256.Sum256([]byte(core.NormalizeUID(uid)))
+	return strings.ToUpper(hex.EncodeToString(sum[:6]))
+}
+
+// uidNumber is a positive IS value below 10^9 derived from the UID.
+func uidNumber(uid string) string {
+	sum := sha256.Sum256([]byte(core.NormalizeUID(uid)))
+	return strconv.FormatUint(binary.BigEndian.Uint64(sum[:8])%999_999_999+1, 10)
 }
 
 func selectedScalarVM(result index.Result, id string) bool {
@@ -829,22 +1075,28 @@ func selectedOptionalScalarVM(result index.Result, id string) bool {
 	return len(values) == 0 || selectedScalarVM(result, id)
 }
 
-func validateFileRecord(record FileRecord) error {
-	if record.PatientID == "" || record.StudyDate == "" || record.StudyTime == "" || record.StudyInstanceUID == "" ||
+func validateFileRecord(record FileRecord, admission ...Limits) error {
+	if record.SOPClassUID == "" || record.SOPInstanceUID == "" || record.TransferSyntaxUID == "" {
+		return ErrMissingRequiredKey
+	}
+	if !rootFileRecordType(record.RecordType) && (record.PatientID == "" || record.StudyDate == "" || record.StudyTime == "" || record.StudyInstanceUID == "" ||
 		record.StudyID == "" || record.Modality == "" || record.SeriesInstanceUID == "" || record.SeriesNumber == "" ||
-		record.SOPClassUID == "" || record.SOPInstanceUID == "" || record.TransferSyntaxUID == "" {
+		record.SOPClassUID == "" || record.SOPInstanceUID == "" || record.TransferSyntaxUID == "") {
 		return errors.Join(ErrInvalidRecord, ErrMissingRequiredKey)
 	}
 	if record.RecordType == RecordTypeImage && record.InstanceNumber == "" {
 		return ErrInvalidRecord
 	}
 	for _, uid := range []string{record.StudyInstanceUID, record.SeriesInstanceUID, record.SOPClassUID, record.SOPInstanceUID, record.TransferSyntaxUID} {
+		if rootFileRecordType(record.RecordType) && uid == "" {
+			continue
+		}
 		if !core.IsValidUID(core.NormalizeUID(uid)) {
 			return ErrInvalidRecord
 		}
 	}
-	if record.StudyInstanceUID == record.SeriesInstanceUID || record.StudyInstanceUID == record.SOPInstanceUID ||
-		record.SeriesInstanceUID == record.SOPInstanceUID {
+	if !rootFileRecordType(record.RecordType) && (record.StudyInstanceUID == record.SeriesInstanceUID || record.StudyInstanceUID == record.SOPInstanceUID ||
+		record.SeriesInstanceUID == record.SOPInstanceUID) {
 		return ErrInvalidRecord
 	}
 	validatedRecord := record
@@ -857,7 +1109,11 @@ func validateFileRecord(record FileRecord) error {
 		validatedRecord.RelatedGeneralSOPClassUIDs[index] = normalized
 	}
 	items := make([]core.DataSet, 0, 4)
-	for _, recordType := range []RecordType{RecordTypePatient, RecordTypeStudy, RecordTypeSeries, record.RecordType} {
+	types := []RecordType{record.RecordType}
+	if !rootFileRecordType(record.RecordType) {
+		types = []RecordType{RecordTypePatient, RecordTypeStudy, RecordTypeSeries, record.RecordType}
+	}
+	for _, recordType := range types {
 		items = append(items, directoryRecordDataSet(&directoryNode{typ: recordType, record: validatedRecord}, 0, 0))
 	}
 	dataset := core.DataSet{Elements: []core.Element{{
@@ -866,9 +1122,14 @@ func validateFileRecord(record FileRecord) error {
 	}}}
 	if _, err := validation.ValidateDataSet(context.Background(), dataset, validation.Options{
 		Mode: validation.ModeStrict, Dictionary: std.Dictionary, StopFirst: true,
-		MaxFindings: 1, MaxDepth: 2, MaxElements: 128,
+		MaxFindings: 1, MaxDepth: 258, MaxElements: 100_000,
 	}); err != nil {
 		return ErrInvalidRecord
+	}
+	if len(record.keys.Elements) != 0 {
+		if err := validateDirectoryKeys(record.RecordType, record.keys, record.SOPClassUID, admission...); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -898,6 +1159,7 @@ func (f *FileSet) Remove(id FileID) bool {
 	defer f.mu.Unlock()
 	for i := range f.records {
 		if equalFileID(f.records[i].record.FileID, id) {
+			f.keyBytes -= f.records[i].record.keyBytes
 			copy(f.records[i:], f.records[i+1:])
 			f.records = f.records[:len(f.records)-1]
 			f.rebuildIndexesLocked()
@@ -909,15 +1171,20 @@ func (f *FileSet) Remove(id FileID) bool {
 }
 
 func (f *FileSet) rebuildIndexesLocked() {
+	f.keyBytes = 0
 	f.fileIDs = make(map[string]struct{}, len(f.records))
 	f.sopInstances = make(map[string]struct{}, len(f.records))
 	f.uidRoles = make(map[string]int, len(f.records)*3)
 	f.identities = make(map[fileIdentity]struct{}, len(f.records))
 	for _, stored := range f.records {
+		f.keyBytes += stored.record.keyBytes
 		f.fileIDs[stored.record.FileID.String()] = struct{}{}
 		f.sopInstances[stored.record.SOPInstanceUID] = struct{}{}
 		f.identities[stored.identity] = struct{}{}
 		for role, uid := range recordUIDRoles(stored.record) {
+			if uid == "" {
+				continue
+			}
 			f.uidRoles[uid] = role
 		}
 	}
@@ -962,9 +1229,15 @@ func statisticsForRecords(records []sourceSnapshot) Statistics {
 		stats.Files++
 		stats.Instances++
 		stats.Bytes += stored.size
-		patients[r.PatientID] = true
-		studies[r.StudyInstanceUID] = true
-		series[r.SeriesInstanceUID] = true
+		if r.PatientID != "" {
+			patients[r.PatientID] = true
+		}
+		if r.StudyInstanceUID != "" {
+			studies[r.StudyInstanceUID] = true
+		}
+		if r.SeriesInstanceUID != "" {
+			series[r.SeriesInstanceUID] = true
+		}
 		stats.ByType[r.RecordType]++
 		stats.ByModality[r.Modality]++
 	}
@@ -988,7 +1261,7 @@ func (f *FileSet) Validate(ctx context.Context) (ValidationReport, error) {
 		return ValidationReport{}, err
 	}
 	f.mu.RLock()
-	records := append([]sourceSnapshot(nil), f.records...)
+	records := snapshotFileRecords(f.records)
 	f.mu.RUnlock()
 	report, err := f.validateRecordsSnapshot(ctx, records)
 	if err != nil {
@@ -1034,7 +1307,7 @@ func (f *FileSet) validateRecordsSnapshot(ctx context.Context, records []sourceS
 				return ValidationReport{}, err
 			}
 		}
-		if err := validateFileRecord(r); err != nil {
+		if err := validateFileRecord(r, f.options.Limits); err != nil {
 			code := DiagnosticInvalidDICOM
 			if errors.Is(err, ErrMissingRequiredKey) {
 				code = DiagnosticMissingKey
@@ -1051,6 +1324,9 @@ func (f *FileSet) validateRecordsSnapshot(ctx context.Context, records []sourceS
 		}
 		seenFiles[fileKey], seenSOP[r.SOPInstanceUID] = true, true
 		for role, uid := range []string{r.StudyInstanceUID, r.SeriesInstanceUID, r.SOPInstanceUID} {
+			if uid == "" {
+				continue
+			}
 			if previousRole, exists := uidRoles[uid]; exists && previousRole != role {
 				if err := addDiagnostic(Diagnostic{Code: DiagnosticDuplicate, SourceIndex: i, Message: "UID identifies conflicting directory entities"}); err != nil {
 					return ValidationReport{}, err
@@ -1074,7 +1350,20 @@ func (f *FileSet) validateRecordsSnapshot(ctx context.Context, records []sourceS
 			studySeries[r.SeriesInstanceUID] = r.StudyInstanceUID
 		}
 	}
-	if _, _, err := buildDirectoryHierarchy(records); err != nil {
+	if err := plannedDirectoryKeyBytes(f.directory, records, f.options.Limits.MaxTotalRecordKeyBytes); err != nil {
+		return ValidationReport{}, err
+	}
+	if _, err := plannedDirectoryRecordCount(f.directory, records, f.options.Limits.MaxDirectoryRecords); err != nil {
+		return ValidationReport{}, err
+	}
+	roots, _, hierarchyErr := buildDirectoryHierarchy(records)
+	if hierarchyErr == nil && f.directory != nil {
+		_, _, hierarchyErr = mergeImportedDirectory(f.directory, roots)
+	}
+	if err := ctx.Err(); err != nil {
+		return ValidationReport{}, err
+	}
+	if hierarchyErr != nil {
 		if err := addDiagnostic(Diagnostic{Code: DiagnosticDuplicate, Message: "directory selection keys conflict"}); err != nil {
 			return ValidationReport{}, err
 		}
@@ -1234,7 +1523,7 @@ scanPending:
 					}
 					continue
 				}
-				addErr := f.add(ctx, id, false)
+				addErr := f.add(ctx, id, false, nil)
 				if addErr == nil {
 					report.Added++
 					continue

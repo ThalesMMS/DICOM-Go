@@ -6,11 +6,12 @@ import (
 )
 
 type budget struct {
-	ctx      context.Context
-	limits   Limits
-	elements int
-	items    int
-	binary   int64
+	ctx           context.Context
+	limits        Limits
+	elements      int
+	finalElements int
+	items         int
+	binary        int64
 }
 
 func normalizeLimits(limits Limits) (Limits, error) {
@@ -104,12 +105,4 @@ func (b *budget) addBinary(n int64, inline bool) error {
 	}
 	b.binary += n
 	return nil
-}
-
-func jsonLimit(xmlLimit int64) int64 {
-	const max = int64(^uint64(0) >> 1)
-	if xmlLimit > max/4 {
-		return max
-	}
-	return xmlLimit * 4
 }

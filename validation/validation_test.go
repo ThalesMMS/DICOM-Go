@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -756,4 +758,47 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func TestDetachedValidationKnownBackingsAndEmptyShapes(t *testing.T) {
+	tag := core.NewTag(0x0011, 0x1010)
+	values := []struct {
+		value core.Value
+		vr    core.VR
+	}{
+		{core.RawValue{1, 2}, core.VROB}, {core.StringValue{"AB"}, core.VRLO},
+		{core.Uint16Value{1}, core.VRUS}, {core.Int16Value{1}, core.VRSS}, {core.Uint32Value{1}, core.VRUL}, {core.Int32Value{1}, core.VRSL},
+		{core.Uint64Value{1}, core.VRUV}, {core.Int64Value{1}, core.VRSV}, {core.Float32Value{1}, core.VRFL}, {core.Float64Value{1}, core.VRFD}, {core.TagValue{tag}, core.VRAT},
+	}
+	for _, value := range values {
+		input := core.Element{Header: core.ElementHeader{Tag: tag, VR: value.vr}, Value: value.value}
+		result, err := validation.ValidateDataSet(context.Background(), core.DataSet{Elements: []core.Element{input}}, validation.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := fmt.Sprintf("%#v", input.Value)
+		detached := reflect.ValueOf(result.DataSet.Elements[0].Value)
+		if detached.Len() != detached.Cap() {
+			t.Fatalf("%T cap=%d len=%d", value.value, detached.Cap(), detached.Len())
+		}
+		detached.Index(0).Set(reflect.Zero(detached.Index(0).Type()))
+		if fmt.Sprintf("%#v", input.Value) != before {
+			t.Fatalf("%T input aliased", value.value)
+		}
+	}
+	for _, value := range []core.Value{core.RawValue(nil), core.RawValue{}, core.StringValue{}, core.Uint16Value{}} {
+		input := core.Element{Header: core.ElementHeader{Tag: tag, VR: core.VROB}, Value: value}
+		result, err := validation.ValidateDataSet(context.Background(), core.DataSet{Elements: []core.Element{input}}, validation.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := reflect.ValueOf(result.DataSet.Elements[0].Value)
+		wantNil := true
+		if v, ok := value.(core.RawValue); ok {
+			wantNil = v == nil
+		}
+		if got.IsNil() != wantNil {
+			t.Fatalf("%T empty shape nil=%v want=%v", value, got.IsNil(), wantNil)
+		}
+	}
 }

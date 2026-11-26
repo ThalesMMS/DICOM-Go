@@ -11,6 +11,21 @@ import (
 
 type PrivateDiagnostic = parser.PrivateDiagnostic
 
+// BoundaryRecovery is a container anomaly repaired under
+// ReadFileOptions.RecoverContainerOverruns.
+type BoundaryRecovery = parser.BoundaryRecovery
+
+// BoundaryRecoveries returns the container anomalies the read repaired and
+// whether more were repaired than recorded. An empty list means the data set
+// parsed without them; a non-empty one means the result is a recovery, not a
+// conforming parse. The list is taken when the read completes.
+func (o *Object) BoundaryRecoveries() ([]BoundaryRecovery, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return append([]BoundaryRecovery(nil), o.boundaryRecoveries...), o.boundaryRecoveriesTruncated
+}
+
 // ParsedPrivateDiagnostics returns the read operation's bounded diagnostic
 // snapshot. Item offsets distinguish nested scopes; subsequent object edits do
 // not rewrite this historical parse report. Values/creator strings are omitted.

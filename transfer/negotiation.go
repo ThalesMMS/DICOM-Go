@@ -18,6 +18,8 @@ var preservableCompressedReceiveSyntaxes = []Syntax{
 	JPEGLosslessSV1,
 	JPEGLSLossless,
 	JPEGLSNearLossless,
+	RLELossless,
+	DeflatedImageFrameCompression,
 	JPEG2000LosslessOnly,
 	JPEG2000,
 	JPEG2000Part2Lossless,
@@ -66,9 +68,12 @@ func PreservableCompressedReceiveSyntaxes() []Syntax {
 	return append([]Syntax(nil), preservableCompressedReceiveSyntaxes...)
 }
 
+// isNativeStoreTransferSyntax reports Little Endian data sets whose Pixel Data
+// is native. Deflated Explicit VR Little Endian compresses the data set, not the
+// pixels, so re-encoding it without Deflate needs no pixel codec.
 func isNativeStoreTransferSyntax(uid string) bool {
 	switch NormalizeUID(uid) {
-	case ExplicitVRLittleEndian.UID, ImplicitVRLittleEndian.UID:
+	case ExplicitVRLittleEndian.UID, ImplicitVRLittleEndian.UID, DeflatedExplicitVRLittleEndian.UID:
 		return true
 	default:
 		return false
@@ -85,6 +90,24 @@ func normalizedUniqueUIDs(uids ...string) []string {
 		}
 		seen[uid] = true
 		out = append(out, uid)
+	}
+	return out
+}
+
+// FilterTransferSyntaxUIDs intersects proposals with an optional allowlist,
+// retaining proposal priority. An empty allowlist retains all proposals.
+func FilterTransferSyntaxUIDs(proposals, allowlist []string) []string {
+	if len(allowlist) == 0 {
+		return proposals
+	}
+	var out []string
+	for _, proposal := range proposals {
+		for _, allowed := range allowlist {
+			if NormalizeUID(proposal) == NormalizeUID(allowed) {
+				out = append(out, proposal)
+				break
+			}
+		}
 	}
 	return out
 }

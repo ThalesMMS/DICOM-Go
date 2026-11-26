@@ -324,3 +324,22 @@ func encodeProbeDataSet(t *testing.T, syntax transfer.Syntax, elements []core.El
 	}
 	return buf.Bytes()
 }
+
+// A few dictionary VR mismatches in a long explicit VR prefix, as in ACR-NEMA
+// files with retired VRs, cost at most their share of the known elements.
+func TestProbeVRMismatchPenaltyIsProportional(t *testing.T) {
+	base := TransferSyntaxCandidateReport{
+		Syntax: transfer.ExplicitVRLittleEndian, Complete: true, Elements: 130, KnownElements: 94,
+		PlausibleLengths: 125, OrderedElements: 130, DictionaryVRMatches: 89, DictionaryVMMatches: 80,
+		DictionaryVRMismatches: 5, BytesConsumed: 1500,
+	}
+	if got := candidateConfidence(base, 1500, nil); got < defaultTransferSyntaxProbeConfidence {
+		t.Fatalf("confidence %.3f with 5/94 mismatches", got)
+	}
+	few := TransferSyntaxCandidateReport{Syntax: transfer.ExplicitVRLittleEndian, Complete: true, Elements: 4, KnownElements: 4, DictionaryVRMatches: 2, DictionaryVRMismatches: 2, BytesConsumed: 40}
+	withoutMismatch := few
+	withoutMismatch.DictionaryVRMismatches = 0
+	if diff := candidateConfidence(withoutMismatch, 40, nil) - candidateConfidence(few, 40, nil); diff < 0.199 {
+		t.Fatalf("2/4 mismatches cost only %.3f", diff)
+	}
+}

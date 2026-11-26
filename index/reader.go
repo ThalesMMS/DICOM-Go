@@ -30,6 +30,7 @@ type collector struct {
 	pending       []selectorMatch
 	selectedCount int
 	selectErr     error
+	plan          headerReadPlan
 }
 
 // Read opens source once, extracts a detached record, and closes the opened
@@ -168,13 +169,16 @@ func readOpened(ctx context.Context, opened OpenedSource, options Options) (Resu
 	readerSource := io.Reader(opened.Reader)
 	var inflater io.ReadCloser
 	if syntax.Deflated {
+		if options.AssumeSortedTags || options.SequencePruning == SequencePruningOpaque {
+			readerSource = headerSource
+		}
 		inflater = flate.NewReader(readerSource)
 		defer func() { _ = inflater.Close() }()
 		readerSource = inflater
 	}
 	c := &collector{
 		ctx: ctx, options: options, standard: make(map[core.Tag]core.Element),
-		selected: record.Selected,
+		selected: record.Selected, plan: newHeaderReadPlan(options),
 	}
 	readerOptions := parser.ReaderOptions{
 		Dictionary:          options.Dictionary,
@@ -187,11 +191,16 @@ func readOpened(ctx context.Context, opened OpenedSource, options Options) (Resu
 		StrictReservedBytes: options.StrictReservedBytes,
 		OddLengthPolicy:     options.OddLengthPolicy,
 	}
-	reader, err := parser.NewSelectiveReader(ctx, readerSource, syntax, readerOptions, parser.SelectiveReaderOptions{Select: c.selectHeader})
+	selectiveOptions := parser.SelectiveReaderOptions{Select: c.selectHeader}
+	if options.SequencePruning == SequencePruningOpaque {
+		selectiveOptions.MaxTokens = options.Limits.MaxTokens
+	}
+	reader, err := parser.NewSelectiveReader(ctx, readerSource, syntax, readerOptions, selectiveOptions)
 	if err != nil {
 		return Result{Record: record}, &Error{Stage: "dataset", err: err}
 	}
 	stopped := false
+	stoppedAfterRequested := false
 	var stoppedHeader core.ElementHeader
 	stoppedHeaderSet := false
 	tokenCount := 0
@@ -216,6 +225,7 @@ func readOpened(ctx context.Context, opened OpenedSource, options Options) (Resu
 		}
 		if token.Kind == parser.TokenStop {
 			stopped = isPixelValueTag(token.Header.Tag)
+			stoppedAfterRequested = !stopped && options.AssumeSortedTags
 			stoppedHeader = token.Header
 			stoppedHeaderSet = true
 			break
@@ -237,7 +247,8 @@ func readOpened(ctx context.Context, opened OpenedSource, options Options) (Resu
 	}
 	return Result{
 		Record: record, BytesScanned: reader.Position() - start,
-		StoppedBeforePixelData: stopped, StoppedHeader: stoppedHeader, StoppedHeaderSet: stoppedHeaderSet, RawDataSet: raw,
+		StoppedBeforePixelData: stopped, StoppedAfterRequestedTags: stoppedAfterRequested,
+		StoppedHeader: stoppedHeader, StoppedHeaderSet: stoppedHeaderSet, RawDataSet: raw,
 	}, nil
 }
 
@@ -283,7 +294,15 @@ func (c *collector) selectHeader(_ context.Context, path validation.Path, header
 		}
 		return parser.SelectiveSkip, nil
 	}
+	if len(path) == 1 && c.options.AssumeSortedTags && header.Tag.Compare(c.plan.maximum) > 0 {
+		return parser.SelectiveStop, nil
+	}
 	if header.VR == core.VRSQ || header.Length.IsUndefined() {
+		if c.options.SequencePruning == SequencePruningOpaque &&
+			(header.VR == core.VRSQ || header.VR == core.VRUN && header.Length.IsUndefined()) &&
+			!c.plan.sequenceReachable(c.options.Selectors, path) {
+			return parser.SelectiveSkipSequence, nil
+		}
 		return parser.SelectiveMaterialize, nil
 	}
 	if len(path) == 1 && (header.Tag == tagSpecificCharacterSet || builtinTagSelected(c.options.Profile, header.Tag)) {
@@ -432,7 +451,8 @@ func isParserResourceLimit(err error) bool {
 		errors.Is(err, parser.ErrMaxElementBytesExceeded) ||
 		errors.Is(err, parser.ErrMaxElementsExceeded) ||
 		errors.Is(err, parser.ErrMaxDepthExceeded) ||
-		errors.Is(err, parser.ErrMaxFragmentsExceeded)
+		errors.Is(err, parser.ErrMaxFragmentsExceeded) ||
+		errors.Is(err, parser.ErrMaxSelectiveTokensExceeded)
 }
 
 func isPixelValueTag(tag core.Tag) bool {

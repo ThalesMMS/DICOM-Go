@@ -30,6 +30,16 @@ const (
 	RecordTypeTract                RecordType = "TRACT"
 	RecordTypeAnnotation           RecordType = "ANNOTATION"
 	RecordTypeWaveformPresentation RecordType = "WF PRESENTATION"
+	RecordTypeHangingProtocol      RecordType = "HANGING PROTOCOL"
+	RecordTypePalette              RecordType = "PALETTE"
+	RecordTypeImplant              RecordType = "IMPLANT"
+	RecordTypeImplantAssembly      RecordType = "IMPLANT ASSY"
+	RecordTypeImplantGroup         RecordType = "IMPLANT GROUP"
+	RecordTypePlan                 RecordType = "PLAN"
+	RecordTypeMeasurement          RecordType = "MEASUREMENT"
+	RecordTypeAssessment           RecordType = "ASSESSMENT"
+	RecordTypeRadiotherapy         RecordType = "RADIOTHERAPY"
+	RecordTypeInventory            RecordType = "INVENTORY"
 )
 
 // recordTypeForSOPClass maps only SOP Classes with an explicitly supported
@@ -42,6 +52,32 @@ func recordTypeForSOPClass(sopClassUID string) (RecordType, bool) {
 	}
 
 	switch entry.Keyword {
+	case "HangingProtocolStorage":
+		return RecordTypeHangingProtocol, true
+	case "ColorPaletteStorage":
+		return RecordTypePalette, true
+	case "GenericImplantTemplateStorage":
+		return RecordTypeImplant, true
+	case "ImplantAssemblyTemplateStorage":
+		return RecordTypeImplantAssembly, true
+	case "ImplantTemplateGroupStorage":
+		return RecordTypeImplantGroup, true
+	case "InventoryStorage":
+		return RecordTypeInventory, true
+	case "ContentAssessmentResultsStorage":
+		return RecordTypeAssessment, true
+	case "RTBeamsDeliveryInstructionStorage", "RTBrachyApplicationSetupDeliveryInstructionStorage":
+		return RecordTypePlan, true
+	case "LensometryMeasurementsStorage", "AutorefractionMeasurementsStorage", "KeratometryMeasurementsStorage",
+		"SubjectiveRefractionMeasurementsStorage", "VisualAcuityMeasurementsStorage", "OphthalmicAxialMeasurementsStorage",
+		"IntraocularLensCalculationsStorage", "OphthalmicVisualFieldStaticPerimetryMeasurementsStorage":
+		return RecordTypeMeasurement, true
+	case "RTPhysicianIntentStorage", "RTSegmentAnnotationStorage", "RTRadiationSetStorage",
+		"CArmPhotonElectronRadiationStorage", "TomotherapeuticRadiationStorage", "RoboticArmRadiationStorage",
+		"RTRadiationRecordSetStorage", "RTRadiationSalvageRecordStorage", "TomotherapeuticRadiationRecordStorage",
+		"CArmPhotonElectronRadiationRecordStorage", "RoboticRadiationRecordStorage", "RTRadiationSetDeliveryInstructionStorage",
+		"RTTreatmentPreparationStorage", "RTPatientPositionAcquisitionInstructionStorage":
+		return RecordTypeRadiotherapy, true
 	case // Image Directory Records.
 		"HardcopyGrayscaleImageStorage",
 		"HardcopyColorImageStorage",
@@ -70,6 +106,9 @@ func recordTypeForSOPClass(sopClassUID string) (RecordType, bool) {
 		"CTImageStorage",
 		"EnhancedCTImageStorage",
 		"LegacyConvertedEnhancedCTImageStorage",
+		"CTImageStorageForProcessing",
+		"EnhancedCTImageStorageForProcessing",
+		"LegacyConvertedEnhancedCTImageStorageForProcessing",
 		"NuclearMedicineImageStorage",
 		"UltrasoundMultiFrameImageStorageRetired",
 		"UltrasoundMultiFrameImageStorage",
@@ -244,4 +283,25 @@ func recordTypeForSOPClass(sopClassUID string) (RecordType, bool) {
 	}
 
 	return "", false
+}
+
+func rootFileRecordType(typ RecordType) bool {
+	switch typ {
+	case RecordTypeHangingProtocol, RecordTypePalette, RecordTypeImplant, RecordTypeImplantAssembly, RecordTypeImplantGroup, RecordTypeInventory:
+		return true
+	}
+	return false
+}
+
+func standardFileRecordType(typ RecordType) bool {
+	switch typ {
+	case RecordTypeImage, RecordTypeRTDose, RecordTypeRTStructureSet, RecordTypeRTPlan, RecordTypeRTTreatmentRecord,
+		RecordTypePresentation, RecordTypeWaveform, RecordTypeSRDocument, RecordTypeKeyObjectDocument,
+		RecordTypeSpectroscopy, RecordTypeRawData, RecordTypeRegistration, RecordTypeFiducial, RecordTypeEncapsulatedDocument,
+		RecordTypeValueMap, RecordTypeStereometric, RecordTypeSurface, RecordTypeSurfaceScan, RecordTypeTract,
+		RecordTypeAnnotation, RecordTypeWaveformPresentation, RecordTypePlan, RecordTypeMeasurement, RecordTypeAssessment,
+		RecordTypeRadiotherapy:
+		return true
+	}
+	return rootFileRecordType(typ)
 }

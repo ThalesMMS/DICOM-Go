@@ -146,6 +146,61 @@ func TestUTValueIsMaterializedWhenInlineThresholdSet(t *testing.T) {
 	}
 }
 
+// A top-level value over the inline threshold of a VR the reader does not
+// defer is materialized, as in a sequence item, instead of failing (#1980).
+func TestLargeTopLevelNonDeferrableValueIsMaterialized(t *testing.T) {
+	patientNameTag := core.NewTag(0x0010, 0x0010)
+	value := []byte("ABCDEFGHIJKLMNOP")
+	for _, tt := range []struct {
+		tag core.Tag
+		vr  core.VR
+	}{
+		{core.NewTag(0x0066, 0x0040), core.VROL},
+		{core.NewTag(0x0072, 0x0081), core.VROV},
+		{core.NewTag(0x0072, 0x0082), core.VRSV},
+		{core.NewTag(0x0072, 0x0083), core.VRUV},
+		{core.NewTag(0x0072, 0x006F), core.VRUC},
+	} {
+		for _, syntax := range []transfer.Syntax{transfer.ImplicitVRLittleEndian, transfer.ExplicitVRLittleEndian} {
+			t.Run(string(tt.vr)+"/"+syntax.UID, func(t *testing.T) {
+				header := explicitLongHeaderBytes(binary.LittleEndian, tt.tag, tt.vr, [2]byte{}, uint32(len(value)))
+				if !syntax.ExplicitVR {
+					header = binary.LittleEndian.AppendUint16(nil, uint16(tt.tag.Group))
+					header = binary.LittleEndian.AppendUint16(header, uint16(tt.tag.Element))
+					header = binary.LittleEndian.AppendUint32(header, uint32(len(value)))
+				}
+				stream := bytes.Join([][]byte{
+					header,
+					value,
+					dicomtest.EncodeElement(dicomtest.NewPNElement(patientNameTag, "AFTER"), syntax),
+				}, nil)
+				for _, deferTags := range [][]core.Tag{nil, {tt.tag}} {
+					reader := NewReader(bytes.NewReader(stream), syntax, ReaderOptions{
+						Dictionary:                std.Dictionary,
+						InlineValueBytesThreshold: 8,
+						DeferValueTags:            deferTags,
+					})
+					tok, err := reader.Next()
+					if err != nil {
+						t.Fatalf("defer tags %v: %v", deferTags, err)
+					}
+					raw, ok := tok.Element.RawBytes()
+					if tok.Element.Tag() != tt.tag || tok.Element.VR() != tt.vr || !ok || !bytes.Equal(raw, value) {
+						t.Fatalf("first element = %s %s raw %q ok=%t, want %s %s %q", tok.Element.Tag(), tok.Element.VR(), raw, ok, tt.tag, tt.vr, value)
+					}
+					tok, err = reader.Next()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if tok.Element.Tag() != patientNameTag || tok.Element.StringValue() != "AFTER" {
+						t.Fatalf("second element = %s %q, want %s AFTER", tok.Element.Tag(), tok.Element.StringValue(), patientNameTag)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestExplicitSVAndUVUseLongHeaderAndReaderStaysAligned(t *testing.T) {
 	patientNameTag := core.NewTag(0x0010, 0x0010)
 	value := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
@@ -345,6 +400,9 @@ func TestReadDataSetImplicitVRSequenceUsesDictionaryLookup(t *testing.T) {
 		t.Fatalf("nested SeriesInstanceUID = %q, want %q", gotUID, dicomtest.TestSeriesInstanceUID)
 	}
 }
+
+// Private Creators are LO (PS3.5 7.8.1) even without a private dictionary;
+// private data elements fall back to UN.
 func TestImplicitVRPrivateTagsFallbackToUNAndPreserveReaderState(t *testing.T) {
 	privateCreatorTag := core.NewTag(0x0011, 0x0010)
 	privateDataTag := core.NewTag(0x0011, 0x1001)
@@ -365,8 +423,8 @@ func TestImplicitVRPrivateTagsFallbackToUNAndPreserveReaderState(t *testing.T) {
 	if tok.Element.Tag() != privateCreatorTag {
 		t.Fatalf("first tag = %s, want %s", tok.Element.Tag(), privateCreatorTag)
 	}
-	if tok.Element.VR() != core.VRUN {
-		t.Fatalf("private creator VR = %s, want %s", tok.Element.VR(), core.VRUN)
+	if tok.Element.VR() != core.VRLO {
+		t.Fatalf("private creator VR = %s, want %s", tok.Element.VR(), core.VRLO)
 	}
 	if raw, ok := tok.Element.RawBytes(); !ok || !bytes.Equal(raw, []byte("CREATOR ")) {
 		t.Fatalf("private creator raw = %v ok=%v, want %v true", raw, ok, []byte("CREATOR "))

@@ -405,7 +405,6 @@ func TestJPEGXLStillImageSyntaxFieldValues(t *testing.T) {
 func TestNewlyRegisteredUnsupportedSyntaxes(t *testing.T) {
 	tests := []Syntax{
 		SMPTEST211020UncompressedProgressiveActiveVideo,
-		DeflatedImageFrameCompression,
 	}
 
 	for _, syntax := range tests {
@@ -417,6 +416,24 @@ func TestNewlyRegisteredUnsupportedSyntaxes(t *testing.T) {
 		}
 		if syntax.ByteOrder != binary.LittleEndian {
 			t.Fatalf("expected syntax %q to be little endian", syntax.UID)
+		}
+	}
+}
+
+func TestDeflatedImageFrameCompressionIsEncapsulatedNotDataSetDeflate(t *testing.T) {
+	registered, ok := DefaultRegistry.Get(DeflatedImageFrameCompression.UID)
+	if !ok {
+		t.Fatal("Deflated Image Frame Compression is not registered")
+	}
+	for _, syntax := range []Syntax{DeflatedImageFrameCompression, registered} {
+		if !syntax.Supported || !syntax.Encapsulated || !syntax.CodecAvailable {
+			t.Fatalf("syntax %q = %+v, want supported encapsulated with codec", syntax.UID, syntax)
+		}
+		if syntax.Deflated {
+			t.Fatalf("syntax %q must not deflate the data set", syntax.UID)
+		}
+		if !syntax.ExplicitVR || syntax.ByteOrder != binary.LittleEndian {
+			t.Fatalf("syntax %q must be Explicit VR Little Endian", syntax.UID)
 		}
 	}
 }

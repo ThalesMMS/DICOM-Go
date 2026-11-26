@@ -9,6 +9,40 @@ import (
 	"github.com/ThalesMMS/dicom-go/validation"
 )
 
+func TestOperationHasHooksUsesFrozenRegistry(t *testing.T) {
+	chain, _ := validation.NewHookChain(validation.HookRegistration{Name: "post", Points: []validation.HookPoint{validation.HookPostWrite}, Hook: validation.HookFunc(func(context.Context, validation.HookEvent) (validation.HookDecision, error) {
+		return validation.HookDecision{}, nil
+	})})
+	op, _ := validation.NewOperation(context.Background(), validation.Options{Hooks: chain})
+	if op.HasHooks(validation.HookPreSerialization) || !op.HasHooks(validation.HookPostWrite) {
+		t.Fatal("wrong frozen hook points")
+	}
+	chain.Add(validation.HookRegistration{Name: "late", Points: []validation.HookPoint{validation.HookPreSerialization}, Hook: validation.HookFunc(func(context.Context, validation.HookEvent) (validation.HookDecision, error) {
+		return validation.HookDecision{}, nil
+	})})
+	if op.HasHooks(validation.HookPreSerialization) {
+		t.Fatal("late hook entered operation")
+	}
+	input := core.NewRawElement(core.NewTag(0x0011, 0x1010), core.VROB, []byte{1, 2})
+	result, err := op.Handle(validation.HookEvent{Point: validation.HookPreSerialization, Element: &input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Element.Value.(core.RawValue)[0] = 99
+	if input.Value.(core.RawValue)[0] != 1 {
+		t.Fatal("public Handle no longer returns detached values")
+	}
+	var nilChain *validation.HookChain
+	result, err = nilChain.Run(context.Background(), validation.HookEvent{Point: validation.HookPreSerialization, Element: &input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Element.Value.(core.RawValue)[0] = 98
+	if input.Value.(core.RawValue)[0] != 1 {
+		t.Fatal("public nil Run no longer returns detached values")
+	}
+}
+
 func TestOperationFreezesHookRegistryAndAnnotatesRuleOffsets(t *testing.T) {
 	lateCalls := 0
 	var chain *validation.HookChain
@@ -191,5 +225,33 @@ func TestOperationStopFirstStopsHookChainAndPreservesAtomicChange(t *testing.T) 
 	}
 	if len(report.Findings) != 1 || len(report.Changes) != 1 || report.Changes[0].Kind != validation.ChangeTransformed {
 		t.Fatalf("atomic finding/change report = %#v", report)
+	}
+}
+
+func TestPublicDetachedNonMatchingSequenceAndFragmentsRemainIsolated(t *testing.T) {
+	chain, _ := validation.NewHookChain(validation.HookRegistration{Name: "unused", Points: []validation.HookPoint{validation.HookPostWrite}, Hook: validation.HookFunc(func(context.Context, validation.HookEvent) (validation.HookDecision, error) {
+		return validation.HookDecision{}, nil
+	})})
+	input := core.Element{Header: core.ElementHeader{Tag: core.NewTag(0x0040, 0xa730), VR: core.VRSQ}, Value: core.SequenceValue{Items: []core.DataSet{{Elements: []core.Element{{Header: core.ElementHeader{Tag: core.TagPixelData, VR: core.VROB}, Value: core.FragmentSequence{OffsetTable: []byte{0, 0, 0, 0}, Fragments: [][]byte{{1, 2}}}}}}}}}
+	for _, withChain := range []bool{false, true} {
+		options := validation.Options{}
+		if withChain {
+			options.Hooks = chain
+		}
+		op, err := validation.NewOperation(context.Background(), options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := op.Handle(validation.HookEvent{Point: validation.HookPreSerialization, Element: &input})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fragments := result.Element.Value.(core.SequenceValue).Items[0].Elements[0].Value.(core.FragmentSequence)
+		fragments.OffsetTable[0] = 99
+		fragments.Fragments[0][0] = 98
+		original := input.Value.(core.SequenceValue).Items[0].Elements[0].Value.(core.FragmentSequence)
+		if original.OffsetTable[0] != 0 || original.Fragments[0][0] != 1 {
+			t.Fatal("public nonconsumer result aliases input")
+		}
 	}
 }

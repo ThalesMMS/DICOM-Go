@@ -392,3 +392,24 @@ func TestDefaultRegistryIncludesKnownVideoMediaSyntaxes(t *testing.T) {
 		}
 	}
 }
+
+func TestRetiredJPEGSyntaxesAreStructurallySupported(t *testing.T) {
+	for _, uid := range []string{"1.2.840.10008.1.2.4.52", "1.2.840.10008.1.2.4.54", "1.2.840.10008.1.2.4.56", "1.2.840.10008.1.2.4.66"} {
+		syntax, ok := DefaultRegistry.Get(uid)
+		if !ok || !syntax.Supported || !syntax.Encapsulated || !syntax.ExplicitVR || !syntax.RequiresCodec() || syntax.HasCodec() {
+			t.Fatalf("%s: %+v ok=%v", uid, syntax, ok)
+		}
+	}
+	// The built-in JPEG codec decodes the 8-bit Huffman progressive ones.
+	for _, uid := range []string{JPEGSpectralSelection.UID, JPEGFullProgression.UID} {
+		syntax, ok := DefaultRegistry.Get(uid)
+		if !ok || !syntax.Supported || !syntax.Encapsulated || !syntax.ExplicitVR || !syntax.RequiresCodec() || !syntax.HasCodec() {
+			t.Fatalf("%s: %+v ok=%v", uid, syntax, ok)
+		}
+	}
+	for _, uid := range []string{"1.2.840.10008.1.2.4.67", "1.2.840.10008.1.2.4.050"} {
+		if isRetiredJPEGTransferSyntaxUID(uid) {
+			t.Fatalf("%s treated as a retired JPEG syntax", uid)
+		}
+	}
+}

@@ -17,6 +17,8 @@ var ErrMaxPixelDataBytesExceeded = errors.New("dicom: maximum Pixel Data size ex
 var ErrMaxDeformableVectorGridBytesExceeded = errors.New("dicom: maximum deformable Vector Grid Data size exceeded")
 var ErrMaxTotalBytesExceeded = errors.New("dicom: maximum total bytes exceeded")
 var ErrUnexpectedItemDelimiter = errors.New("dicom: item delimitation tag outside of item context")
+var ErrMaxDelimiterRecoveries = errors.New("dicom: maximum delimiter recoveries exceeded")
+var ErrMaxImplicitVRElements = errors.New("dicom: maximum implicit VR element switches exceeded")
 var ErrUnexpectedSequenceDelimiter = errors.New("dicom: sequence delimitation tag outside of sequence context")
 
 type Op string

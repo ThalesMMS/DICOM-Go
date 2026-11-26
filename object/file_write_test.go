@@ -322,7 +322,7 @@ func TestPrepareFileMetaIgnoresNonFileMetaElements(t *testing.T) {
 		}, std.Dictionary),
 		Dataset:        FromDataSet(core.DataSet{Elements: dicomtest.MinimalDataset()}, std.Dictionary),
 		TransferSyntax: transfer.ExplicitVRLittleEndian,
-	}, transfer.ExplicitVRLittleEndian)
+	}, transfer.ExplicitVRLittleEndian, fileMetaOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestPrepareFileMetaDerivesMissingElements(t *testing.T) {
 		TransferSyntax: transfer.ImplicitVRLittleEndian,
 	}
 
-	prepared, err := prepareFileMeta(file, transfer.ImplicitVRLittleEndian)
+	prepared, err := prepareFileMeta(file, transfer.ImplicitVRLittleEndian, fileMetaOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +603,7 @@ func TestPrepareFileMetaCalculatesKnownGroupLength(t *testing.T) {
 	prepared, err := prepareFileMeta(&File{
 		Dataset:        FromDataSet(core.DataSet{Elements: dicomtest.MinimalDataset()}, std.Dictionary),
 		TransferSyntax: transfer.ExplicitVRLittleEndian,
-	}, transfer.ExplicitVRLittleEndian)
+	}, transfer.ExplicitVRLittleEndian, fileMetaOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -789,6 +789,7 @@ func TestWriteFileRoundTripPreservesSupportedStillImagePayloads(t *testing.T) {
 		transfer.JPEGLosslessNonHierarchical,
 		transfer.JPEGLosslessSV1,
 		transfer.RLELossless,
+		transfer.DeflatedImageFrameCompression,
 	} {
 		t.Run(syntax.Name, func(t *testing.T) {
 			file := &File{

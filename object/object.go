@@ -8,6 +8,7 @@ import (
 	"maps"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -24,10 +25,40 @@ var tagSpecificCharacterSet = core.NewTag(0x0008, 0x0005)
 const orderIndexThreshold = 2048
 
 // TextOptions configures how textual values are decoded from raw element bytes.
+//
+// By default text is decoded strictly with the Specific Character Set
+// (0008,0005) of its scope, or the default repertoire when none is declared;
+// bytes the repertoire cannot represent are an error. FallbackCharacterSet is
+// used only in the cases the caller authorizes:
+//
+//   - AllowUnsupportedCharsetFallback: the scope declares an unsupported or
+//     invalid term.
+//   - CharsetFallback & FallbackUndeclared: (0008,0005) is absent or empty in
+//     the scope (and its ancestors) and a value is outside the default
+//     repertoire.
+//   - CharsetFallback & FallbackUndecodable: a supported declaration rejects
+//     a value's bytes, for example Latin-1 bytes declared as ISO_IR 192.
+//
+// The fallback also decodes strictly: bytes it cannot represent stay an error,
+// never replacement characters. No case detects a character set heuristically.
 type TextOptions struct {
 	AllowUnsupportedCharsetFallback bool
 	FallbackCharacterSet            dicomenc.SpecificCharacterSet
+	CharsetFallback                 CharsetFallbackCases
 }
+
+// CharsetFallbackCases lists the fallback cases, beyond unsupported
+// declarations, that TextOptions authorizes.
+type CharsetFallbackCases uint8
+
+const (
+	// FallbackUndeclared authorizes FallbackCharacterSet for values outside
+	// the default repertoire in a scope without a declaration.
+	FallbackUndeclared CharsetFallbackCases = 1 << iota
+	// FallbackUndecodable authorizes FallbackCharacterSet for values that a
+	// supported declaration cannot decode.
+	FallbackUndecodable
+)
 
 type sequenceItemTemplate struct {
 	privateDuplicateSlots map[core.Tag]bool
@@ -43,14 +74,19 @@ type sequenceItemTemplate struct {
 	itemOffsetSet         bool
 	inheritedCharset      dicomenc.SpecificCharacterSet
 	inheritedErr          error
+	inheritedDeclared     bool
 }
 
 type Object struct {
+	incompletePixelData         *IncompletePixelData
+	parsedPixelData             bool
 	privateDuplicateSlots       map[core.Tag]bool
 	privateScope                *dictionary.PrivateReservations
 	privateScopeError           error
 	privateDiagnostics          []PrivateDiagnostic
 	privateDiagnosticsTruncated bool
+	boundaryRecoveries          []BoundaryRecovery
+	boundaryRecoveriesTruncated bool
 	elements                    map[core.Tag]core.Element
 	order                       []core.Tag
 	orderIndex                  map[core.Tag]int
@@ -75,9 +111,10 @@ type Object struct {
 
 	// Sequence items fall back to the encapsulating data set's charset unless
 	// they carry their own Specific Character Set (PS3.5 Section 7.5.3).
-	inheritedCharsetSet bool
-	inheritedCharset    dicomenc.SpecificCharacterSet
-	inheritedCharsetErr error
+	inheritedCharsetSet      bool
+	inheritedCharset         dicomenc.SpecificCharacterSet
+	inheritedCharsetErr      error
+	inheritedCharsetDeclared bool
 }
 
 type valueProvider interface {
@@ -99,7 +136,8 @@ func NewWithTextOptions(dict dictionary.DataDictionary, opts TextOptions) *Objec
 
 // ValueByteOrder returns the byte order of raw binary element values in this
 // object. Objects built manually default to Little Endian; reader APIs set this
-// from the dataset transfer syntax.
+// from the dataset transfer syntax. Writing in a syntax of the other byte order
+// reverses the fixed-width values to that order.
 func (o *Object) ValueByteOrder() binary.ByteOrder {
 	if o == nil || o.byteOrder == nil {
 		return binary.LittleEndian
@@ -147,12 +185,12 @@ func FromDataSet(ds core.DataSet, dict dictionary.DataDictionary) *Object {
 // retained, and its position in the resulting object matches the tag's last
 // occurrence in the input.
 func FromElements(elements []core.Element, dict dictionary.DataDictionary) *Object {
-	obj := New(dict)
+	obj := objectForElements(elements, dict, TextOptions{})
 	for _, elem := range elements {
 		obj.Put(elem)
 	}
 	obj.capturePrivateScope(elements)
-	return obj
+	return &obj
 }
 
 func FromDataSetWithTextOptions(ds core.DataSet, dict dictionary.DataDictionary, opts TextOptions) *Object {
@@ -161,11 +199,7 @@ func FromDataSetWithTextOptions(ds core.DataSet, dict dictionary.DataDictionary,
 }
 
 func dataSetObjectWithTextOptions(ds core.DataSet, dict dictionary.DataDictionary, opts TextOptions) Object {
-	obj := Object{
-		elements: map[core.Tag]core.Element{},
-		dict:     dict,
-		text:     opts,
-	}
+	obj := objectForElements(ds.Elements, dict, opts)
 	for _, elem := range ds.Elements {
 		obj.Put(elem)
 	}
@@ -176,25 +210,55 @@ func dataSetObjectWithTextOptions(ds core.DataSet, dict dictionary.DataDictionar
 }
 
 func FromElementsWithTextOptions(elements []core.Element, dict dictionary.DataDictionary, opts TextOptions) *Object {
-	obj := NewWithTextOptions(dict, opts)
+	obj := objectForElements(elements, dict, opts)
 	for _, elem := range elements {
 		obj.Put(elem)
 	}
 	obj.capturePrivateScope(elements)
-	return obj
+	return &obj
 }
 
 // fromParsedDataSetWithTextOptions preserves duplicate-tag ambiguity needed to
 // prevent deferred replay from returning an earlier occurrence of the tag.
 func fromParsedDataSetWithTextOptions(ds core.DataSet, dict dictionary.DataDictionary, opts TextOptions) *Object {
-	obj := NewWithTextOptions(dict, opts)
+	obj := objectForElements(ds.Elements, dict, opts)
 	obj.itemOffset = ds.ItemOffset
 	obj.itemOffsetSet = ds.ItemOffsetSet
 	for _, elem := range ds.Elements {
 		obj.put(elem, true)
 	}
+	obj.parsedPixelData = obj.Has(core.TagPixelData)
 	obj.capturePrivateScope(ds.Elements)
+	return &obj
+}
+
+// objectForElements reserves storage before the normal Put path populates it.
+// The strictly increasing prefix proves at least that many distinct tags, so
+// duplicate-heavy inputs cannot inflate retained capacity to their raw count.
+// Ordered datasets reserve their entire known size; other inputs keep growing
+// through the existing map/order logic without sorting or dropping duplicates.
+func objectForElements(elements []core.Element, dict dictionary.DataDictionary, opts TextOptions) Object {
+	capacity := elementCapacityHint(elements)
+	obj := Object{
+		elements: make(map[core.Tag]core.Element, capacity),
+		dict:     dict,
+		text:     opts,
+	}
+	// A one-tag hint cannot avoid growth; an initial append may already
+	// reserve more than one tag. Keep that ordinary path for minimal hints.
+	if capacity > 1 {
+		obj.order = make([]core.Tag, 0, capacity)
+	}
 	return obj
+}
+
+func elementCapacityHint(elements []core.Element) int {
+	for i := 1; i < len(elements); i++ {
+		if !elements[i-1].Tag().Less(elements[i].Tag()) {
+			return i
+		}
+	}
+	return len(elements)
 }
 
 func (o *Object) SetTextOptions(opts TextOptions) {
@@ -228,6 +292,9 @@ func (o *Object) Close() error {
 
 func (o *Object) Put(elem core.Element) {
 	o.put(elem, false)
+	if o != nil && elem.Tag() == core.TagPixelData {
+		o.parsedPixelData = false
+	}
 }
 
 func (o *Object) put(elem core.Element, parsedDuplicateIsAmbiguous bool) {
@@ -310,6 +377,9 @@ func (o *Object) Remove(tag core.Tag) bool {
 		o.deferredCount -= countDeferredElement(existing)
 	}
 	delete(o.elements, tag)
+	if tag == core.TagPixelData {
+		o.parsedPixelData = false
+	}
 	delete(o.ambiguousDeferred, tag)
 	if o.orderIndex == nil && len(o.order) < orderIndexThreshold {
 		o.removeTagFromOrder(tag)
@@ -442,6 +512,13 @@ func (o *Object) Has(tag core.Tag) bool {
 	}
 	_, ok := o.elements[tag]
 	return ok
+}
+
+// HasDuplicateParsedTag reports whether the currently retained element had
+// multiple occurrences in the parsed data set. Put replaces it and clears
+// that provenance.
+func (o *Object) HasDuplicateParsedTag(tag core.Tag) bool {
+	return o != nil && o.ambiguousDeferred[tag]
 }
 
 func (o *Object) Len() int {
@@ -651,7 +728,12 @@ func (o *Object) GetInt(tag core.Tag) (int64, error) {
 	return values[0], nil
 }
 
+// GetInts returns the values of an IS element, or of a binary integer
+// element (US, SS, UL, SL, UV, SV) decoded in the object's value byte order.
 func (o *Object) GetInts(tag core.Tag) ([]int64, error) {
+	if elem, ok := o.Get(tag); ok && elem.VR() != core.VRIS && isBinaryIntegerVR(elem.VR()) {
+		return binaryInts(elem, o.ValueByteOrder())
+	}
 	values, err := o.numericStrings(tag, core.VRIS)
 	if err != nil {
 		return nil, err
@@ -678,7 +760,12 @@ func (o *Object) GetFloat(tag core.Tag) (float64, error) {
 	return values[0], nil
 }
 
+// GetFloats returns the values of a DS element, or of an FL or FD element
+// decoded in the object's value byte order.
 func (o *Object) GetFloats(tag core.Tag) ([]float64, error) {
+	if elem, ok := o.Get(tag); ok && (elem.VR() == core.VRFL || elem.VR() == core.VRFD) {
+		return binaryFloats(elem, o.ValueByteOrder())
+	}
 	values, err := o.numericStrings(tag, core.VRDS)
 	if err != nil {
 		return nil, err
@@ -767,14 +854,9 @@ func (o *Object) GetSequence(tag core.Tag) ([]*Object, bool) {
 	templates := make([]sequenceItemTemplate, len(seq.Items))
 	objects := make([]Object, len(seq.Items))
 	items := make([]*Object, len(seq.Items))
-	inheritedCharset, inheritedCharsetErr := o.CharacterSet()
 	for i, item := range seq.Items {
-		objects[i] = dataSetObjectWithTextOptions(item, o.dict, o.text)
+		objects[i] = o.newSequenceItem(item)
 		itemObject := &objects[i]
-		itemObject.SetValueByteOrder(o.ValueByteOrder())
-		itemObject.setInheritedCharacterSet(inheritedCharset, inheritedCharsetErr)
-		itemObject.sequenceCache = nil
-		itemObject.sharedBacking = true
 		templates[i] = sequenceItemTemplateFromObject(itemObject)
 		items[i] = itemObject
 	}
@@ -783,6 +865,41 @@ func (o *Object) GetSequence(tag core.Tag) ([]*Object, bool) {
 	}
 	o.sequenceCache[tag] = templates
 	return items, true
+}
+
+// sequenceItemAt materializes only the selected facade. A cold lookup
+// does not build or cache templates for other items.
+func (o *Object) sequenceItemAt(tag core.Tag, index int) *Object {
+	if o == nil || index < 0 {
+		return nil
+	}
+	if cached, ok := o.sequenceCache[tag]; ok {
+		if index >= len(cached) {
+			return nil
+		}
+		item := sequenceItemFacade(o, cached[index])
+		return &item
+	}
+	element, ok := o.Get(tag)
+	if !ok {
+		return nil
+	}
+	sequence, ok := element.Value.(core.SequenceValue)
+	if !ok || index >= len(sequence.Items) {
+		return nil
+	}
+	item := o.newSequenceItem(sequence.Items[index])
+	return &item
+}
+
+func (o *Object) newSequenceItem(data core.DataSet) Object {
+	item := dataSetObjectWithTextOptions(data, o.dict, o.text)
+	inheritedCharset, inheritedCharsetErr := o.CharacterSet()
+	item.SetValueByteOrder(o.ValueByteOrder())
+	item.setInheritedCharacterSet(inheritedCharset, inheritedCharsetErr, o.characterSetDeclared())
+	item.sequenceCache = nil
+	item.sharedBacking = true
+	return item
 }
 
 func sequenceItemTemplateFromObject(obj *Object) sequenceItemTemplate {
@@ -800,6 +917,7 @@ func sequenceItemTemplateFromObject(obj *Object) sequenceItemTemplate {
 		itemOffsetSet:         obj.itemOffsetSet,
 		inheritedCharset:      obj.inheritedCharset,
 		inheritedErr:          obj.inheritedCharsetErr,
+		inheritedDeclared:     obj.inheritedCharsetDeclared,
 	}
 }
 
@@ -810,29 +928,35 @@ func sequenceItemFacades(parent *Object, templates []sequenceItemTemplate) []*Ob
 	objects := make([]Object, len(templates))
 	items := make([]*Object, len(templates))
 	for i, template := range templates {
-		objects[i] = Object{
-			privateDuplicateSlots: template.privateDuplicateSlots,
-			privateScope:          template.privateScope,
-			privateScopeError:     template.privateScopeError,
-			elements:              template.elements,
-			order:                 template.order,
-			orderIndex:            template.orderIndex,
-			staleOrder:            template.staleOrder,
-			sharedBacking:         true,
-			dict:                  parent.dict,
-			text:                  parent.text,
-			byteOrder:             parent.ValueByteOrder(),
-			itemOffset:            template.itemOffset,
-			itemOffsetSet:         template.itemOffsetSet,
-			deferredCount:         template.deferredCount,
-			ambiguousDeferred:     template.ambiguousDeferred,
-			inheritedCharsetSet:   true,
-			inheritedCharset:      template.inheritedCharset,
-			inheritedCharsetErr:   template.inheritedErr,
-		}
+		objects[i] = sequenceItemFacade(parent, template)
 		items[i] = &objects[i]
 	}
 	return items
+}
+
+func sequenceItemFacade(parent *Object, template sequenceItemTemplate) Object {
+	return Object{
+		privateDuplicateSlots: template.privateDuplicateSlots,
+		privateScope:          template.privateScope,
+		privateScopeError:     template.privateScopeError,
+		elements:              template.elements,
+		order:                 template.order,
+		orderIndex:            template.orderIndex,
+		staleOrder:            template.staleOrder,
+		sharedBacking:         true,
+		dict:                  parent.dict,
+		text:                  parent.text,
+		byteOrder:             parent.ValueByteOrder(),
+		itemOffset:            template.itemOffset,
+		itemOffsetSet:         template.itemOffsetSet,
+		deferredCount:         template.deferredCount,
+		ambiguousDeferred:     template.ambiguousDeferred,
+		inheritedCharsetSet:   true,
+		inheritedCharset:      template.inheritedCharset,
+		inheritedCharsetErr:   template.inheritedErr,
+
+		inheritedCharsetDeclared: template.inheritedDeclared,
+	}
 }
 
 func (o *Object) lookupTemporalString(tag core.Tag, want core.VR) (string, error) {
@@ -932,10 +1056,49 @@ func (o *Object) decodeTextValues(elem core.Element) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		return decodeRawTextValuesWithCharacterSet(elem.VR(), value.Bytes(), charset)
+		values, err := decodeRawTextValuesWithCharacterSet(elem.VR(), value.Bytes(), charset)
+		if err != nil && elem.VR().UsesSpecificCharacterSet() && o.charsetFallbackAuthorized() {
+			if fallback, fallbackErr := decodeRawTextValuesWithCharacterSet(elem.VR(), value.Bytes(), o.text.FallbackCharacterSet); fallbackErr == nil {
+				return fallback, nil
+			}
+		}
+		return values, err
 	default:
 		return nil, fmt.Errorf("dicom: unsupported textual value type %T for %s", elem.Value, elem.Tag())
 	}
+}
+
+// characterSetDeclared reports whether the scope, or an ancestor it inherits
+// from, declares (0008,0005) with at least one non-empty value.
+func (o *Object) characterSetDeclared() bool {
+	if o == nil {
+		return false
+	}
+	if elem, ok := o.Get(tagSpecificCharacterSet); ok {
+		values, err := decodeTextValuesWithCodec(elem, dicomenc.DefaultCharacterSet)
+		if err != nil {
+			return true
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				return true
+			}
+		}
+		return false
+	}
+	return o.inheritedCharsetSet && o.inheritedCharsetDeclared
+}
+
+// charsetFallbackAuthorized reports whether TextOptions authorizes the
+// fallback for a value the scope's supported character set rejected.
+func (o *Object) charsetFallbackAuthorized() bool {
+	if o == nil {
+		return false
+	}
+	if o.characterSetDeclared() {
+		return o.text.CharsetFallback&FallbackUndecodable != 0
+	}
+	return o.text.CharsetFallback&FallbackUndeclared != 0
 }
 
 func (o *Object) characterSetForVR(vr core.VR) (dicomenc.SpecificCharacterSet, error) {
@@ -1006,12 +1169,13 @@ func (o *Object) invalidateCharacterSetCache() {
 	o.sequenceCache = nil
 }
 
-func (o *Object) setInheritedCharacterSet(charset dicomenc.SpecificCharacterSet, err error) {
+func (o *Object) setInheritedCharacterSet(charset dicomenc.SpecificCharacterSet, err error, declared bool) {
 	if o == nil {
 		return
 	}
 	o.inheritedCharsetSet = true
 	o.inheritedCharset = charset
 	o.inheritedCharsetErr = err
+	o.inheritedCharsetDeclared = declared
 	o.invalidateCharacterSetCache()
 }

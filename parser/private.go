@@ -42,10 +42,8 @@ func (r *Reader) resetPrivateScopes() {
 	r.privateDiagnosticsTruncated = false
 }
 func (r *Reader) privateScope() *dictionary.PrivateReservations {
-	for i := len(r.seqDelimiters) - 1; i >= 0; i-- {
-		if r.seqDelimiters[i].typ == seqTokenTypeItem {
-			return r.seqDelimiters[i].privateScope
-		}
+	if item := r.innermostItem(); item != nil {
+		return item.privateScope
 	}
 	return r.privateRoot
 }
@@ -55,14 +53,7 @@ func (r *Reader) privateIssue(tag core.Tag, err error) {
 		return
 	}
 	d := PrivateDiagnostic{Tag: tag, Offset: r.Position(), Err: err}
-	for i := len(r.seqDelimiters) - 1; i >= 0; i-- {
-		f := r.seqDelimiters[i]
-		if f.typ == seqTokenTypeItem && f.baseOffset >= 8 {
-			d.ItemOffset = int64(f.baseOffset - 8)
-			d.ItemOffsetSet = true
-			break
-		}
-	}
+	d.ItemOffset, d.ItemOffsetSet = r.itemOffset()
 	r.privateDiagnostics = append(r.privateDiagnostics, d)
 }
 func (r *Reader) capturePrivateReservation(e core.Element) error {

@@ -9,7 +9,7 @@ import (
 	"github.com/ThalesMMS/dicom-go/dictionary"
 )
 
-//go:generate go run ../../cmd/privatecataloggen -source catalog.json -out catalog_gen.go
+//go:generate go run ../../cmd/privatecataloggen -source catalog.json -source catalog_gdcm.json -out catalog_gen.go
 
 // Origin identifies the reviewed upstream definition, not a manufacturer's
 // validation of every scanner version or permission to retain private data.
@@ -94,8 +94,13 @@ func (c *Catalog) Entries() []Record {
 	return append([]Record(nil), c.records...)
 }
 
-//go:embed LICENSE.DCMTK
-var licenseNotice string
+var (
+	//go:embed LICENSE.DCMTK
+	dcmtkNotice string
+	//go:embed LICENSE.GDCM
+	gdcmNotice string
+)
 
-// LicenseNotice returns the attribution and terms for redistributed entries.
-func LicenseNotice() string { return licenseNotice }
+// LicenseNotice returns the attribution and terms for redistributed entries:
+// the DCMTK notice followed by the GDCM and dicom3tools notices.
+func LicenseNotice() string { return dcmtkNotice + "\n\n" + gdcmNotice }

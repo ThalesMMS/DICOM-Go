@@ -28,6 +28,27 @@ func TestProposedStoreTransferSyntaxUIDsOrdersNativeSyntaxes(t *testing.T) {
 			want:      []string{ImplicitVRLittleEndian.UID, ExplicitVRLittleEndian.UID},
 		},
 		{
+			// Deflate compresses the data set, not the pixels: native re-encoding
+			// needs no pixel codec, and the source syntax stays first.
+			name:      "deflated source first",
+			sourceUID: DeflatedExplicitVRLittleEndian.UID,
+			pref:      NativeStoreSourceFirst,
+			want:      []string{DeflatedExplicitVRLittleEndian.UID, ExplicitVRLittleEndian.UID, ImplicitVRLittleEndian.UID},
+		},
+		{
+			name:      "deflated explicit first",
+			sourceUID: DeflatedExplicitVRLittleEndian.UID,
+			pref:      NativeStoreExplicitLittleEndianFirst,
+			want:      []string{ExplicitVRLittleEndian.UID, DeflatedExplicitVRLittleEndian.UID, ImplicitVRLittleEndian.UID},
+		},
+		{
+			// Encapsulated sources are never offered as anything else.
+			name:      "encapsulated uncompressed unchanged",
+			sourceUID: EncapsulatedUncompressedExplicitVRLittleEndian.UID,
+			pref:      NativeStoreSourceFirst,
+			want:      []string{EncapsulatedUncompressedExplicitVRLittleEndian.UID},
+		},
+		{
 			name:      "compressed source only",
 			sourceUID: JPEG2000.UID,
 			pref:      NativeStoreExplicitLittleEndianFirst,
@@ -55,6 +76,7 @@ func TestReceiveTransferSyntaxUIDsCombinesNativeAndPreservableCompressed(t *test
 		JPEGBaseline.UID,
 		JPEGLosslessNonHierarchical.UID,
 		JPEGLSLossless.UID,
+		RLELossless.UID,
 		JPEG2000LosslessOnly.UID,
 		JPEGXL.UID,
 	} {
@@ -62,7 +84,7 @@ func TestReceiveTransferSyntaxUIDsCombinesNativeAndPreservableCompressed(t *test
 			t.Fatalf("ReceiveTransferSyntaxUIDs() missing %q: %#v", uid, got)
 		}
 	}
-	for _, uid := range []string{RLELossless.UID, MPEG4HP41F.UID, JPIPReferenced.UID, JPIPHTJ2KReferenced.UID} {
+	for _, uid := range []string{MPEG4HP41F.UID, JPIPReferenced.UID, JPIPHTJ2KReferenced.UID} {
 		if hasUID(got, uid) {
 			t.Fatalf("ReceiveTransferSyntaxUIDs() included unsupported/media syntax %q: %#v", uid, got)
 		}

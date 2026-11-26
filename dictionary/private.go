@@ -26,6 +26,21 @@ type PrivateDataDictionary interface {
 	ByPrivate(creator string, group uint16, offset uint8) (Entry, bool)
 }
 
+// PrivateTagDictionary optionally refines ByPrivate with the actual data
+// element, so definitions bound to one element (DCMTK's (gggg,"CREATOR",eeee)
+// form) can be distinguished from block-relative ones. LookupScopedEntry
+// prefers it over ByPrivate.
+type PrivateTagDictionary interface {
+	PrivateDataDictionary
+	ByPrivateTag(creator string, tag core.Tag) (Entry, bool)
+}
+
+// privateDefinitionReporter lets a dictionary that implements
+// PrivateDataDictionary state that it holds no private definitions.
+type privateDefinitionReporter interface {
+	HasPrivateDefinitions() bool
+}
+
 // PrivateEntry describes a caller-supplied private attribute. This package does
 // not distribute a vendor catalog or classify any attribute as safe to retain.
 type PrivateEntry struct {
@@ -128,8 +143,13 @@ func HasPrivateDictionary(dict DataDictionary) bool {
 		}
 		return false
 	}
-	_, ok := dict.(PrivateDataDictionary)
-	return ok
+	if _, ok := dict.(PrivateDataDictionary); !ok {
+		return false
+	}
+	if reporter, ok := dict.(privateDefinitionReporter); ok {
+		return reporter.HasPrivateDefinitions()
+	}
+	return true
 }
 
 func (c Chain) ByPrivate(creator string, group uint16, offset uint8) (Entry, bool) {
@@ -168,6 +188,13 @@ func LookupScopedEntry(dict DataDictionary, tag core.Tag, creator string) (Entry
 		return e, true
 	}
 	if creator != "" && IsPrivateDataTag(tag) {
+		if p, ok := dict.(PrivateTagDictionary); ok {
+			if e, found := p.ByPrivateTag(creator, tag); found {
+				e.Tag = tag
+				return e, true
+			}
+			return Entry{}, false
+		}
 		if p, ok := dict.(PrivateDataDictionary); ok {
 			if e, found := p.ByPrivate(creator, tag.Group, uint8(tag.Element)); found {
 				e.Tag = tag

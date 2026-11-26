@@ -52,7 +52,9 @@ func NewReaderWithValidation(ctx context.Context, source io.Reader, syntax trans
 		// frame permits encapsulated Pixel Data at the deepest valid item level.
 		parserMaxDepth = maxDepth*2 + 1
 	}
-	if readerOpts.MaxSequenceDepth == 0 || readerOpts.MaxSequenceDepth > parserMaxDepth {
+	// Validation bounds the depth itself, so an unlimited (negative) parser
+	// depth is clamped as well.
+	if readerOpts.MaxSequenceDepth <= 0 || readerOpts.MaxSequenceDepth > parserMaxDepth {
 		readerOpts.MaxSequenceDepth = parserMaxDepth
 	}
 	if validationOpts.Dictionary == nil {

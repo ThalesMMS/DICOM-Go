@@ -55,6 +55,8 @@ func TestWriterPrivateUNSequenceByTransferSyntax(t *testing.T) {
 			dicomtest.NewPNElement(core.NewTag(0x0010, 0x0010), "PRIVATE^ITEM"),
 		}}}},
 	}}}
+	// PS3.5 6.2.2: explicit VR syntaxes write the UN sequence with undefined
+	// length and Implicit VR Little Endian items, Big Endian included.
 	tests := []struct {
 		name      string
 		syntax    transfer.Syntax
@@ -62,10 +64,18 @@ func TestWriterPrivateUNSequenceByTransferSyntax(t *testing.T) {
 		errorText string
 	}{
 		{name: "implicit VR round trip", syntax: transfer.ImplicitVRLittleEndian, roundTrip: true},
-		{name: "explicit VR rejection", syntax: transfer.ExplicitVRLittleEndian, errorText: "UN in Implicit VR"},
+		{name: "explicit VR little endian round trip", syntax: transfer.ExplicitVRLittleEndian, roundTrip: true},
+		{name: "explicit VR big endian round trip", syntax: transfer.ExplicitVRBigEndian, roundTrip: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.syntax.ExplicitVR {
+				encoded := writeElementBytes(t, tt.syntax, dataset.Elements[0])
+				item := dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagItem, 0xFFFFFFFF)
+				if !bytes.Contains(encoded, append(item, 0x10, 0x00, 0x10, 0x00, 0x0C, 0x00, 0x00, 0x00)) {
+					t.Fatalf("items are not Implicit VR Little Endian: % X", encoded)
+				}
+			}
 			if tt.roundTrip {
 				got := roundTripDataSet(t, tt.syntax, dataset, defaultWriterOptions(), std.Dictionary)
 				outer := onlyElement(t, got)

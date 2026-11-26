@@ -102,6 +102,16 @@ func References(obj *object.Object) []Reference {
 		}
 		if ref, ok := referenceFromRecord(record); ok {
 			refs = append(refs, ref)
+		} else if target, ok := uint32Value(record, tagMRDRDirectoryRecordOffset); ok && target != 0 {
+			physical := recordsByOffset[target]
+			if physical != nil && recordInUse(physical) {
+				typ, _ := physical.GetString(tagDirectoryRecordType)
+				if typ == recordTypeMRDR.String() {
+					if ref, ok := referenceFromRecordMRDR(record, physical); ok {
+						refs = append(refs, ref)
+					}
+				}
+			}
 		}
 	}
 	return refs
@@ -121,11 +131,14 @@ func flatReferences(records []*object.Object) []Reference {
 }
 
 func referenceFromRecord(record *object.Object) (Reference, bool) {
-	fileID, ok := record.GetStrings(tagReferencedFileID)
-	if !ok || !hasUsablePart(fileID) {
+	fileID, ok := referencedFileID(record)
+	if !ok {
 		return Reference{}, false
 	}
 	recordType, _ := record.GetString(tagDirectoryRecordType)
+	if recordType == recordTypeMRDR.String() {
+		return Reference{}, false
+	}
 	return Reference{FileID: fileID, Type: recordType}, true
 }
 
@@ -135,7 +148,7 @@ func recordInUse(record *object.Object) bool {
 		return true
 	}
 	raw, ok := elem.RawBytes()
-	return ok && elem.VR() == core.VRUS && len(raw) == 2 && record.ValueByteOrder().Uint16(raw) == 0xFFFF
+	return ok && elem.VR() == core.VRUS && len(raw) == 2 && record.ValueByteOrder().Uint16(raw) != 0
 }
 
 func uint32Value(obj *object.Object, tag core.Tag) (uint32, bool) {
@@ -317,13 +330,32 @@ func OpenReferencedFile(root string, ref Reference) (*os.File, string, error) {
 	return file, resolved, nil
 }
 
-func hasUsablePart(values []string) bool {
-	for _, value := range values {
-		for _, part := range strings.Split(value, `\`) {
-			if strings.TrimSpace(part) != "" {
-				return true
-			}
-		}
+func referencedFileID(record *object.Object) ([]string, bool) {
+	values, ok := record.GetStrings(tagReferencedFileID)
+	if !ok || len(values) == 0 {
+		return nil, false
 	}
-	return false
+	// GetStrings splits a wire File ID at backslashes, so a leading
+	// separator appears as an empty component. Reject it here before
+	// Resolve can discard the empty component as a compatibility measure.
+	first := strings.TrimSpace(values[0])
+	if first == "" || strings.HasPrefix(first, `\`) {
+		return nil, false
+	}
+	return values, true
+}
+
+func referenceFromRecordMRDR(logical, physical *object.Object) (Reference, bool) {
+	if logical.Has(tagReferencedFileID) {
+		return Reference{}, false
+	}
+	fileID, ok := referencedFileID(physical)
+	if !ok {
+		return Reference{}, false
+	}
+	typ, _ := logical.GetString(tagDirectoryRecordType)
+	if !standardFileRecordType(RecordType(typ)) {
+		return Reference{}, false
+	}
+	return Reference{FileID: fileID, Type: typ}, true
 }

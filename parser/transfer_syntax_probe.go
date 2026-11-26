@@ -540,7 +540,11 @@ func candidateConfidence(report TransferSyntaxCandidateReport, inputBytes int, p
 	if inputBytes > 0 {
 		confidence += 0.10 * minFloat(1, float64(report.BytesConsumed)/float64(inputBytes))
 	}
-	confidence -= minFloat(0.25, float64(report.DictionaryVRMismatches)*0.10)
+	// The penalty never exceeds the share of known elements that mismatch,
+	// so a few retired or vendor VRs in a long, otherwise consistent explicit
+	// VR prefix (ACR-NEMA files) do not count against the syntax.
+	confidence -= minFloat(minFloat(0.25, float64(report.DictionaryVRMismatches)*0.10),
+		ratio(report.DictionaryVRMismatches, report.KnownElements))
 	if parseErr != nil && report.FailureClass == TransferSyntaxProbeFailureMalformed {
 		confidence -= 0.20
 	} else if parseErr != nil && report.FailureClass == TransferSyntaxProbeFailureTruncated {

@@ -3,6 +3,7 @@ package transfer
 import (
 	"encoding/binary"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -103,6 +104,8 @@ func newDefaultRegistry() Registry {
 		EncapsulatedUncompressedExplicitVRLittleEndian,
 		JPEGBaseline,
 		JPEGExtended,
+		JPEGSpectralSelection,
+		JPEGFullProgression,
 		JPEGLosslessNonHierarchical,
 		JPEGLosslessSV1,
 		JPEGLSLossless,
@@ -166,6 +169,10 @@ func knownTransferSyntax(entry uiddict.Entry) Syntax {
 		return JPEGBaseline
 	case JPEGExtended.UID:
 		return JPEGExtended
+	case JPEGSpectralSelection.UID:
+		return JPEGSpectralSelection
+	case JPEGFullProgression.UID:
+		return JPEGFullProgression
 	case JPEGLosslessNonHierarchical.UID:
 		return JPEGLosslessNonHierarchical
 	case JPEGLosslessSV1.UID:
@@ -192,12 +199,17 @@ func knownTransferSyntax(entry uiddict.Entry) Syntax {
 		return JPIPHTJ2KReferenced
 	case JPIPHTJ2KReferencedDeflate.UID:
 		return JPIPHTJ2KReferencedDeflate
+	case DeflatedImageFrameCompression.UID:
+		return DeflatedImageFrameCompression
 	}
 	if IsJPEGXLTransferSyntax(entry.UID) {
 		return newJPEGXLSyntax(entry.UID, entry.Name)
 	}
 	if IsVideoTransferSyntax(entry.UID) {
 		return newVideoMediaSyntax(entry.UID, entry.Name)
+	}
+	if isRetiredJPEGTransferSyntaxUID(entry.UID) {
+		return newOptionalStillImageCodecSyntax(entry.UID, entry.Name)
 	}
 
 	syntax := Syntax{
@@ -212,7 +224,7 @@ func knownTransferSyntax(entry uiddict.Entry) Syntax {
 	case "1.2.840.10008.1.20":
 		syntax.ExplicitVR = false
 		return syntax
-	case "1.2.840.10008.1.2.4.95", "1.2.840.10008.1.2.4.205", "1.2.840.10008.1.2.8.1":
+	case "1.2.840.10008.1.2.4.95", "1.2.840.10008.1.2.4.205":
 		syntax.Deflated = true
 		return syntax
 	}
@@ -222,6 +234,20 @@ func knownTransferSyntax(entry uiddict.Entry) Syntax {
 		return syntax
 	}
 	return syntax
+}
+
+// isRetiredJPEGTransferSyntaxUID reports the retired JPEG processes
+// 1.2.840.10008.1.2.4.52 through .66 (PS3.5 A.4.1, retired). Their data sets
+// are Explicit VR Little Endian with encapsulated fragments, so they read and
+// write like any encapsulated syntax; decoding needs a codec none of the
+// built-in ones provides.
+func isRetiredJPEGTransferSyntaxUID(uid string) bool {
+	const prefix = "1.2.840.10008.1.2.4."
+	if !strings.HasPrefix(uid, prefix) {
+		return false
+	}
+	n, err := strconv.Atoi(uid[len(prefix):])
+	return err == nil && n >= 52 && n <= 66 && n != 57 && strconv.Itoa(n) == uid[len(prefix):]
 }
 
 func isEncapsulatedTransferSyntaxUID(uid string) bool {

@@ -8,11 +8,13 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ThalesMMS/dicom-go/attrpath"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/object"
@@ -220,6 +222,11 @@ var ErrUnsupportedPixelRedaction = errors.New("deid: unsupported pixel redaction
 type Report struct {
 	BurnedInPixel              BurnedInPixelReport
 	RecognizableVisualFeatures RecognizableVisualFeaturesReport
+	// EditedAttributes counts the attributes or items Options.Edits touched.
+	EditedAttributes int
+	// CSA counts the Siemens CSA headers a PrivateTagPolicy retained, which
+	// are scrubbed (see CSAScrubReport).
+	CSA CSAScrubReport
 }
 
 // AssessVisualPHIRisk returns the metadata-only burned-in annotation and
@@ -400,6 +407,12 @@ type Options struct {
 
 	BurnedInPixelPolicy BurnedInPixelPolicy
 	PrivateTagPolicy    PrivateTagPolicy
+
+	// Edits run after de-identification, in order, for site rules such as
+	// a pseudonym in a nested attribute (see attrpath.ParseScript). A
+	// failing edit fails the call; EditOptions supplies VRs and limits.
+	Edits       attrpath.Script
+	EditOptions attrpath.Options
 }
 
 // UIDRemapper assigns one stable replacement UID per original UID.
@@ -408,11 +421,28 @@ type UIDRemapper struct {
 	m       map[string]string
 	reverse map[string]string
 	missing uint64
+	key     []byte
+	keyed   bool
 }
 
-// NewUIDRemapper builds an empty UID remapper.
+// NewUIDRemapper builds an empty UID remapper that mints a random UID for
+// each original UID.
 func NewUIDRemapper() *UIDRemapper {
 	return &UIDRemapper{m: map[string]string{}, reverse: map[string]string{}}
+}
+
+// NewKeyedUIDRemapper builds an empty UID remapper whose replacements are
+// deterministic: core.KeyedNameUID(key, UID). Remappers with the same key
+// replace a UID identically across batches and runs, so objects
+// de-identified separately keep their references, and without the key a
+// replacement reveals nothing of its original. Keep the key secret. UIDs
+// minted for absent attributes stay random.
+// Nil and empty keys still select deterministic mapping.
+func NewKeyedUIDRemapper(key []byte) *UIDRemapper {
+	r := NewUIDRemapper()
+	r.key = append([]byte(nil), key...)
+	r.keyed = true
+	return r
 }
 
 // Map returns the stable replacement UID for old, minting one on first use.
@@ -434,6 +464,10 @@ func (r *UIDRemapper) mapWithCollisionCount(old string) (string, int) {
 }
 
 func (r *UIDRemapper) mapLockedWithCollisions(old string) (string, int) {
+	return r.mapLockedMinting(old, r.keyed)
+}
+
+func (r *UIDRemapper) mapLockedMinting(old string, keyed bool) (string, int) {
 	if r.m == nil {
 		r.m = map[string]string{}
 	}
@@ -447,6 +481,15 @@ func (r *UIDRemapper) mapLockedWithCollisions(old string) (string, int) {
 		}
 	}
 	collisions := 0
+	if keyed {
+		uid := core.KeyedNameUID(r.key, old)
+		if _, used := r.reverse[uid]; !used {
+			r.m[old] = uid
+			r.reverse[uid] = old
+			return uid, 0
+		}
+		collisions++
+	}
 	for {
 		uid := mintUID()
 		if existing, used := r.reverse[uid]; !used || existing == old {
@@ -475,7 +518,7 @@ func (r *UIDRemapper) mapMissingWithCollisionCount(scope string) (string, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.missing++
-	return r.mapLockedWithCollisions(fmt.Sprintf("%s:%d", scope, r.missing))
+	return r.mapLockedMinting(fmt.Sprintf("%s:%d", scope, r.missing), false)
 }
 
 // AnonymizeObject de-identifies obj in place by replacing patient name/ID,
@@ -532,7 +575,14 @@ func AnonymizeObjectWithReport(obj *object.Object, opts Options, uids *UIDRemapp
 	if uids == nil {
 		uids = NewUIDRemapper()
 	}
-	anonymizeObject(obj, opts, uids, true)
+	anonymizeObject(obj, opts, uids, true, &report)
+	if len(opts.Edits) > 0 {
+		edited, err := opts.Edits.Apply(obj, opts.EditOptions)
+		report.EditedAttributes = edited
+		if err != nil {
+			return report, err
+		}
+	}
 	return report, nil
 }
 
@@ -574,12 +624,12 @@ func rederiveFileMeta(file *object.File) (*object.File, error) {
 	return file, nil
 }
 
-func anonymizeObject(obj *object.Object, opts Options, uids *UIDRemapper, root bool) {
-	rewriteSequencesAndPrivateTags(obj, opts, uids)
+func anonymizeObject(obj *object.Object, opts Options, uids *UIDRemapper, root bool, report *Report) {
+	rewriteSequencesAndPrivateTags(obj, opts, uids, report)
 	applyDirectIdentifiers(obj, opts, uids, root)
 }
 
-func rewriteSequencesAndPrivateTags(obj *object.Object, opts Options, uids *UIDRemapper) {
+func rewriteSequencesAndPrivateTags(obj *object.Object, opts Options, uids *UIDRemapper, report *Report) {
 	creators := privateCreators(obj.Elements())
 	for _, elem := range obj.Elements() {
 		tag := elem.Tag()
@@ -592,8 +642,19 @@ func rewriteSequencesAndPrivateTags(obj *object.Object, opts Options, uids *UIDR
 				obj.Remove(tag)
 				continue
 			}
+			if creator := creators[privateCreatorTagForDataTag(tag)]; isCSAHeader(tag, creator) {
+				raw, _ := obj.GetRaw(tag)
+				scrubbed, outcome := scrubCSAElement(elem, creator, raw, &report.CSA)
+				switch outcome {
+				case csaScrubbed:
+					obj.Put(scrubbed)
+				case csaUnscrubbable:
+					obj.Remove(tag)
+				}
+				continue
+			}
 			if seq, ok := elem.Value.(core.SequenceValue); ok {
-				elem.Value = anonymizedSequence(seq, opts, uids)
+				elem.Value = anonymizedSequence(seq, opts, uids, report)
 				obj.Put(elem)
 			}
 			continue
@@ -602,7 +663,7 @@ func rewriteSequencesAndPrivateTags(obj *object.Object, opts Options, uids *UIDR
 		if !ok {
 			continue
 		}
-		elem.Value = anonymizedSequence(seq, opts, uids)
+		elem.Value = anonymizedSequence(seq, opts, uids, report)
 		obj.Put(elem)
 	}
 }
@@ -611,11 +672,11 @@ func isOverlayTag(tag core.Tag) bool {
 	return tag.Group >= 0x6000 && tag.Group <= 0x60ff && tag.Group%2 == 0
 }
 
-func anonymizedSequence(seq core.SequenceValue, opts Options, uids *UIDRemapper) core.SequenceValue {
+func anonymizedSequence(seq core.SequenceValue, opts Options, uids *UIDRemapper, report *Report) core.SequenceValue {
 	seq = cloneSequenceValue(seq)
 	for i := range seq.Items {
 		item := object.FromDataSet(seq.Items[i], nil)
-		anonymizeObject(item, opts, uids, false)
+		anonymizeObject(item, opts, uids, false, report)
 		seq.Items[i] = item.ToDataSet()
 	}
 	return seq
@@ -918,16 +979,22 @@ func pixeldataDimension(obj *object.Object, tag core.Tag) (int, bool) {
 }
 
 func mintUID() string {
-	var b [16]byte
-	if _, err := randRead(b[:]); err != nil {
+	uid, err := core.NewUIDFromReader(readFunc(randRead))
+	if err != nil {
 		return fallbackUID()
 	}
-	return "2.25." + new(big.Int).SetBytes(b[:]).String()
+	return uid
 }
 
+// fallbackUID is a process-unique name-based UID for when the entropy
+// source fails or repeats.
 func fallbackUID() string {
-	return fmt.Sprintf("2.25.%d%d", time.Now().UnixNano(), fallbackUIDCounter.Add(1))
+	return core.NameUID("dicom-go/deid fallback", strconv.FormatInt(time.Now().UnixNano(), 10), strconv.FormatUint(fallbackUIDCounter.Add(1), 10))
 }
+
+type readFunc func([]byte) (int, error)
+
+func (f readFunc) Read(p []byte) (int, error) { return f(p) }
 
 func padText(s string) []byte {
 	b := []byte(s)

@@ -108,7 +108,9 @@ func (p Path) Clone() Path {
 	if len(p) == 0 {
 		return nil
 	}
-	return append(Path(nil), p...)
+	result := make(Path, len(p))
+	copy(result, p)
+	return result
 }
 
 func (p Path) String() string {
@@ -160,6 +162,10 @@ type Report struct {
 	Changes   []Change  `json:"changes,omitempty"`
 	Truncated bool      `json:"truncated,omitempty"`
 	Dropped   int       `json:"dropped,omitempty"`
+	// FindingsDropped distinguishes omitted diagnostics from omitted changes.
+	FindingsDropped bool `json:"findings_dropped,omitempty"`
+	// ErrorsDropped records whether any omitted finding had error severity.
+	ErrorsDropped bool `json:"errors_dropped,omitempty"`
 }
 
 func (r Report) Count(code Code) int {
@@ -172,7 +178,12 @@ func (r Report) Count(code Code) int {
 	return count
 }
 
+// HasErrors reports whether validation observed an error, including errors
+// omitted when the report reached its configured limit.
 func (r Report) HasErrors() bool {
+	if r.ErrorsDropped {
+		return true
+	}
 	for _, finding := range r.Findings {
 		if finding.Severity == SeverityError {
 			return true
@@ -181,8 +192,12 @@ func (r Report) HasErrors() bool {
 	return false
 }
 
+func (r Report) hasFindings() bool {
+	return len(r.Findings) > 0 || r.FindingsDropped || r.ErrorsDropped
+}
+
 func (r Report) Clone() Report {
-	clone := Report{Truncated: r.Truncated, Dropped: r.Dropped}
+	clone := r
 	clone.Findings = make([]Finding, len(r.Findings))
 	for i, finding := range r.Findings {
 		finding.Path = finding.Path.Clone()
@@ -207,6 +222,9 @@ type ValidationError struct {
 }
 
 func (e *ValidationError) Error() string {
+	if e.Report.ErrorsDropped {
+		return "dicom validation failed with errors omitted by the report limit"
+	}
 	count := len(e.Report.Findings)
 	if count == 1 {
 		return "dicom validation failed with 1 finding"
@@ -256,6 +274,9 @@ type DataSetRuleRegistration struct {
 }
 
 type Options struct {
+	// WriteLimits applies only to NewWriteOperation and validated writers.
+	WriteLimits WriteLimits
+
 	Mode           Mode
 	Dictionary     dictionary.DataDictionary
 	MaxFindings    int
@@ -271,10 +292,12 @@ type Options struct {
 }
 
 type reportBuilder struct {
-	mode      Mode
-	max       int
-	stopFirst bool
-	report    Report
+	mode        Mode
+	max         int
+	stopFirst   bool
+	report      Report
+	writeBudget *writeBudget
+	limitErr    error
 }
 
 func newReportBuilder(opts Options) (*reportBuilder, error) {
@@ -306,7 +329,7 @@ func ValidateOptions(opts Options) error {
 }
 
 func (b *reportBuilder) add(finding Finding) {
-	if b.stopFirst && len(b.report.Findings) > 0 {
+	if b.stopFirst && b.report.hasFindings() {
 		return
 	}
 	if finding.Severity == "" {
@@ -318,11 +341,26 @@ func (b *reportBuilder) add(finding Finding) {
 	if len(b.report.Findings)+len(b.report.Changes) >= b.max {
 		b.report.Truncated = true
 		b.report.Dropped++
+		b.report.FindingsDropped = true
+		b.report.ErrorsDropped = b.report.ErrorsDropped || finding.Severity == SeverityError
 		return
 	}
+	if b.writeBudget != nil {
+		if err := b.writeBudget.admitFinding(finding, len(b.report.Findings)+1); err != nil {
+			b.limitErr = err
+			return
+		}
+	}
 	finding.Path = finding.Path.Clone()
-	finding.ExpectedVR = append([]core.VR(nil), finding.ExpectedVR...)
-	b.report.Findings = append(b.report.Findings, finding)
+	finding.ExpectedVR = cloneExact(finding.ExpectedVR)
+	if b.writeBudget != nil {
+		next := make([]Finding, len(b.report.Findings)+1)
+		copy(next, b.report.Findings)
+		next[len(b.report.Findings)] = finding
+		b.report.Findings = next
+	} else {
+		b.report.Findings = append(b.report.Findings, finding)
+	}
 }
 
 func (b *reportBuilder) change(change Change) {
@@ -331,8 +369,21 @@ func (b *reportBuilder) change(change Change) {
 		b.report.Dropped++
 		return
 	}
+	if b.writeBudget != nil {
+		if err := b.writeBudget.admitChange(change, len(b.report.Changes)+1); err != nil {
+			b.limitErr = err
+			return
+		}
+	}
 	change.Path = change.Path.Clone()
-	b.report.Changes = append(b.report.Changes, change)
+	if b.writeBudget != nil {
+		next := make([]Change, len(b.report.Changes)+1)
+		copy(next, b.report.Changes)
+		next[len(b.report.Changes)] = change
+		b.report.Changes = next
+	} else {
+		b.report.Changes = append(b.report.Changes, change)
+	}
 }
 
 // ReportFromHookResult applies validation severity and collection policy to a
@@ -363,10 +414,12 @@ func MergeReports(opts Options, reports ...Report) (Report, error) {
 		}
 		builder.report.Dropped += report.Dropped
 		builder.report.Truncated = builder.report.Truncated || report.Truncated
+		builder.report.FindingsDropped = builder.report.FindingsDropped || report.FindingsDropped
+		builder.report.ErrorsDropped = builder.report.ErrorsDropped || opts.Mode != ModeWarn && report.ErrorsDropped
 	}
 	return builder.report.Clone(), nil
 }
 
 func (b *reportBuilder) shouldStop(opts Options) bool {
-	return opts.StopFirst && len(b.report.Findings) > 0
+	return b.limitErr != nil || opts.StopFirst && b.report.hasFindings()
 }

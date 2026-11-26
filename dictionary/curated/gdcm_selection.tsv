@@ -1,0 +1,58 @@
+# Reviewed selection of GDCM privatedicts.xml definitions for the curated
+# private catalog (#1146). Format: creator<TAB>group<TAB>offset.
+# Each key was unresolved (UN) in at least two gdcmData files with the
+# DCMTK-based catalog, no Explicit VR file states a different VR for it, and
+# GDCM defines it with a single row whose name is certain (no "?") and yields
+# a keyword, and whose VR is not SQ, OB, OW or UN. Evidence:
+# dicom-go-validation cmd/private-coverage -gdcm-private. Rejected candidates
+# and the procedure: docs/CURATED_PRIVATE_CATALOG.md. Regenerate
+# catalog_gdcm.json with
+# go run ./cmd/privatecataloggen -import-gdcm <GDCM>/Source/DataDictionary/privatedicts.xml
+FDMS 1.0	0009	F1
+PHILIPS MR/PART	0019	0F
+PHILIPS MR/PART	0019	1B
+PHILIPS MR/PART	0019	69
+PHILIPS MR/PART	0019	80
+PHILIPS MR/PART	0019	CF
+PHILIPS MR/PART	0021	20
+PHILIPS MR/PART	0021	30
+PHILIPS MR/PART	0021	35
+PHILIPS MR/PART	0021	40
+PHILIPS MR/PART	0021	50
+Philips Imaging DD 001	2001	6E
+Philips Imaging DD 001	2001	82
+Philips Imaging DD 001	2001	83
+Philips Imaging DD 001	2001	84
+Philips Imaging DD 001	2001	85
+Philips Imaging DD 001	2001	87
+Philips Imaging DD 001	2001	88
+Philips Imaging DD 001	2001	89
+Philips Imaging DD 001	2001	8A
+Philips MR Imaging DD 001	2005	0F
+Philips MR Imaging DD 001	2005	10
+Philips MR Imaging DD 001	2005	30
+Philips MR Imaging DD 001	2005	33
+TOSHIBA_MEC_CT3	7005	08
+TOSHIBA_MEC_CT3	7005	09
+TOSHIBA_MEC_CT3	7005	0A
+TOSHIBA_MEC_CT3	7005	0B
+TOSHIBA_MEC_CT3	7005	0D
+TOSHIBA_MEC_CT3	7005	0E
+TOSHIBA_MEC_CT3	7005	0F
+TOSHIBA_MEC_CT3	7005	11
+TOSHIBA_MEC_CT3	7005	12
+TOSHIBA_MEC_CT3	7005	13
+TOSHIBA_MEC_CT3	7005	16
+TOSHIBA_MEC_CT3	7005	17
+TOSHIBA_MEC_CT3	7005	18
+TOSHIBA_MEC_CT3	7005	19
+TOSHIBA_MEC_CT3	7005	1A
+TOSHIBA_MEC_CT3	7005	1B
+TOSHIBA_MEC_CT3	7005	1D
+TOSHIBA_MEC_CT3	7005	1E
+TOSHIBA_MEC_CT3	7005	1F
+TOSHIBA_MEC_CT3	7005	20
+TOSHIBA_MEC_CT3	7005	21
+TOSHIBA_MEC_CT3	7005	22
+TOSHIBA_MEC_CT3	7005	23
+TOSHIBA_MEC_CT3	7005	24

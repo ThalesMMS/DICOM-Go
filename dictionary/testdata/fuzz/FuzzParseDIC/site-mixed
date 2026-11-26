@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("# NDE site\n(0008,0080)\tLO\tInspectionCompanyName\t1\tNDE-TEST\n(60xx,0F00)\tUS\tTestOverlayMarker\t1\tNDE-TEST\n(0019,\"ACME NDE 1.0\",1020)\tLO\tFixedCalibrationID\t1\tNDE-TEST\n")

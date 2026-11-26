@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("(xxxx,xxxx)\tUN\tEverything\tn\n(0009-o-FFFF,0010-u-00FF)\tLO\tPrivateCreator\t1\tPRIVATE\n(FFFE,E000)\tna\tItem\t1\n")

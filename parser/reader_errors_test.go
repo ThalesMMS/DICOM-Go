@@ -444,7 +444,7 @@ func TestNextContextValidationErrorsIncludeParseContext(t *testing.T) {
 		{
 			name: "sequence delimiter when defined-length sequence is open",
 			stream: bytes.Join([][]byte{
-				dicomtest.SequenceHeaderBytes(transfer.ExplicitVRLittleEndian, core.NewTag(0x0008, 0x1111), 4),
+				dicomtest.SequenceHeaderBytes(transfer.ExplicitVRLittleEndian, core.NewTag(0x0008, 0x1111), 8),
 				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagSequenceDelimitationItem, 0),
 			}, nil),
 			syntax:     transfer.ExplicitVRLittleEndian,
@@ -528,7 +528,7 @@ func TestNextRejectsUnexpectedDelimitersByContext(t *testing.T) {
 			syntax: transfer.ExplicitVRLittleEndian,
 			stream: bytes.Join([][]byte{
 				explicitLongHeaderBytes(binary.LittleEndian, core.NewTag(0x0008, 0x1111), core.VRSQ, [2]byte{}, 0xFFFFFFFF),
-				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagItem, 4),
+				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagItem, 8),
 				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagItemDelimitationItem, 0),
 			}, nil),
 			skip:    2,
@@ -538,7 +538,7 @@ func TestNextRejectsUnexpectedDelimitersByContext(t *testing.T) {
 			name:   "sequence delimiter for defined-length sequence",
 			syntax: transfer.ExplicitVRLittleEndian,
 			stream: bytes.Join([][]byte{
-				explicitLongHeaderBytes(binary.LittleEndian, core.NewTag(0x0008, 0x1111), core.VRSQ, [2]byte{}, 4),
+				explicitLongHeaderBytes(binary.LittleEndian, core.NewTag(0x0008, 0x1111), core.VRSQ, [2]byte{}, 8),
 				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagSequenceDelimitationItem, 0),
 			}, nil),
 			skip:    1,
@@ -549,7 +549,7 @@ func TestNextRejectsUnexpectedDelimitersByContext(t *testing.T) {
 			syntax: transfer.ImplicitVRLittleEndian,
 			stream: bytes.Join([][]byte{
 				implicitHeaderBytes(binary.LittleEndian, core.NewTag(0x0008, 0x1111), 0xFFFFFFFF),
-				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagItem, 4),
+				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagItem, 8),
 				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagItemDelimitationItem, 0),
 			}, nil),
 			skip:    2,
@@ -560,7 +560,7 @@ func TestNextRejectsUnexpectedDelimitersByContext(t *testing.T) {
 			name:   "implicit sequence delimiter for defined-length sequence",
 			syntax: transfer.ImplicitVRLittleEndian,
 			stream: bytes.Join([][]byte{
-				implicitHeaderBytes(binary.LittleEndian, core.NewTag(0x0008, 0x1111), 4),
+				implicitHeaderBytes(binary.LittleEndian, core.NewTag(0x0008, 0x1111), 8),
 				dicomtest.SequenceControlBytes(binary.LittleEndian, core.TagSequenceDelimitationItem, 0),
 			}, nil),
 			skip:    1,

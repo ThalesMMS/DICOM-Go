@@ -107,11 +107,22 @@ func TestUpstreamPrivateUNNestedPixelPreservationAndWritePolicy(t *testing.T) {
 		if !ok || pixel.Tag() != core.TagPixelData || pixel.VR() != core.VROW || !bytes.Equal(raw, []byte{1, 2, 3, 4}) {
 			t.Fatal("opaque nested pixel bytes lost")
 		}
+		// PS3.5 6.2.2: in explicit VR the UN sequence is written with
+		// undefined length and Implicit VR Little Endian items.
 		var explicit bytes.Buffer
-		err = WriteDataSet(&explicit, obj, transfer.ExplicitVRLittleEndian)
-		var writeErr *parser.WriteError
-		if !errors.As(err, &writeErr) {
-			t.Fatalf("explicit UN sequence must reject unsupported representation: %v", err)
+		if err := WriteDataSet(&explicit, obj, transfer.ExplicitVRLittleEndian); err != nil {
+			t.Fatalf("explicit UN sequence: %v", err)
+		}
+		rereadExplicit, err := ReadDataSet(bytes.NewReader(explicit.Bytes()), transfer.ExplicitVRLittleEndian)
+		if err != nil {
+			t.Fatal(err)
+		}
+		afterExplicit, err := dicomtest.SemanticDataSet(rereadExplicit.ToDataSet(), binary.LittleEndian)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := dicomtest.DiffSemantic(before, afterExplicit); diff != "" {
+			t.Fatal("explicit UN sequence round trip:", diff)
 		}
 		var implicit bytes.Buffer
 		if err := WriteDataSet(&implicit, obj, transfer.ImplicitVRLittleEndian); err != nil {

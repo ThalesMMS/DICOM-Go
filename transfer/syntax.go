@@ -80,6 +80,19 @@ var (
 		"JPEG Extended (Process 2 & 4)",
 		true,
 	)
+	// JPEGSpectralSelection and JPEGFullProgression are retired (PS3.5
+	// A.4.1); the built-in JPEG codec decodes their 8-bit Huffman progressive
+	// frames.
+	JPEGSpectralSelection = newSupportedEncapsulatedSyntax(
+		"1.2.840.10008.1.2.4.53",
+		"JPEG Spectral Selection, Non-Hierarchical (Process 6 & 8) (Retired)",
+		true,
+	)
+	JPEGFullProgression = newSupportedEncapsulatedSyntax(
+		"1.2.840.10008.1.2.4.55",
+		"JPEG Full Progression, Non-Hierarchical (Process 10 & 12) (Retired)",
+		true,
+	)
 	JPEGLosslessNonHierarchical = newSupportedEncapsulatedSyntax(
 		"1.2.840.10008.1.2.4.57",
 		"JPEG Lossless, Non-Hierarchical (Process 14)",
@@ -245,9 +258,14 @@ var (
 		"1.2.840.10008.1.2.7.3",
 		"SMPTE ST 2110-30 PCM Digital Audio",
 	)
-	DeflatedImageFrameCompression = newDeflatedSyntax(
+	// DeflatedImageFrameCompression (PS3.5 8.2.16, A.4.13) keeps the data set
+	// in Explicit VR Little Endian and deflates each frame (RFC 1951) into its
+	// own encapsulated fragment. It is unrelated to the data-set deflate of
+	// DeflatedExplicitVRLittleEndian; pixeldata/deflateframe is its codec.
+	DeflatedImageFrameCompression = newSupportedEncapsulatedSyntax(
 		"1.2.840.10008.1.2.8.1",
 		"Deflated Image Frame Compression",
+		true,
 	)
 )
 
@@ -416,18 +434,6 @@ func newJPIPReferencedDeflatedSyntax(uid, name string) Syntax {
 		ExplicitVR:     true,
 		ByteOrder:      binary.LittleEndian,
 		Supported:      true,
-		Deflated:       true,
-		CodecAvailable: false,
-	}
-}
-
-func newDeflatedSyntax(uid, name string) Syntax {
-	return Syntax{
-		UID:            uid,
-		Name:           name,
-		ExplicitVR:     true,
-		ByteOrder:      binary.LittleEndian,
-		Supported:      false,
 		Deflated:       true,
 		CodecAvailable: false,
 	}

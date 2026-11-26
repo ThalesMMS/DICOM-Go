@@ -355,6 +355,60 @@ func TestReferencedPathsOpensDicomdirFileAndDeduplicatesResolvedPaths(t *testing
 	}
 }
 
+func TestReferencesRejectRootedWireFileID(t *testing.T) {
+	root := t.TempDir()
+	images := filepath.Join(root, "DICOM")
+	if err := os.Mkdir(images, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ROOTED", "UNC", "PADDED", "VALID"} {
+		if err := os.WriteFile(filepath.Join(images, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(root, "DICOMDIR")
+	dataset := object.FromElements([]core.Element{
+		uiElement(testTagSOPClassUID, "1.2.840.10008.1.3.10"),
+		uiElement(testTagSOPInstanceUID, "1.2.3.4.5"),
+		directoryRecordSequence(
+			directoryRecord("\\DICOM\\ROOTED"),
+			directoryRecord("\\\\DICOM\\UNC"),
+			directoryRecord(" \\DICOM\\PADDED"),
+			directoryRecord("DICOM", "VALID"),
+		),
+	}, std.Dictionary)
+	var encoded bytes.Buffer
+	if err := object.WriteFile(&encoded, &object.File{Dataset: dataset, TransferSyntax: transfer.ExplicitVRLittleEndian}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(images, "VALID")
+	paths, err := ReferencedPaths(path)
+	if err != nil || len(paths) != 1 || paths[0] != want {
+		t.Errorf("ReferencedPaths() = %q, %v; want only %q", paths, err, want)
+	}
+	dicomdir, err := object.OpenFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dicomdir.Close()
+	refs := References(dicomdir.Dataset)
+	if len(refs) != 1 {
+		t.Fatalf("References() = %#v; want only the valid reference", refs)
+	}
+	file, opened, err := OpenReferencedFile(root, refs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if opened != want {
+		t.Errorf("OpenReferencedFile() opened %q; want %q", opened, want)
+	}
+}
+
 func TestReferencedPathsReturnsAbsolutePathsForRelativeDicomdir(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "disc")

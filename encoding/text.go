@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	textencoding "golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/htmlindex"
 	"golang.org/x/text/encoding/japanese"
 )
@@ -245,7 +246,35 @@ func (c xTextCodec) Decode(text []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("dicom: decode %s: %w", c.Name(), err)
 	}
+	if (c.dicomName == "GBK" || c.dicomName == "GB18030") && bytes.Contains(out, []byte("\uFFFD")) {
+		if offset, invalid := invalidGBByte(text, string(out), c.dicomName == "GB18030"); invalid {
+			return "", &DecodeError{Charset: c.Name(), Offset: offset, Byte: text[offset]}
+		}
+	}
 	return string(out), nil
+}
+
+// x/text substitutes U+FFFD for malformed GB text. GB18030 can also encode
+// U+FFFD itself; check its wire spelling when locating the first substitution.
+func invalidGBByte(text []byte, decoded string, gb18030 bool) (int, bool) {
+	const encodedReplacement = "\x84\x31\xa4\x37"
+	offset := 0
+	for _, r := range decoded {
+		switch {
+		case r == utf8.RuneError:
+			if !gb18030 || !bytes.HasPrefix(text[offset:], []byte(encodedReplacement)) {
+				return offset, true
+			}
+			offset += len(encodedReplacement)
+		case text[offset] <= 0x80:
+			offset++
+		case gb18030 && '0' <= text[offset+1] && text[offset+1] <= '9':
+			offset += 4
+		default:
+			offset += 2
+		}
+	}
+	return 0, false
 }
 
 func (c xTextCodec) Encode(text string) ([]byte, error) {
@@ -255,6 +284,51 @@ func (c xTextCodec) Encode(text string) ([]byte, error) {
 	out, err := c.encoding.NewEncoder().Bytes([]byte(text))
 	if err != nil {
 		return nil, fmt.Errorf("%w: encode %s: %v", ErrUnrepresentableCharacter, c.Name(), err)
+	}
+	return out, nil
+}
+
+// isoSingleByteCodec is an ISO 8859 style repertoire built from the Windows
+// code page that extends it: bytes 80-9F are the C1 controls U+0080-U+009F,
+// as in ISO/IEC 8859, and the characters Windows places there are not
+// representable. ISO_IR 148 (ISO 8859-9) and ISO_IR 166 (TIS 620) need it
+// because the WHATWG index maps their names to windows-1254 and windows-874.
+type isoSingleByteCodec struct {
+	dicomName string
+	base      *charmap.Charmap
+}
+
+func (c isoSingleByteCodec) Name() string { return c.dicomName }
+
+func (c isoSingleByteCodec) Decode(text []byte) (string, error) {
+	var out strings.Builder
+	out.Grow(len(text))
+	for offset, b := range text {
+		if b < 0xA0 {
+			out.WriteRune(rune(b))
+			continue
+		}
+		r := c.base.DecodeByte(b)
+		if r == utf8.RuneError {
+			return "", &DecodeError{Charset: c.Name(), Offset: offset, Byte: b}
+		}
+		out.WriteRune(r)
+	}
+	return out.String(), nil
+}
+
+func (c isoSingleByteCodec) Encode(text string) ([]byte, error) {
+	out := make([]byte, 0, len(text))
+	for _, r := range text {
+		if r >= 0 && r < 0xA0 {
+			out = append(out, byte(r))
+			continue
+		}
+		b, ok := c.base.EncodeRune(r)
+		if !ok || b < 0xA0 {
+			return nil, fmt.Errorf("%w: encode %s rune %q", ErrUnrepresentableCharacter, c.Name(), r)
+		}
+		out = append(out, b)
 	}
 	return out, nil
 }
@@ -540,6 +614,12 @@ func codecForCharacterSet(code string) (TextCodec, error) {
 		return UTF8Codec{}, nil
 	}
 
+	switch code {
+	case "ISO IR 148", "ISO 2022 IR 148":
+		return isoSingleByteCodec{dicomName: displayCharacterSetCode(code), base: charmap.Windows1254}, nil
+	case "ISO IR 166", "ISO 2022 IR 166":
+		return isoSingleByteCodec{dicomName: displayCharacterSetCode(code), base: charmap.Windows874}, nil
+	}
 	htmlName, ok := htmlEncodingNames[code]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnsupportedCharset, displayCharacterSetCode(code))

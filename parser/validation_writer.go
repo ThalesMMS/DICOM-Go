@@ -17,6 +17,13 @@ type committedWriter struct {
 	written     int64
 }
 
+type preparedValidationElement struct {
+	element  core.Element
+	path     validation.Path
+	offset   int64
+	filtered bool
+}
+
 type pendingValidationPostWrite struct {
 	path          validation.Path
 	header        core.ElementHeader
@@ -57,12 +64,11 @@ func (e *ValidationWriteError) Unwrap() error {
 // ValidationWriter adds an explicit validation operation around parser.Writer.
 // Ordinary Writer constructors remain unchanged and execute no hooks.
 type ValidationWriter struct {
-	writer           *Writer
-	committed        *committedWriter
-	operation        *validation.Operation
-	opts             validation.Options
-	ctx              context.Context
-	dataSetValidated bool
+	writer    *Writer
+	committed *committedWriter
+	operation *validation.WriteOperation
+	opts      validation.Options
+	ctx       context.Context
 }
 
 // DeferredValueWriter streams one nil-valued element payload to destination.
@@ -79,7 +85,7 @@ func NewWriterWithValidation(ctx context.Context, destination io.Writer, syntax 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	operation, err := validation.NewOperation(ctx, validationOpts)
+	operation, err := validation.NewWriteOperation(ctx, validationOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +94,10 @@ func NewWriterWithValidation(ctx context.Context, destination io.Writer, syntax 
 		writer: NewWriterWithOptions(committed, syntax, writerOpts), committed: committed,
 		operation: operation, opts: validationOpts, ctx: ctx,
 	}
+	result.writer.validationContextFactory = operation.NewContext
 	result.writer.validationWrite = result.writeElementFromWriter
+	result.writer.validationPrepare = result.prepareElementFromWriter
+	result.writer.validationHasPreHooks = operation.HasHooks(validation.HookPreSerialization)
 	result.writer.validationCount = committed
 	result.writer.validationPostWrite = result.flushValidationPostWrites
 	return result, nil
@@ -98,10 +107,47 @@ func (w *ValidationWriter) WriteElement(element core.Element) error {
 	if w == nil || w.writer == nil {
 		return fmt.Errorf("dicom: nil validation writer")
 	}
+	if err := w.operation.BeginWrite(); err != nil {
+		return err
+	}
+	defer w.operation.EndWrite()
+	context, err := w.operation.NewContext(core.DataSet{Elements: []core.Element{element}}, false)
+	if err != nil {
+		return err
+	}
+	w.writer.validationContext = context
+	w.writer.validationOrdinal = 0
+	w.writer.validationProof = false
+	w.writer.validationContextProof = false
+	defer func() {
+		w.writer.validationContext = nil
+		w.writer.validationProof = false
+		w.writer.validationContextProof = false
+	}()
 	return w.writer.writeValidationElement(element)
 }
 
 func (w *ValidationWriter) WriteDeferredElement(element core.Element, copyValueTo func(io.Writer) (int64, error)) error {
+	if w == nil || w.operation == nil {
+		return fmt.Errorf("dicom: nil validation writer")
+	}
+	if err := w.operation.BeginWrite(); err != nil {
+		return err
+	}
+	defer w.operation.EndWrite()
+	context, err := w.operation.NewContext(core.DataSet{Elements: []core.Element{element}}, false)
+	if err != nil {
+		return err
+	}
+	w.writer.validationContext = context
+	w.writer.validationOrdinal = 0
+	w.writer.validationProof = false
+	w.writer.validationContextProof = false
+	defer func() {
+		w.writer.validationContext = nil
+		w.writer.validationProof = false
+		w.writer.validationContextProof = false
+	}()
 	path := validation.Path{{Tag: element.Tag(), ItemIndex: validation.NoItem}}
 	return w.writeElement(w.writer, element, path, true, func(writer *Writer, current core.Element, currentPath validation.Path) error {
 		if current.Value != nil {
@@ -121,16 +167,33 @@ func (w *ValidationWriter) WriteDataSetWithDeferred(dataset core.DataSet, provid
 	if w == nil {
 		return fmt.Errorf("dicom: nil validation writer")
 	}
-	result, err := w.operation.ValidateParsedDataSet(dataset)
+	if w.writer.sequenceErr != nil {
+		return w.writer.sequenceErr
+	}
+	if err := w.operation.BeginWrite(); err != nil {
+		return err
+	}
+	defer w.operation.EndWrite()
+	result, err := w.operation.ValidateDataSet(dataset)
 	if err != nil {
 		return err
 	}
 	start := w.committed.written
-	previousDataSetValidated := w.dataSetValidated
-	w.dataSetValidated = true
-	defer func() { w.dataSetValidated = previousDataSetValidated }()
+	context, err := w.operation.NewContext(result.DataSet, true)
+	if err != nil {
+		return err
+	}
+	w.writer.validationContext = context
+	w.writer.validationProof = true
+	defer func() {
+		w.writer.validationContext = nil
+		w.writer.validationProof = false
+		w.writer.validationContextProof = false
+	}()
 	for index, element := range result.DataSet.Elements {
 		current := element
+		w.writer.validationOrdinal = index
+		w.writer.validationProof = true
 		path := validation.Path{{Tag: element.Tag(), ItemIndex: validation.NoItem}}
 		write := func(writer *Writer, transformed core.Element, transformedPath validation.Path) error {
 			if transformed.Value != nil {
@@ -170,51 +233,109 @@ func (w *ValidationWriter) BytesWritten() int64 {
 }
 
 func (w *ValidationWriter) writeElementFromWriter(writer *Writer, element core.Element, path validation.Path) error {
-	return w.writeElement(writer, element, path, !w.dataSetValidated, func(writer *Writer, current core.Element, currentPath validation.Path) error {
+	return w.writeElement(writer, element, path, !writer.validationProof, func(writer *Writer, current core.Element, currentPath validation.Path) error {
 		return writer.writeElementValidated(current, currentPath)
 	})
 }
 
-func (w *ValidationWriter) writeElement(writer *Writer, element core.Element, path validation.Path, validateRules bool, write func(*Writer, core.Element, validation.Path) error) error {
+func (w *ValidationWriter) prepareElementFromWriter(writer *Writer, element core.Element, path validation.Path) (preparedValidationElement, error) {
+	return w.prepareElement(writer, element, path, !writer.validationProof)
+}
+
+func (w *ValidationWriter) prepareElement(writer *Writer, element core.Element, path validation.Path, validateRules bool) (preparedValidationElement, error) {
 	if w == nil || w.writer == nil || w.operation == nil {
-		return fmt.Errorf("dicom: nil validation writer")
+		return preparedValidationElement{}, fmt.Errorf("dicom: nil validation writer")
+	}
+	if writer.sequenceErr != nil {
+		return preparedValidationElement{}, writer.sequenceErr
 	}
 	original := element
+	var inputPayload, inputStructure int64
 	start := validationWriterPosition(writer)
-	preResult, err := w.operation.Handle(validation.HookEvent{
-		Point: validation.HookPreSerialization, Path: path, Header: &element.Header, Element: &element,
-		Offset: start, OffsetSet: true,
-	})
+	event := validation.HookEvent{Point: validation.HookPreSerialization, Path: path, Header: &element.Header, Offset: start, OffsetSet: true}
+	if writer.validationHasPreHooks {
+		var err error
+		inputPayload, inputStructure, err = writer.hookValueFootprint(element)
+		if err != nil {
+			return preparedValidationElement{}, err
+		}
+		if err := writer.validationBudget.reserveHookCopies(inputPayload, inputStructure); err != nil {
+			return preparedValidationElement{}, err
+		}
+		event.Element = &element
+	}
+	preResult, err := w.operation.HandleWrite(event)
 	if err != nil {
-		return err
+		return preparedValidationElement{}, err
 	}
 	if preResult.Element != nil {
 		element = *preResult.Element
 		if original.Value == nil && element.Value == nil && element.Header != original.Header {
-			return fmt.Errorf("%w: deferred element replacement without a value must preserve its header", validation.ErrHookAction)
+			return preparedValidationElement{}, fmt.Errorf("%w: deferred element replacement without a value must preserve its header", validation.ErrHookAction)
 		}
 		path[len(path)-1].Tag = element.Tag()
-	}
-	if preResult.Filter {
-		return w.finishPostWrite(writer, path, element, start, nil)
-	}
-
-	if validateRules {
-		ruleOpts := w.opts
-		ruleOpts.Hooks = nil
-		ruleOpts.RequiredUIDs = nil
-		report, validationErr := validation.ValidateElement(w.ctx, element, ruleOpts)
-		w.operation.AddReport(report)
-		if validationErr != nil {
-			if errors.Is(validationErr, validation.ErrValidationFailed) {
-				return &validation.ValidationError{Report: w.operation.Report()}
+		if writer.validationHasPreHooks {
+			payload, structure, err := writer.hookValueFootprint(element)
+			if err != nil {
+				return preparedValidationElement{}, err
 			}
-			return validationErr
+			if err := writer.validationBudget.reserveHookGrowth(payload, structure, inputPayload, inputStructure); err != nil {
+				return preparedValidationElement{}, err
+			}
+		}
+	}
+	changed := false
+	for _, change := range preResult.Changes {
+		if change.Kind == validation.ChangeTransformed || change.Kind == validation.ChangeFiltered {
+			changed = true
+			break
+		}
+	}
+	if changed {
+		if err := w.operation.ApplyChange(writer.validationContext, writer.validationOrdinal, original, element, preResult.Filter, writer.validationProof || writer.validationContextProof, path); err != nil {
+			return preparedValidationElement{}, err
+		}
+		writer.validationProof = false
+	}
+	writer.validationContext.Mark(writer.validationOrdinal)
+	prepared := preparedValidationElement{element: element, path: path, offset: start, filtered: preResult.Filter}
+	if prepared.filtered {
+		return prepared, nil
+	}
+	if validateRules || changed {
+		var validationErr error
+		if changed {
+			validationErr = w.operation.ValidateChangedElement(element, writer.characterSet)
+		} else {
+			validationErr = w.operation.ValidateElement(element)
+		}
+		if validationErr != nil {
+			return preparedValidationElement{}, validationErr
+		}
+		if _, ok := element.Value.(core.SequenceValue); ok {
+			writer.validationContextProof = true
 		}
 	}
 
-	writeErr := write(writer, element, path)
-	return w.finishPostWrite(writer, path, element, start, writeErr)
+	return prepared, nil
+}
+
+func (w *ValidationWriter) writeElement(writer *Writer, element core.Element, path validation.Path, validateRules bool, write func(*Writer, core.Element, validation.Path) error) error {
+	// Begin admission before the root PreSerialization clone, then share it
+	// with the layout and every descendant until this write finishes.
+	if writer.validationBudget == nil {
+		writer.validationBudget = &writePlanBudget{limits: writer.sequenceLimits}
+		defer func() { writer.validationBudget = nil }()
+	}
+	prepared, err := w.prepareElement(writer, element, path, validateRules)
+	if err != nil {
+		return err
+	}
+	if prepared.filtered {
+		return w.finishPostWrite(writer, prepared.path, prepared.element, prepared.offset, nil)
+	}
+	writeErr := write(writer, prepared.element, prepared.path)
+	return w.finishPostWrite(writer, prepared.path, prepared.element, prepared.offset, writeErr)
 }
 
 func (w *ValidationWriter) finishPostWrite(writer *Writer, path validation.Path, element core.Element, start int64, writeErr error) error {
@@ -245,7 +366,7 @@ func (w *ValidationWriter) flushValidationPostWrites(postWrites []pendingValidat
 	var hookErrs []error
 	for _, postWrite := range postWrites {
 		header := postWrite.header
-		_, hookErr := w.operation.Handle(validation.HookEvent{
+		_, hookErr := w.operation.HandleWrite(validation.HookEvent{
 			Point: validation.HookPostWrite, Path: postWrite.path, Header: &header,
 			Offset: postWrite.offset, OffsetSet: true, BytesWritten: postWrite.bytesWritten,
 			WriteComplete: postWrite.writeComplete,

@@ -79,6 +79,7 @@ var (
 	BitsStored                = core.NewTag(0x0028, 0x0101)
 	HighBit                   = core.NewTag(0x0028, 0x0102)
 	PixelRepresentation       = core.NewTag(0x0028, 0x0103)
+	BurnedInAnnotation        = core.NewTag(0x0028, 0x0301)
 	WindowCenter              = core.NewTag(0x0028, 0x1050)
 	WindowWidth               = core.NewTag(0x0028, 0x1051)
 	RescaleIntercept          = core.NewTag(0x0028, 0x1052)

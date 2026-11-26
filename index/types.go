@@ -128,7 +128,9 @@ type Result struct {
 	// byte counter. For deflated input it measures inflated DICOM bytes.
 	BytesScanned           int64 `json:"bytes_scanned"`
 	StoppedBeforePixelData bool  `json:"stopped_before_pixel_data,omitempty"`
-	// StoppedHeader is the value-free top-level Pixel Data header that caused
+	// StoppedAfterRequestedTags identifies an AssumeSortedTags maximum stop.
+	StoppedAfterRequestedTags bool `json:"stopped_after_requested_tags,omitempty"`
+	// StoppedHeader is the value-free top-level header that caused
 	// the metadata scan to stop.
 	StoppedHeader    core.ElementHeader `json:"-"`
 	StoppedHeaderSet bool               `json:"stopped_header_set,omitempty"`
@@ -218,7 +220,24 @@ type RawDataSetOptions struct {
 	TransferSyntax transfer.Syntax
 }
 
+// SequencePruningPolicy chooses the validation boundary of unrequested SQ.
+type SequencePruningPolicy uint8
+
+const (
+	// SequencePruningStrict retains existing structural traversal.
+	SequencePruningStrict SequencePruningPolicy = iota
+	// SequencePruningOpaque skips admitted defined bodies without inspecting
+	// descendants and visits only the framing required by undefined bodies.
+	SequencePruningOpaque
+)
+
 type Options struct {
+	// AssumeSortedTags stops at a root tag greater than the largest requested
+	// root ancestor. The caller guarantees increasing root tag order; the
+	// unread suffix is not validated. The zero value retains unsorted input.
+	AssumeSortedTags bool
+	// SequencePruning is opt-in; zero preserves structural traversal.
+	SequencePruning                    SequencePruningPolicy
 	Profile                            Profile
 	Selectors                          []Selector
 	Dictionary                         dictionary.DataDictionary
@@ -289,6 +308,9 @@ var selectorIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 func normalizeOptions(options Options) (Options, error) {
 	defaults := DefaultOptions()
+	if options.SequencePruning > SequencePruningOpaque {
+		return Options{}, fmt.Errorf("%w: unknown sequence pruning policy", ErrInvalidOptions)
+	}
 	options.Selectors = append([]Selector(nil), options.Selectors...)
 	if options.Profile == 0 {
 		options.Profile = defaults.Profile

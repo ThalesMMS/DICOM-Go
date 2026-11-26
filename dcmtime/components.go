@@ -21,7 +21,8 @@ func ParseDA(value string) (time.Time, error) {
 }
 
 // ParseTM returns the time value of a valid DICOM TM component at any legal
-// precision. Omitted minute or second components are represented as zero.
+// precision. Omitted minute or second components are represented as zero; a
+// leap second (SS=60) is represented as hh:mm:59.999999999.
 func ParseTM(value string) (time.Time, error) {
 	tm, err := ParseTime(cleanComponentValue(value))
 	if err != nil {

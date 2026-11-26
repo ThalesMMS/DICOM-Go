@@ -66,12 +66,20 @@ func readImplicit(t testing.TB, elements []core.Element, dict dictionary.DataDic
 func TestCuratedCatalogProvenanceAndAllVariableBlocks(t *testing.T) {
 	c := catalog(t)
 	entries := c.Entries()
-	if len(entries) != 21 {
-		t.Fatal("curated scope changed")
+	pinned := map[string]string{
+		"DCMTK": "ac002900cab167509881e5b837cdef5dcb07cd37",
+		"GDCM":  "2cd05d13222b175e791b5ae3c08feeabcc1ed1f0",
+	}
+	perProject := map[string]int{}
+	for _, r := range entries {
+		perProject[r.Origin.Project]++
+	}
+	if len(entries) != 294 || perProject["DCMTK"] != 246 || perProject["GDCM"] != 48 {
+		t.Fatalf("curated scope changed: %v", perProject)
 	}
 	for _, r := range entries {
 		d := r.Definition
-		if r.Origin.Commit != "ac002900cab167509881e5b837cdef5dcb07cd37" || r.Origin.Verification != "reviewed-upstream" || r.Origin.SourceLine <= 0 || len(r.Origin.SourceSHA256) != 64 || len(r.Origin.DefinitionSHA256) != 64 || r.Origin.License != "BSD-3-Clause" || r.Origin.Restrictions == "" {
+		if r.Origin.Commit != pinned[r.Origin.Project] || r.Origin.Verification != "reviewed-upstream" || r.Origin.SourceLine <= 0 || len(r.Origin.SourceSHA256) != 64 || len(r.Origin.DefinitionSHA256) != 64 || r.Origin.License != "BSD-3-Clause" || r.Origin.Restrictions == "" {
 			t.Fatal("incomplete audit origin")
 		}
 		for _, block := range []uint16{0x10, 0x1f, 0x80, 0xff} {
@@ -100,8 +108,34 @@ func TestCuratedCatalogProvenanceAndAllVariableBlocks(t *testing.T) {
 			t.Fatal("audit lookup differs")
 		}
 	}
-	if !strings.Contains(curated.LicenseNotice(), "OFFIS") || !strings.Contains(curated.LicenseNotice(), "Redistribution and use") || !strings.Contains(curated.LicenseNotice(), "AS IS") {
-		t.Fatal("license notice incomplete")
+	notice := curated.LicenseNotice()
+	for _, want := range []string{"OFFIS", "Mathieu Malaterre", "CREATIS", "PixelMed Publishing", "Redistribution and use", "AS IS"} {
+		if !strings.Contains(notice, want) {
+			t.Fatalf("license notice lacks %q", want)
+		}
+	}
+}
+
+// TestCuratedCatalogGDCMDefinitions checks GDCM-sourced definitions keep the
+// upstream display name, a derived keyword and the exact upstream row.
+func TestCuratedCatalogGDCMDefinitions(t *testing.T) {
+	c := catalog(t)
+	r, ok := c.Lookup("TOSHIBA_MEC_CT3", 0x7005, 0x0A)
+	if !ok {
+		t.Fatal("TOSHIBA_MEC_CT3 (7005,xx0A) missing")
+	}
+	d, o := r.Definition, r.Origin
+	if d.VR != core.VRDS || d.VM != "1" || d.Name != "Table Speed in mm/rot" || d.Keyword != "TableSpeedInMmRot" ||
+		o.Project != "GDCM" || o.SourceLine != 10204 ||
+		o.SourceURL != "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Source/DataDictionary/privatedicts.xml" {
+		t.Fatalf("GDCM record = %+v", r)
+	}
+	obj := readImplicit(t, []core.Element{
+		creator(0x2001, 0x10, "Philips Imaging DD 001"),
+		core.NewRawElement(core.NewTag(0x2001, 0x1082), core.VRIS, []byte("12")),
+	}, dictionary.Chain{c, std.Dictionary})
+	if e, _ := obj.Get(core.NewTag(0x2001, 0x1082)); e.Header.VR != core.VRIS {
+		t.Fatalf("Philips Imaging DD 001 (2001,xx82) read as %s", e.Header.VR)
 	}
 }
 

@@ -162,6 +162,10 @@ func (c *HookChain) Run(ctx context.Context, event HookEvent) (HookResult, error
 }
 
 func (c *HookChain) run(ctx context.Context, event HookEvent, stopAfterFinding bool) (HookResult, error) {
+	return c.runWithAdmission(ctx, event, stopAfterFinding, nil)
+}
+
+func (c *HookChain) runWithAdmission(ctx context.Context, event HookEvent, stopAfterFinding bool, admit func(HookEvent) error) (HookResult, error) {
 	if c == nil {
 		return HookResult{Element: cloneElementPtr(event.Element)}, nil
 	}
@@ -169,10 +173,26 @@ func (c *HookChain) run(ctx context.Context, event HookEvent, stopAfterFinding b
 		ctx = context.Background()
 	}
 	c.mu.RLock()
-	hooks := append([]*registeredHook(nil), c.hooks...)
+	var hooks []*registeredHook
+	if admit != nil {
+		hooks = make([]*registeredHook, len(c.hooks))
+		copy(hooks, c.hooks)
+	} else {
+		hooks = append([]*registeredHook(nil), c.hooks...)
+	}
 	c.mu.RUnlock()
 
+	if admit != nil {
+		if err := admit(event); err != nil {
+			return HookResult{}, err
+		}
+	}
 	working := cloneHookEvent(event)
+	if admit != nil && working.Element != nil {
+		if err := admit(HookEvent{Element: working.Element}); err != nil {
+			return HookResult{}, err
+		}
+	}
 	result := HookResult{Element: cloneElementPtr(working.Element)}
 	for _, registered := range hooks {
 		if _, ok := registered.points[event.Point]; !ok {
@@ -186,6 +206,13 @@ func (c *HookChain) run(ctx context.Context, event HookEvent, stopAfterFinding b
 		if err := acquireHook(hookCtx, registered); err != nil {
 			cancel()
 			return c.hookFailure(result, registered, event, CodeHookTimeout, err)
+		}
+		if admit != nil {
+			if err := admit(working); err != nil {
+				releaseHook(registered)
+				cancel()
+				return result, err
+			}
 		}
 		decision, code, err := invokeHook(hookCtx, registered, working)
 		releaseHook(registered)
@@ -222,6 +249,11 @@ func (c *HookChain) run(ctx context.Context, event HookEvent, stopAfterFinding b
 			continue
 		}
 		for _, finding := range decision.Findings {
+			if admit != nil {
+				if err := admit(HookEvent{Path: event.Path}); err != nil {
+					return result, err
+				}
+			}
 			finding.Path = event.Path.Clone()
 			finding.Rule = ""
 			finding.ExpectedVR = nil
@@ -245,24 +277,49 @@ func (c *HookChain) run(ctx context.Context, event HookEvent, stopAfterFinding b
 			result.Findings = append(result.Findings, finding)
 		}
 		if decision.Element != nil {
+			if admit != nil {
+				if err := admit(HookEvent{Element: decision.Element}); err != nil {
+					return result, err
+				}
+			}
 			replacement := cloneElement(*decision.Element)
 			working.Element = &replacement
 			result.Element = &replacement
+			if admit != nil {
+				if err := admit(HookEvent{Path: event.Path}); err != nil {
+					return result, err
+				}
+			}
 			result.Changes = append(result.Changes, Change{Path: event.Path.Clone(), Tag: replacement.Tag(), Hook: registered.registration.Name, Kind: ChangeTransformed})
 		}
 		if decision.Filter {
 			result.Filter = true
 			tag := eventTag(event)
+			if admit != nil {
+				if err := admit(HookEvent{Path: event.Path}); err != nil {
+					return result, err
+				}
+			}
 			result.Changes = append(result.Changes, Change{Path: event.Path.Clone(), Tag: tag, Hook: registered.registration.Name, Kind: ChangeFiltered})
 		}
 		if decision.SkipValue {
 			result.SkipValue = true
 			tag := eventTag(event)
+			if admit != nil {
+				if err := admit(HookEvent{Path: event.Path}); err != nil {
+					return result, err
+				}
+			}
 			result.Changes = append(result.Changes, Change{Path: event.Path.Clone(), Tag: tag, Hook: registered.registration.Name, Kind: ChangeSkipped})
 		}
 		if decision.DeferValue {
 			result.DeferValue = true
 			tag := eventTag(event)
+			if admit != nil {
+				if err := admit(HookEvent{Path: event.Path}); err != nil {
+					return result, err
+				}
+			}
 			result.Changes = append(result.Changes, Change{Path: event.Path.Clone(), Tag: tag, Hook: registered.registration.Name, Kind: ChangeDeferred})
 		}
 		if stopAfterFinding && len(decision.Findings) > 0 {
@@ -407,4 +464,22 @@ func cloneElementPtr(element *core.Element) *core.Element {
 	}
 	clone := cloneElement(*element)
 	return &clone
+}
+
+// snapshotForWrite checks registration admission under the same lock as copying.
+func (c *HookChain) snapshotForWrite(max int, budget *writeBudget) (*HookChain, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.hooks) > max {
+		return nil, ErrValidationLimit
+	}
+	if err := budget.reserve(0, int64(len(c.hooks))*8, 0); err != nil {
+		return nil, err
+	}
+	hooks := make([]*registeredHook, len(c.hooks))
+	copy(hooks, c.hooks)
+	return &HookChain{hooks: hooks}, nil
 }

@@ -265,7 +265,7 @@ func TestWriterRoundTripDefinedElementsAcrossTransferSyntaxes(t *testing.T) {
 				{
 					name: "un",
 					elem: core.Element{
-						Header: core.ElementHeader{Tag: core.NewTag(0x7777, 0x0010), VR: core.VRUN},
+						Header: core.ElementHeader{Tag: core.NewTag(0x7777, 0x1010), VR: core.VRUN},
 						Value:  core.RawValue([]byte("ABC\x00")),
 					},
 				},
@@ -567,10 +567,10 @@ func TestWriterRejectsInvalidStructuredValues(t *testing.T) {
 		{
 			name: "sequence_value_with_non_sequence_vr",
 			elem: core.Element{
-				Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x1111), VR: core.VRUN},
+				Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x1111), VR: core.VROB},
 				Value:  core.SequenceValue{},
 			},
-			wantMessage: "core.SequenceValue requires SQ VR",
+			wantMessage: "core.SequenceValue requires SQ or UN VR",
 		},
 		{
 			name: "fragment_sequence_with_non_pixel_tag",

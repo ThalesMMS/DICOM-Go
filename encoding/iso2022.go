@@ -203,14 +203,19 @@ func (s *iso2022CharacterSet) decode(text []byte, personName, valueDelimiter boo
 		}
 
 		value := text[offset]
-		if isISO2022ResetByte(value, personName, valueDelimiter) {
+		// While a two-byte set is invoked in G0, every byte from 21 to 7E
+		// starts a character, so '=', '^' and '\' there are the first byte
+		// of a kanji rather than delimiters (PS3.5 6.1.2.5.3 requires the
+		// initial G0 set to be restored before a real delimiter).
+		singleByte := !g0.twoByte() || value < 0x21 || value > 0x7e
+		if singleByte && isISO2022ResetByte(value, personName, valueDelimiter) {
 			if !s.isInitialState(g0, g1) {
 				return "", newCodeExtensionError(offset, []byte{value}, "initial repertoire was not restored before delimiter or control character")
 			}
 			output.WriteByte(value)
 			g0, g1 = s.initialG0, s.initialG1
-			if personName && value == '=' {
-				pnGroup++
+			if personName {
+				pnGroup = nextPNGroup(pnGroup, value)
 			}
 			offset++
 			continue
@@ -264,8 +269,8 @@ func (s *iso2022CharacterSet) encode(text string, personName, valueDelimiter boo
 			encoded = s.appendInitialDesignations(encoded, g0, g1)
 			encoded = append(encoded, byte(value))
 			g0, g1 = s.initialG0, s.initialG1
-			if personName && value == '=' {
-				pnGroup++
+			if personName {
+				pnGroup = nextPNGroup(pnGroup, byte(value))
 			}
 			continue
 		}
@@ -274,18 +279,24 @@ func (s *iso2022CharacterSet) encode(text string, personName, valueDelimiter boo
 			continue
 		}
 
-		if raw, ok := g0.encodeRune(value); ok {
+		// A character whose code is a delimiter here, such as YEN SIGN at
+		// 5C in JIS X 0201 Romaji, would read back as that delimiter
+		// (#2044); it is encoded only by a repertoire where it is not one.
+		usable := func(raw []byte) bool {
+			return len(raw) != 1 || !isISO2022ResetByte(raw[0], personName, valueDelimiter)
+		}
+		if raw, ok := g0.encodeRune(value); ok && usable(raw) {
 			encoded = append(encoded, raw...)
 			continue
 		}
 		if g1 != nil {
-			if raw, ok := g1.encodeRune(value); ok {
+			if raw, ok := g1.encodeRune(value); ok && usable(raw) {
 				encoded = append(encoded, raw...)
 				continue
 			}
 		}
 
-		repertoire, raw := s.findRepertoire(value)
+		repertoire, raw := s.findRepertoire(value, usable)
 		if repertoire == nil {
 			return nil, fmt.Errorf("%w: encode ISO 2022 rune %q at UTF-8 byte %d", ErrUnrepresentableCharacter, value, offset)
 		}
@@ -321,9 +332,9 @@ func (s *iso2022CharacterSet) appendInitialDesignations(encoded []byte, g0, g1 *
 	return encoded
 }
 
-func (s *iso2022CharacterSet) findRepertoire(value rune) (*iso2022Repertoire, []byte) {
+func (s *iso2022CharacterSet) findRepertoire(value rune, usable func([]byte) bool) (*iso2022Repertoire, []byte) {
 	for _, repertoire := range s.allowed {
-		if raw, ok := repertoire.encodeRune(value); ok {
+		if raw, ok := repertoire.encodeRune(value); ok && usable(raw) {
 			return repertoire, raw
 		}
 	}
@@ -337,6 +348,12 @@ func (s *iso2022CharacterSet) escapeAt(text []byte) (*iso2022Repertoire, int) {
 		}
 	}
 	return nil, 0
+}
+
+// twoByte reports whether the repertoire, invoked in G0, encodes each
+// character as a pair of bytes from the 21-7E area.
+func (r *iso2022Repertoire) twoByte() bool {
+	return r.kind == iso2022JISX0208 || r.kind == iso2022JISX0212
 }
 
 func (r *iso2022Repertoire) encodedSize(text []byte) (int, error) {
@@ -504,11 +521,29 @@ func decodeGB2312(raw []byte) (string, error) {
 	if !isGB2312Cell(raw[0], raw[1]) {
 		return "", errors.New("undefined GB 2312 character")
 	}
+	// HZGB2312 uses the GBK mappings for these two cells. Use the
+	// original GB 2312 punctuation for the DICOM IR 58 repertoire.
+	if raw[0] == 0xa1 {
+		switch raw[1] {
+		case 0xa4:
+			return "\u30fb", nil
+		case 0xaa:
+			return "\u2015", nil
+		}
+	}
 	hz := []byte{'~', '{', raw[0] & 0x7f, raw[1] & 0x7f, '~', '}'}
 	return decodeISO2022Bytes(simplifiedchinese.HZGB2312, hz)
 }
 
 func encodeGB2312Rune(value rune) ([]byte, bool) {
+	switch value {
+	case '\u30fb':
+		return []byte{0xa1, 0xa4}, true
+	case '\u2015':
+		return []byte{0xa1, 0xaa}, true
+	case '\u00b7', '\u2014':
+		return nil, false
+	}
 	hz, err := encodeISO2022Rune(simplifiedchinese.HZGB2312, value)
 	if err != nil || len(hz) < 4 || hz[0] != '~' || hz[1] != '{' {
 		return nil, false
@@ -559,6 +594,21 @@ func isGB2312Cell(first, second byte) bool {
 
 func in94ByteArea(value byte) bool {
 	return value >= 0xa1 && value <= 0xfe
+}
+
+// nextPNGroup is the Person Name component group after the delimiter value:
+// '=' starts the next group, and '\' starts the next value at its
+// alphabetic group (PS3.5 6.2.1.2), where code extensions are not permitted
+// (#2045).
+func nextPNGroup(group int, value byte) int {
+	switch value {
+	case '=':
+		return group + 1
+	case '\\':
+		return 0
+	default:
+		return group
+	}
 }
 
 func isISO2022ResetByte(value byte, personName, valueDelimiter bool) bool {

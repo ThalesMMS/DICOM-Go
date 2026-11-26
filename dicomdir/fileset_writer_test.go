@@ -51,6 +51,7 @@ type filesetInstanceSpec struct {
 	studyID               string
 	studyDate             string
 	studyTime             string
+	studyDescription      string
 	seriesUID             string
 	seriesNo              string
 	modality              string
@@ -509,6 +510,9 @@ func filesetWriteInstance(t *testing.T, root string, spec filesetInstanceSpec) {
 		filesetStringElement(tags.SeriesNumber, core.VRIS, spec.seriesNo),
 		filesetStringElement(tags.InstanceNumber, core.VRIS, spec.instanceNo),
 		core.NewRawElement(tags.PixelData, core.VROB, []byte{0x01, 0x02}),
+	}
+	if spec.studyDescription != "" {
+		elements = append(elements, filesetStringElement(tags.StudyDescription, core.VRLO, spec.studyDescription))
 	}
 	if spec.specificCharacterSet != "" {
 		elements = append(elements,

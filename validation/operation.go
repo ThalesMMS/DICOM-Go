@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	dicomenc "github.com/ThalesMMS/dicom-go/encoding"
 )
 
 // Operation freezes validation and hook configuration for one parse or write
@@ -37,6 +38,14 @@ func NewOperation(ctx context.Context, opts Options) (*Operation, error) {
 }
 
 func (o *Operation) Handle(event HookEvent) (HookResult, error) {
+	return o.handle(event, nil)
+}
+
+func (o *Operation) handle(event HookEvent, budget *writeBudget) (HookResult, error) {
+	var admit func(HookEvent) error
+	if budget != nil {
+		admit = budget.admitEvent
+	}
 	if o == nil {
 		return HookResult{Element: cloneElementPtr(event.Element)}, nil
 	}
@@ -47,12 +56,17 @@ func (o *Operation) Handle(event HookEvent) (HookResult, error) {
 		if o.opts.Mode == ModeStrict && o.report.HasErrors() {
 			return HookResult{}, &ValidationError{Report: o.Report()}
 		}
+		if admit != nil && event.Element != nil {
+			if err := admit(HookEvent{Element: event.Element}); err != nil {
+				return HookResult{}, err
+			}
+		}
 		return HookResult{Element: cloneElementPtr(event.Element)}, nil
 	}
 	if event.OffsetSet && len(event.Path) > 0 {
 		o.recordLocation(event.Path, event.Offset)
 	}
-	result, err := o.hooks.run(o.ctx, event, o.opts.StopFirst)
+	result, err := o.hooks.runWithAdmission(o.ctx, event, o.opts.StopFirst, admit)
 	transformedTag := event.OffsetSet && result.Element != nil && len(event.Path) > 0 && result.Element.Tag() != eventTag(event)
 	if event.OffsetSet && len(event.Path) > 0 && (result.Filter || transformedTag) {
 		o.removeLocation(event.Path, event.Offset)
@@ -61,6 +75,11 @@ func (o *Operation) Handle(event HookEvent) (HookResult, error) {
 		path := event.Path.Clone()
 		path[len(path)-1].Tag = result.Element.Tag()
 		o.recordLocation(path, event.Offset)
+	}
+	if budget != nil {
+		if err := budget.admitReport(Report{Findings: result.Findings, Changes: result.Changes}); err != nil {
+			return result, err
+		}
 	}
 	report, reportErr := ReportFromHookResult(o.opts, result)
 	if reportErr != nil {
@@ -72,6 +91,21 @@ func (o *Operation) Handle(event HookEvent) (HookResult, error) {
 		return result, &ValidationError{Report: o.Report()}
 	}
 	return result, err
+}
+
+// HasHooks reports whether the operation's frozen registry contains a hook at
+// point. Later additions to the caller's chain do not affect this query.
+// It does not change the detached-result contract of Handle or HookChain.Run.
+func (o *Operation) HasHooks(point HookPoint) bool {
+	if o == nil || o.hooks == nil {
+		return false
+	}
+	for _, registered := range o.hooks.hooks {
+		if _, ok := registered.points[point]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateParsedDataSet runs validation rules plus pre/post-validation and
@@ -120,6 +154,38 @@ func (o *Operation) ValidateParsedDataSet(dataset core.DataSet) (Result, error) 
 	return result, nil
 }
 
+// DiagnoseParsedPrefix records intrinsic diagnostics from values read before a
+// structural failure. The caller retains the original parse error and withholds
+// the dataset. Completion hooks, context-dependent dictionary checks, required
+// attributes and dataset rules need complete input and are omitted.
+func (o *Operation) DiagnoseParsedPrefix(dataset core.DataSet) {
+	if o == nil || o.stopped || len(dataset.Elements) == 0 {
+		return
+	}
+	opts := Options{
+		Mode: o.opts.Mode, StopFirst: o.opts.StopFirst, MaxFindings: o.opts.MaxFindings,
+		MaxDepth: o.opts.MaxDepth, MaxElements: o.opts.MaxElements, ByteOrder: o.opts.ByteOrder,
+	}
+	if opts.MaxDepth == 0 {
+		opts.MaxDepth = DefaultMaxDepth
+	}
+	if opts.MaxElements == 0 {
+		opts.MaxElements = DefaultMaxElements
+	}
+	builder, err := newReportBuilder(opts)
+	if err != nil {
+		return
+	}
+	session := validationSession{
+		ctx: o.ctx, opts: opts, builder: builder, reportOnly: true,
+		maxDepth: opts.MaxDepth, maxElements: opts.MaxElements,
+	}
+	// A validation limit can stop the diagnostics pass while leaving earlier
+	// findings available. The structural failure remains the reported error.
+	_, _ = session.processElements(dataset, nil, 0, dicomenc.DefaultCharacterSet, true)
+	o.AddReport(builder.report)
+}
+
 func (o *Operation) stoppedResult(dataset core.DataSet) (Result, error) {
 	result := Result{DataSet: dataset, Report: o.Report()}
 	if o.opts.Mode == ModeStrict && result.Report.HasErrors() {
@@ -160,7 +226,7 @@ func (o *Operation) AddReport(report Report) {
 }
 
 func (o *Operation) stopIfRequested() {
-	if o != nil && o.opts.StopFirst && len(o.report.Findings) > 0 {
+	if o != nil && o.opts.StopFirst && o.report.hasFindings() {
 		o.stopped = true
 	}
 }

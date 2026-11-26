@@ -16,14 +16,25 @@ var (
 	ErrMaxSequenceItemsExceeded     = errors.New("dicomjson: maximum sequence item count exceeded")
 )
 
+// DefaultMaxSequenceDepth is the data set nesting depth a zero
+// Limits.MaxSequenceDepth allows: 64 nested sequences below the root data set,
+// the level DCMTK also enforces by default and the combined depth
+// parser.DefaultMaxSequenceDepth admits.
+const DefaultMaxSequenceDepth = 64
+
 // Limits bounds DICOM JSON conversion work. Zero-valued fields preserve the
-// historical unlimited behavior. Negative values are invalid.
+// historical unlimited behavior, except MaxSequenceDepth. Negative values are
+// invalid.
 type Limits struct {
 	MaxJSONBytes         int64
 	MaxInlineBinaryBytes int64
 	MaxTotalBinaryBytes  int64
-	MaxSequenceDepth     int
-	MaxElements          int
+	// MaxSequenceDepth limits how many sequence items may nest below the root
+	// data set; deeper input fails with ErrMaxSequenceDepthExceeded. Zero
+	// applies DefaultMaxSequenceDepth; set a larger value to accept deeper
+	// nesting.
+	MaxSequenceDepth int
+	MaxElements      int
 	// MaxSequenceItems bounds cumulative SQ items and encapsulated Pixel Data
 	// fragments. The Basic Offset Table is not counted as a fragment.
 	MaxSequenceItems int
@@ -52,6 +63,9 @@ func newConversionBudget(ctx context.Context, limits Limits) (*conversionBudget,
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
+	if limits.MaxSequenceDepth == 0 {
+		limits.MaxSequenceDepth = DefaultMaxSequenceDepth
+	}
 	return &conversionBudget{ctx: ctx, limits: limits}, nil
 }
 
@@ -76,7 +90,7 @@ func (budget *conversionBudget) enterDataSet(depth, elements int) error {
 	if err := budget.checkContext(); err != nil {
 		return err
 	}
-	if budget.limits.MaxSequenceDepth > 0 && depth > budget.limits.MaxSequenceDepth {
+	if depth > budget.limits.MaxSequenceDepth {
 		return fmt.Errorf("%w: got %d, limit %d", ErrMaxSequenceDepthExceeded, depth, budget.limits.MaxSequenceDepth)
 	}
 	if budget.limits.MaxElements > 0 && elements > budget.limits.MaxElements-budget.elements {

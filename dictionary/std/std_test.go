@@ -139,7 +139,7 @@ func TestGeneratedEntriesFileHasGeneratedHeader(t *testing.T) {
 	if !strings.Contains(text, "Source file: internal/standard/dicom.dic") {
 		t.Fatal("std_gen.go is missing normalized source path header")
 	}
-	if !strings.Contains(text, "Source URL: https://raw.githubusercontent.com/DCMTK/dcmtk/master/dcmdata/data/dicom.dic") {
+	if !strings.Contains(text, "Source URL: https://raw.githubusercontent.com/DCMTK/dcmtk/") || !strings.Contains(text, "/dcmdata/data/dicom.dic") {
 		t.Fatal("std_gen.go is missing source URL header")
 	}
 	if !strings.Contains(text, "Generated at: ") {

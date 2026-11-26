@@ -318,6 +318,7 @@ func TestReadFilePreservesSupportedStillImagePayloads(t *testing.T) {
 		transfer.JPEGLosslessNonHierarchical,
 		transfer.JPEGLosslessSV1,
 		transfer.RLELossless,
+		transfer.DeflatedImageFrameCompression,
 	} {
 		t.Run(syntax.Name, func(t *testing.T) {
 			data, err := dicomtest.Part10File(syntax, encapsulatedStillImageDataset(wantFragments...)...)
@@ -1203,9 +1204,29 @@ func TestReadFileWithOptionsDefersNestedWaveformDataAndExposesLocations(t *testi
 	if fresh[0].Length != int64(len(groupData[0])) {
 		t.Fatalf("File.ValueLocations returned aliased storage: first length = %d", fresh[0].Length)
 	}
+	for index, item := range items {
+		var value bytes.Buffer
+		if _, err := file.Dataset.CopyNestedValueTo(item, waveformDataTag, &value); err != nil {
+			t.Fatalf("CopyNestedValueTo(item %d) error = %v", index, err)
+		}
+		if !bytes.Equal(value.Bytes(), groupData[index]) {
+			t.Fatalf("CopyNestedValueTo(item %d) = % X, want % X", index, value.Bytes(), groupData[index])
+		}
+	}
 	var output bytes.Buffer
-	if err := WriteFile(&output, file); !errors.Is(err, ErrDeferredSequenceValueWrite) {
-		t.Fatalf("WriteFile() deferred nested value error = %v, want ErrDeferredSequenceValueWrite", err)
+	if err := WriteFile(&output, file); err != nil {
+		t.Fatalf("WriteFile() deferred nested values error = %v", err)
+	}
+	materialized, err := ReadFile(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want bytes.Buffer
+	if err := WriteFile(&want, materialized); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(output.Bytes(), want.Bytes()) {
+		t.Fatal("WriteFile() of deferred nested Waveform Data differs from the materialized rewrite")
 	}
 }
 
@@ -1273,12 +1294,22 @@ func TestReadDataSetInflatesDeflatedExplicitVRLittleEndian(t *testing.T) {
 		t.Fatalf("dataset mismatch after inflated read:\n%s", diff)
 	}
 }
-func TestReadDataSetRejectsUnsupportedDeflatedVariant(t *testing.T) {
-	data := deflateBytes(t, dicomtest.EncodeElements(transfer.ExplicitVRLittleEndian, dicomtest.MinimalDataset()...))
 
-	_, err := ReadDataSet(bytes.NewReader(data), transfer.DeflatedImageFrameCompression)
-	if !errors.Is(err, transfer.ErrUnsupportedTransferSyntax) {
-		t.Fatalf("expected ErrUnsupportedTransferSyntax, got %v", err)
+// Deflated Image Frame Compression deflates frames, not the data set: the
+// data set is read as plain Explicit VR Little Endian (PS3.5 A.4.13).
+func TestReadDataSetDoesNotInflateDeflatedImageFrameCompression(t *testing.T) {
+	want := core.DataSet{Elements: dicomtest.MinimalDataset()}
+	data := dicomtest.EncodeElements(transfer.ExplicitVRLittleEndian, want.Elements...)
+
+	got, err := ReadDataSet(bytes.NewReader(data), transfer.DeflatedImageFrameCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := dicomtest.DiffDataSet(got.ToDataSet(), want); diff != "" {
+		t.Fatalf("dataset mismatch:\n%s", diff)
+	}
+	if _, err := ReadDataSet(bytes.NewReader(deflateBytes(t, data)), transfer.DeflatedImageFrameCompression); err == nil {
+		t.Fatal("a deflated data set must not be accepted under Deflated Image Frame Compression")
 	}
 }
 func TestReadDataSetInflatesJPIPReferencedDeflateMetadata(t *testing.T) {

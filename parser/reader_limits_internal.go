@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -51,6 +52,21 @@ func (r *Reader) checkTotalBytes() error {
 	if r.maxTotalBytes <= 0 || r.Position() < r.maxTotalBytes {
 		return nil
 	}
+	// At the top-level boundary of a Deflated data set the decompressed
+	// size is unknown. Read at most one extra byte to distinguish EOF from
+	// a tail, letting the inflater also report a corrupt or truncated end.
+	// Never deliver the probe byte to a decoder or advance the logical offset.
+	if r.syntax.Deflated && r.Position() == r.maxTotalBytes && len(r.seqDelimiters) == 0 &&
+		len(r.counter.pending) == 0 && !r.deflateLimitHasTail {
+		var probe [1]byte
+		if _, err := io.ReadFull(r.counter.r, probe[:]); err == nil {
+			r.deflateLimitHasTail = true
+		} else if errors.Is(err, io.EOF) {
+			return io.EOF
+		} else {
+			return &ParseError{Op: OpReadTag, Offset: r.Position(), Err: err}
+		}
+	}
 	return &ParseError{
 		Op:     OpCheckTotalBytes,
 		Offset: r.Position(),
@@ -85,6 +101,9 @@ func (r *Reader) skipN(offset int64, header core.ElementHeader, n int64) error {
 			Length: header.Length,
 			Err:    fmt.Errorf("cannot skip negative length %d", n),
 		}
+	}
+	if r.counter.seekPast(n, r.sourceEnd) {
+		return nil
 	}
 	// io.CopyN returns nil when exactly n bytes were copied; otherwise it returns
 	// an error (including EOF). A declared value is required even when no payload

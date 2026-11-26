@@ -1,0 +1,15 @@
+# Synthetic site dictionary authored for dicom-go tests. It is not derived
+# from any vendor or DCMTK dictionary file and contains no patient data.
+#
+# Tag	VR	Name	VM	Version
+
+# Override of a standard attribute (site naming for a component owner).
+(0008,0080)	LO	InspectionCompanyName	1	NDE-TEST
+# Repeating groups: a PS3.6-style pattern and a DCMTK range (even groups).
+(60xx,0F00)	US	TestOverlayMarker	1	NDE-TEST
+(5000-50FF,0F10)	xs	TestCurveMarker	1	NDE-TEST
+# Private definitions: block-relative offsets, a fixed element and a range.
+(0019,"ACME NDE 1.0",10)	DS	ProbeFrequency	1	NDE-TEST
+(0019,"ACME NDE 1.0",11)	FD	WedgeAngles	2-2n	NDE-TEST
+(0019,"ACME NDE 1.0",1020)	LO	FixedCalibrationID	1	NDE-TEST
+(0021-o-0023,"ACME NDE 1.0",30-u-3F)	UL	ChannelGain	1-n	NDE-TEST/retired

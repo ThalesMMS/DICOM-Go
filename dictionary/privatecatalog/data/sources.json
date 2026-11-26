@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "DCMTK",
+      "version": "3.7.0+",
+      "commit": "8d68392db66cd69e13dc878dc9889681062ad479",
+      "path": "dcmdata/data/private.dic",
+      "data_file": "data/private.dic",
+      "sha256": "d3907ad1c14b2a9bfb434099e0d1775246be63b58f5d06b57c6ec5a53645fe12",
+      "rows": 2837,
+      "source_url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/data/private.dic",
+      "licenses": [
+        "BSD-3-Clause"
+      ],
+      "notice_files": [
+        "LICENSE.DCMTK"
+      ],
+      "license_urls": [
+        "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/COPYRIGHT"
+      ]
+    },
+    {
+      "id": "GDCM",
+      "version": "v3.2.11-68-g2cd05d132",
+      "commit": "2cd05d13222b175e791b5ae3c08feeabcc1ed1f0",
+      "path": "Source/DataDictionary/privatedicts.xml",
+      "data_file": "data/privatedicts.xml",
+      "sha256": "d3744ac3678d4c089742d4cfc30616301f59da0ad528708f2a51e4332ef8fea4",
+      "rows": 10519,
+      "source_url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Source/DataDictionary/privatedicts.xml",
+      "licenses": [
+        "BSD-3-Clause",
+        "dicom3tools-BSD-style"
+      ],
+      "notice_files": [
+        "LICENSE.GDCM",
+        "LICENSE.dicom3tools"
+      ],
+      "license_urls": [
+        "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Copyright.txt",
+        "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Source/DataDictionary/COPYRIGHT.dicom3tools"
+      ]
+    }
+  ]
+}

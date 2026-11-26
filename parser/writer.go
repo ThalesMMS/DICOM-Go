@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 
@@ -16,14 +16,31 @@ import (
 type LengthPolicy uint8
 
 const (
+	// LengthPolicyUndefined writes sequences and items with undefined length
+	// and delimiters (the default).
 	LengthPolicyUndefined LengthPolicy = iota
+	// LengthPolicyPreserve keeps the length form each sequence was read with.
 	LengthPolicyPreserve
+	// LengthPolicyDefined writes every sequence and item with an explicit
+	// length (dcmconv +e).
+	LengthPolicyDefined
 )
 
 var tagSpecificCharacterSet = core.NewTag(0x0008, 0x0005)
 
 type WriterOptions struct {
-	LengthPolicy LengthPolicy
+	// SequenceLimits bounds metadata planning and retained transformations.
+	SequenceLimits SequenceWriteLimits
+	// BulkDataSize supplies unpadded size without opening/reading a source.
+	BulkDataSize func(core.BulkDataValue) (int64, error)
+	// DeferredValueLength supplies actual encoded bytes for an undefined
+	// encapsulated value when a defined ancestor or Group Length needs its size.
+	DeferredValueLength func(core.DataSet, core.Element) (int64, error)
+	LengthPolicy        LengthPolicy
+	// GroupLength controls Group Length attributes of the data set and its
+	// items; File Meta is not affected.
+	GroupLength GroupLengthPolicy
+	Padding     PaddingOptions
 	// CharacterSet encodes Unicode StringValue content for VRs governed by
 	// Specific Character Set. Its zero value uses the DICOM default repertoire.
 	CharacterSet dicomenc.SpecificCharacterSet
@@ -31,6 +48,13 @@ type WriterOptions struct {
 	// writer takes ownership of every non-nil source Reader returned by the
 	// resolver and closes it exactly once, including on failures.
 	BulkDataResolver BulkDataResolver
+	// DeferredValue supplies the bytes of a primitive element with a nil
+	// Value nested in item, such as a value left on the source by
+	// ReaderOptions.DeferNestedValues. ok=false writes the element empty, as
+	// when DeferredValue is nil; otherwise copy must write exactly
+	// el.Header.Length bytes. Defined items plan from metadata and copy once;
+	// an undefined encapsulated value needs DeferredValueLength for planning.
+	DeferredValue func(item core.DataSet, el core.Element) (copy func(io.Writer) (int64, error), ok bool)
 }
 
 func defaultWriterOptions() WriterOptions {
@@ -43,6 +67,23 @@ type Writer struct {
 	enc          dicomenc.BasicEncoder
 	opts         WriterOptions
 	characterSet dicomenc.SpecificCharacterSet
+	// item is the sequence item being written, for DeferredValue.
+	item                     core.DataSet
+	inItem                   bool
+	paddingBudget            *paddingBudget
+	paddingErr               error
+	measuring                bool
+	sequenceLimits           SequenceWriteLimits
+	sequenceErr              error
+	sequenceDepth            int
+	validationPrepare        func(*Writer, core.Element, validation.Path) (preparedValidationElement, error)
+	validationHasPreHooks    bool
+	validationBudget         *writePlanBudget
+	validationProof          bool
+	validationContextProof   bool
+	validationContext        *validation.WriteContext
+	validationOrdinal        int
+	validationContextFactory func(core.DataSet, bool) (*validation.WriteContext, error)
 
 	validationWrite      func(*Writer, core.Element, validation.Path) error
 	validationPath       validation.Path
@@ -56,16 +97,36 @@ func NewWriter(w io.Writer, syntax transfer.Syntax) *Writer {
 }
 
 func NewWriterWithOptions(w io.Writer, syntax transfer.Syntax, opts WriterOptions) *Writer {
+	limits, limitsErr := normalizeSequenceLimits(opts.SequenceLimits)
+	limit := opts.Padding.MaxAddedBytes
+	if limit == 0 {
+		limit = DefaultMaxPaddingBytes
+	}
 	return &Writer{
-		w:            w,
-		syntax:       syntax,
-		enc:          dicomenc.NewBasicEncoder(syntax.ByteOrder),
-		opts:         opts,
-		characterSet: opts.CharacterSet,
+		w:              w,
+		syntax:         syntax,
+		enc:            dicomenc.NewBasicEncoder(syntax.ByteOrder),
+		opts:           opts,
+		characterSet:   opts.CharacterSet,
+		paddingBudget:  &paddingBudget{remaining: limit},
+		paddingErr:     ValidatePaddingOptions(opts.Padding),
+		sequenceLimits: limits, sequenceErr: limitsErr,
 	}
 }
 
 func (w *Writer) WriteElement(el core.Element) error {
+	if w.sequenceErr != nil {
+		return w.sequenceErr
+	}
+	if w.paddingErr != nil {
+		return w.paddingErr
+	}
+	if w.opts.Padding.Policy != PaddingPreserve && el.Tag() == tagDataSetPadding {
+		return nil
+	}
+	if copyValue, ok := w.nestedDeferredValue(el); ok {
+		return w.WriteDeferredElement(el, copyValue)
+	}
 	if el.Tag() == tagSpecificCharacterSet {
 		if err := w.useDeclaredCharacterSet(el); err != nil {
 			return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), err)
@@ -106,6 +167,15 @@ func (w *Writer) WriteElement(el core.Element) error {
 	return nil
 }
 
+// nestedDeferredValue returns the DeferredValue copier of a nil-valued
+// primitive element in the item being written.
+func (w *Writer) nestedDeferredValue(el core.Element) (func(io.Writer) (int64, error), bool) {
+	if el.Value != nil || !w.inItem || w.opts.DeferredValue == nil || el.VR() == core.VRSQ {
+		return nil, false
+	}
+	return w.opts.DeferredValue(w.item, el)
+}
+
 func (w *Writer) writeValidationElement(el core.Element) error {
 	path := append(validation.Path(nil), w.validationPath...)
 	path = append(path, validation.PathStep{Tag: el.Tag(), ItemIndex: validation.NoItem})
@@ -113,6 +183,9 @@ func (w *Writer) writeValidationElement(el core.Element) error {
 }
 
 func (w *Writer) writeElementValidated(el core.Element, path validation.Path) error {
+	if copyValue, ok := w.nestedDeferredValue(el); ok {
+		return w.WriteDeferredElement(el, copyValue)
+	}
 	if el.Tag() == tagSpecificCharacterSet {
 		if err := w.useDeclaredCharacterSet(el); err != nil {
 			return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), err)
@@ -157,6 +230,15 @@ func (w *Writer) writeElementValidated(el core.Element, path validation.Path) er
 // copyValueTo instead of an in-memory core.Value. It is used by higher-level
 // object APIs to preserve skipped values from seekable sources.
 func (w *Writer) WriteDeferredElement(el core.Element, copyValueTo func(io.Writer) (int64, error)) error {
+	if w.sequenceErr != nil {
+		return w.sequenceErr
+	}
+	if w.paddingErr != nil {
+		return w.paddingErr
+	}
+	if w.opts.Padding.Policy != PaddingPreserve && el.Tag() == tagDataSetPadding {
+		return nil
+	}
 	if el.Value != nil {
 		return w.WriteElement(el)
 	}
@@ -340,8 +422,12 @@ func (w *Writer) validateElement(el core.Element) error {
 		return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), core.UndefinedLength, fmt.Errorf("dicom: items and delimiters cannot be written as standalone elements"))
 	}
 
-	switch el.Value.(type) {
-	case nil, core.RawValue, core.StringValue:
+	switch value := el.Value.(type) {
+	case nil, core.RawValue:
+	case core.StringValue:
+		if err := valueencode.ValidateString(el.VR(), value); err != nil {
+			return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), err)
+		}
 	case core.BulkDataValue:
 		if w.opts.BulkDataResolver == nil {
 			return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), fmt.Errorf("dicom: core.BulkDataValue requires a BulkDataResolver"))
@@ -360,8 +446,8 @@ func (w *Writer) validateElement(el core.Element) error {
 			return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), err)
 		}
 	case core.SequenceValue:
-		if el.VR() != core.VRSQ && (el.VR() != core.VRUN || w.syntax.ExplicitVR) {
-			return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), fmt.Errorf("dicom: core.SequenceValue requires SQ VR, or UN in Implicit VR"))
+		if el.VR() != core.VRSQ && el.VR() != core.VRUN {
+			return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), fmt.Errorf("dicom: core.SequenceValue requires SQ or UN VR"))
 		}
 	case core.FragmentSequence:
 		if el.Tag() != core.TagPixelData {
@@ -382,17 +468,30 @@ func isSequenceValue(value core.Value) bool {
 }
 
 func (w *Writer) writeItem(ds core.DataSet) error {
-	child, err := w.childForDataSet(w.w, ds)
+	if err := w.checkWriteDepth(w.sequenceDepth + 1); err != nil {
+		return err
+	}
+	count := &paddingCounter{destination: w.w}
+	child, err := w.childForDataSet(count, ds)
+	if err != nil {
+		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
+	}
+	child.item, child.inItem = ds, true
+	child.sequenceDepth = w.sequenceDepth + 1
+	elements, err := child.itemElements(ds)
 	if err != nil {
 		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
 	}
 	if err := w.writeItemHeader(core.UndefinedLength); err != nil {
 		return err
 	}
-	for _, el := range ds.Elements {
+	for _, el := range elements {
 		if err := child.WriteElement(el); err != nil {
 			return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
 		}
+	}
+	if err := child.WriteDataSetPadding(count.n, 0, ds.Elements); err != nil {
+		return err
 	}
 	if err := w.writeItemDelimiter(); err != nil {
 		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
@@ -401,18 +500,41 @@ func (w *Writer) writeItem(ds core.DataSet) error {
 }
 
 func (w *Writer) writeItemValidated(ds core.DataSet, path validation.Path) error {
+	if err := w.checkWriteDepth(w.sequenceDepth + 1); err != nil {
+		return err
+	}
 	child, err := w.childForDataSetValidated(w.w, ds)
 	if err != nil {
 		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
 	}
+	child.item, child.inItem = ds, true
+	child.sequenceDepth = w.sequenceDepth + 1
+	elements, err := child.itemElements(ds)
+	if err != nil {
+		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
+	}
+	if w.validationContextFactory != nil {
+		context, err := w.validationContextFactory(core.DataSet{Elements: elements}, false)
+		if err != nil {
+			return err
+		}
+		child.validationContext = context
+	}
 	if err := w.writeItemHeader(core.UndefinedLength); err != nil {
 		return err
 	}
+	valueStart := validationWriterPosition(child)
 	child.validationPath = path.Clone()
-	for _, el := range ds.Elements {
+
+	for index, el := range elements {
+		child.validationOrdinal = index
+		child.validationProof = w.validationProof
 		if err := child.writeValidationElement(el); err != nil {
 			return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
 		}
+	}
+	if err := child.WriteDataSetPadding(validationWriterPosition(child)-valueStart, 0, ds.Elements); err != nil {
+		return err
 	}
 	if err := w.writeItemDelimiter(); err != nil {
 		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, core.UndefinedLength, err)
@@ -420,53 +542,20 @@ func (w *Writer) writeItemValidated(ds core.DataSet, path validation.Path) error
 	return nil
 }
 
-func (w *Writer) writeDefinedItem(ds core.DataSet) error {
-	itemValue, err := w.encodeDataSet(ds)
-	if err != nil {
-		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, 0, err)
-	}
-	length, err := dicomenc.Uint32Length(len(itemValue))
-	if err != nil {
-		return w.wrapWriteError(OpWriteLength, core.TagItem, core.VRUN, 0, err)
-	}
-	itemLength := core.Length(length)
-	if err := w.writeItemHeader(itemLength); err != nil {
-		return err
-	}
-	if err := writeAll(w.w, itemValue); err != nil {
-		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, itemLength, err)
-	}
-	return nil
-}
-
-func (w *Writer) writeDefinedItemValidated(ds core.DataSet, path validation.Path) error {
-	itemValue, postWrites, err := w.encodeDataSetValidated(ds, path)
-	if err != nil {
-		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, 0, err)
-	}
-	length, err := dicomenc.Uint32Length(len(itemValue))
-	if err != nil {
-		return w.wrapWriteError(OpWriteLength, core.TagItem, core.VRUN, 0, err)
-	}
-	itemLength := core.Length(length)
-	if err := w.writeItemHeader(itemLength); err != nil {
-		return err
-	}
-	if err := writeAll(w.w, itemValue); err != nil {
-		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, itemLength, err)
-	}
-	if err := w.commitValidationPostWrites(postWrites); err != nil {
-		return w.wrapWriteError(OpWriteValue, core.TagItem, core.VRUN, itemLength, err)
-	}
-	return nil
-}
-
 func (w *Writer) writeSequenceValue(el core.Element) error {
+	if err := w.checkWriteDepth(w.sequenceDepth + 1); err != nil {
+		return err
+	}
+	w.sequenceDepth++
+	defer func() { w.sequenceDepth-- }()
 	value, ok := el.Value.(core.SequenceValue)
 	if !ok {
 		return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), fmt.Errorf("dicom: sequence VR requires core.SequenceValue"))
 	}
 
+	if el.VR() == core.VRUN && w.syntax.ExplicitVR {
+		return w.writeUNSequenceValue(el, value, nil)
+	}
 	if !w.sequenceUsesUndefinedLength(el) {
 		return w.writeDefinedLengthSequenceValue(el, value)
 	}
@@ -485,11 +574,19 @@ func (w *Writer) writeSequenceValue(el core.Element) error {
 }
 
 func (w *Writer) writeSequenceValueValidated(el core.Element, path validation.Path) error {
+	if err := w.checkWriteDepth(w.sequenceDepth + 1); err != nil {
+		return err
+	}
+	w.sequenceDepth++
+	defer func() { w.sequenceDepth-- }()
 	value, ok := el.Value.(core.SequenceValue)
 	if !ok {
 		return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), el.Length(), fmt.Errorf("dicom: sequence VR requires core.SequenceValue"))
 	}
 
+	if el.VR() == core.VRUN && w.syntax.ExplicitVR {
+		return w.writeUNSequenceValue(el, value, path)
+	}
 	if !w.sequenceUsesUndefinedLength(el) {
 		return w.writeDefinedLengthSequenceValueValidated(el, value, path)
 	}
@@ -512,56 +609,86 @@ func (w *Writer) writeSequenceValueValidated(el core.Element, path validation.Pa
 	return nil
 }
 
-func (w *Writer) writeDefinedLengthSequenceValue(el core.Element, value core.SequenceValue) error {
-	var buf bytes.Buffer
-	child := w.child(&buf)
-	for _, item := range value.Items {
-		if err := child.writeDefinedItem(item); err != nil {
+// writeUNSequenceValue writes a sequence labelled UN in an explicit VR syntax
+// as PS3.5 6.2.2 requires: undefined length, with items, their elements and
+// the delimiters encoded as Implicit VR Little Endian whatever the transfer
+// syntax. Raw values of a Big Endian data set are reversed to little-endian.
+// path is nil outside validated writes.
+func (w *Writer) writeUNSequenceValue(el core.Element, value core.SequenceValue, path validation.Path) error {
+	if w.syntax.ByteOrder == binary.BigEndian {
+		if w.validationBudget == nil {
+			w.validationBudget = &writePlanBudget{limits: w.sequenceLimits}
+			defer func() { w.validationBudget = nil }()
+		}
+		for _, item := range value.Items {
+			payload, structure, err := w.hookValueFootprint(core.Element{Value: core.SequenceValue{Items: []core.DataSet{item}}})
+			if err != nil {
+				return err
+			}
+			if err := w.validationBudget.reserveNormalizedValue(payload, structure); err != nil {
+				return err
+			}
+		}
+	}
+	if err := w.writeHeader(el.Tag(), core.VRUN, core.UndefinedLength); err != nil {
+		return err
+	}
+	inner := *w
+	inner.syntax = transfer.ImplicitVRLittleEndian
+	inner.enc = dicomenc.NewBasicEncoder(binary.LittleEndian)
+	bigEndian := w.syntax.ByteOrder == binary.BigEndian
+	for itemIndex, item := range value.Items {
+		if bigEndian {
+			// All normalization reservations were made before the UN header.
+			item = littleEndianDataSet(item)
+		}
+		var err error
+		if w.validationWrite != nil {
+			var itemPath validation.Path
+			if len(path) > 0 {
+				itemPath = path.Clone()
+				itemPath[len(itemPath)-1].ItemIndex = itemIndex
+			}
+			err = inner.writeItemValidated(item, itemPath)
+		} else {
+			err = inner.writeItem(item)
+		}
+		if err != nil {
 			return err
 		}
 	}
-	length, err := dicomenc.Uint32Length(buf.Len())
-	if err != nil {
-		return w.wrapWriteError(OpWriteLength, el.Tag(), el.VR(), 0, err)
+	return inner.writeSequenceDelimiter()
+}
+
+// littleEndianDataSet copies ds with every fixed-width raw value, including
+// those in nested items, reversed from big- to little-endian.
+func littleEndianDataSet(ds core.DataSet) core.DataSet {
+	elements := make([]core.Element, len(ds.Elements))
+	for i, element := range ds.Elements {
+		switch value := element.Value.(type) {
+		case core.RawValue:
+			if width := valueencode.ByteOrderWidth(element.VR()); width > 1 && len(value)%width == 0 {
+				element.Value = core.RawValue(valueencode.ReverseFixedWidth(value, width))
+			}
+		case core.SequenceValue:
+			items := make([]core.DataSet, len(value.Items))
+			for j, item := range value.Items {
+				items[j] = littleEndianDataSet(item)
+			}
+			element.Value = core.SequenceValue{Items: items}
+		}
+		elements[i] = element
 	}
-	sequenceLength := core.Length(length)
-	if err := w.writeHeader(el.Tag(), el.VR(), sequenceLength); err != nil {
-		return err
-	}
-	if err := writeAll(w.w, buf.Bytes()); err != nil {
-		return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), sequenceLength, err)
-	}
-	return nil
+	ds.Elements = elements
+	return ds
+}
+
+func (w *Writer) writeDefinedLengthSequenceValue(el core.Element, value core.SequenceValue) error {
+	return w.writePlannedSequence(el, value, nil)
 }
 
 func (w *Writer) writeDefinedLengthSequenceValueValidated(el core.Element, value core.SequenceValue, path validation.Path) error {
-	var buf bytes.Buffer
-	child := w.childValidatedAt(&buf, validationWriterPosition(w)+encodedHeaderLength(w.syntax, el.VR()))
-	for itemIndex, item := range value.Items {
-		var itemPath validation.Path
-		if len(path) > 0 {
-			itemPath = path.Clone()
-			itemPath[len(itemPath)-1].ItemIndex = itemIndex
-		}
-		if err := child.writeDefinedItemValidated(item, itemPath); err != nil {
-			return err
-		}
-	}
-	length, err := dicomenc.Uint32Length(buf.Len())
-	if err != nil {
-		return w.wrapWriteError(OpWriteLength, el.Tag(), el.VR(), 0, err)
-	}
-	sequenceLength := core.Length(length)
-	if err := w.writeHeader(el.Tag(), el.VR(), sequenceLength); err != nil {
-		return err
-	}
-	if err := writeAll(w.w, buf.Bytes()); err != nil {
-		return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), sequenceLength, err)
-	}
-	if err := w.commitValidationPostWrites(child.pendingValidationPostWrites()); err != nil {
-		return w.wrapWriteError(OpWriteValue, el.Tag(), el.VR(), sequenceLength, err)
-	}
-	return nil
+	return w.writePlannedSequence(el, value, path)
 }
 
 func (w *Writer) writeBasicOffsetTable(table []byte) error {
@@ -626,42 +753,18 @@ func (w *Writer) writeFragmentSequence(el core.Element) error {
 	return nil
 }
 
-func (w *Writer) encodeDataSet(dataSet core.DataSet) ([]byte, error) {
-	var buf bytes.Buffer
-	child, err := w.childForDataSet(&buf, dataSet)
-	if err != nil {
-		return nil, err
-	}
-	for _, el := range dataSet.Elements {
-		if err := child.WriteElement(el); err != nil {
-			return nil, err
-		}
-	}
-	return buf.Bytes(), nil
-}
-
-func (w *Writer) encodeDataSetValidated(dataSet core.DataSet, path validation.Path) ([]byte, []pendingValidationPostWrite, error) {
-	var buf bytes.Buffer
-	child, err := w.childForDataSetValidatedAt(&buf, dataSet, validationWriterPosition(w)+8)
-	if err != nil {
-		return nil, nil, err
-	}
-	child.validationPath = path.Clone()
-	for _, el := range dataSet.Elements {
-		if err := child.writeValidationElement(el); err != nil {
-			return nil, child.pendingValidationPostWrites(), err
-		}
-	}
-	return buf.Bytes(), child.pendingValidationPostWrites(), nil
-}
-
 func (w *Writer) child(out io.Writer) *Writer {
 	return &Writer{
-		w:            out,
-		syntax:       w.syntax,
-		enc:          w.enc,
-		opts:         w.opts,
-		characterSet: w.characterSet,
+		w:              out,
+		syntax:         w.syntax,
+		enc:            w.enc,
+		opts:           w.opts,
+		characterSet:   w.characterSet,
+		paddingBudget:  w.paddingBudget,
+		paddingErr:     w.paddingErr,
+		measuring:      w.measuring,
+		sequenceLimits: w.sequenceLimits, sequenceErr: w.sequenceErr, sequenceDepth: w.sequenceDepth,
+		validationBudget: w.validationBudget, validationProof: w.validationProof, validationContextProof: w.validationContextProof, validationContext: w.validationContext, validationOrdinal: w.validationOrdinal, validationContextFactory: w.validationContextFactory,
 	}
 }
 
@@ -695,11 +798,16 @@ func (w *Writer) childValidatedAt(out io.Writer, base int64) *Writer {
 
 func (w *Writer) childValidatedWithCounter(out io.Writer, validationCount *committedWriter) *Writer {
 	return &Writer{
-		w:                    validationCount,
-		syntax:               w.syntax,
-		enc:                  w.enc,
-		opts:                 w.opts,
-		characterSet:         w.characterSet,
+		w:              validationCount,
+		syntax:         w.syntax,
+		enc:            w.enc,
+		opts:           w.opts,
+		characterSet:   w.characterSet,
+		paddingBudget:  w.paddingBudget,
+		paddingErr:     w.paddingErr,
+		measuring:      w.measuring,
+		sequenceLimits: w.sequenceLimits, sequenceErr: w.sequenceErr, sequenceDepth: w.sequenceDepth,
+		validationPrepare: w.validationPrepare, validationHasPreHooks: w.validationHasPreHooks, validationBudget: w.validationBudget, validationProof: w.validationProof, validationContextProof: w.validationContextProof, validationContext: w.validationContext, validationOrdinal: w.validationOrdinal, validationContextFactory: w.validationContextFactory,
 		validationWrite:      w.validationWrite,
 		validationPath:       w.validationPath.Clone(),
 		validationCount:      validationCount,
@@ -754,15 +862,18 @@ func (w *Writer) useDataSetCharacterSet(dataSet core.DataSet) (*Writer, error) {
 }
 
 func encodedHeaderLength(syntax transfer.Syntax, vr core.VR) int64 {
-	if syntax.ExplicitVR && vr.UsesLongExplicitLength() {
+	if syntax.ExplicitVR && normalizeExplicitHeaderVR(vr).UsesLongExplicitLength() {
 		return 12
 	}
 	return 8
 }
 
 func (w *Writer) sequenceUsesUndefinedLength(el core.Element) bool {
-	if w.opts.LengthPolicy == LengthPolicyUndefined {
+	switch w.opts.LengthPolicy {
+	case LengthPolicyUndefined:
 		return true
+	case LengthPolicyDefined:
+		return false
 	}
 	return el.Header.HasLength() && el.Header.Length.IsUndefined()
 }

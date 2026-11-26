@@ -15,6 +15,9 @@ func TestRecordTypeForSOPClass(t *testing.T) {
 		ok   bool
 	}{
 		{name: "CT image", uid: "1.2.840.10008.5.1.4.1.1.2", want: RecordTypeImage, ok: true},
+		{name: "CT image for processing", uid: "1.2.840.10008.5.1.4.1.1.2.3", want: RecordTypeImage, ok: true},
+		{name: "enhanced CT image for processing", uid: "1.2.840.10008.5.1.4.1.1.2.4", want: RecordTypeImage, ok: true},
+		{name: "legacy converted enhanced CT image for processing", uid: "1.2.840.10008.5.1.4.1.1.2.5", want: RecordTypeImage, ok: true},
 		{name: "RT image remains image", uid: "1.2.840.10008.5.1.4.1.1.481.1", want: RecordTypeImage, ok: true},
 		{name: "RT dose", uid: "1.2.840.10008.5.1.4.1.1.481.2", want: RecordTypeRTDose, ok: true},
 		{name: "RT structure set", uid: "1.2.840.10008.5.1.4.1.1.481.3", want: RecordTypeRTStructureSet, ok: true},
@@ -51,7 +54,7 @@ func TestRecordTypeForSOPClass(t *testing.T) {
 		{name: "ophthalmic OCT B-scan volume analysis", uid: "1.2.840.10008.5.1.4.1.1.77.1.5.8", want: RecordTypeImage, ok: true},
 		{name: "padded UID", uid: "1.2.840.10008.5.1.4.1.1.2 \x00", want: RecordTypeImage, ok: true},
 		{name: "known non-storage SOP class", uid: "1.2.840.10008.1.1"},
-		{name: "known unsupported storage SOP class", uid: "1.2.840.10008.5.1.4.38.1"},
+		{name: "hanging protocol", uid: "1.2.840.10008.5.1.4.38.1", want: RecordTypeHangingProtocol, ok: true},
 		{name: "unknown image-like UID", uid: "1.2.840.10008.5.1.4.1.1.999.1"},
 		{name: "empty UID"},
 	}

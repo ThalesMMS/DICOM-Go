@@ -3,13 +3,13 @@ package object
 import (
 	"bufio"
 	"bytes"
-	"compress/flate"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"math"
 	"sort"
+	"strings"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dcmtime"
@@ -21,14 +21,17 @@ import (
 )
 
 var (
-	ErrMissingPreamble                 = errors.New("dicom: missing Part 10 preamble or DICM marker")
-	ErrMissingTransferSyntax           = errors.New("dicom: missing TransferSyntaxUID in file meta information")
-	ErrMissingSOPClassUID              = errors.New("dicom: missing SOP Class UID")
-	ErrMissingSOPInstanceUID           = errors.New("dicom: missing SOP Instance UID")
-	ErrNilFile                         = errors.New("dicom: nil file")
-	ErrFileMeta                        = errors.New("dicom: file meta error")
-	ErrDataSet                         = errors.New("dicom: data set error")
-	ErrDeferredSequenceValueWrite      = errors.New("dicom: writing deferred values nested in sequences is unsupported")
+	ErrMissingPreamble       = errors.New("dicom: missing Part 10 preamble or DICM marker")
+	ErrMissingTransferSyntax = errors.New("dicom: missing TransferSyntaxUID in file meta information")
+	ErrMissingSOPClassUID    = errors.New("dicom: missing SOP Class UID")
+	ErrMissingSOPInstanceUID = errors.New("dicom: missing SOP Instance UID")
+	ErrNilFile               = errors.New("dicom: nil file")
+	ErrFileMeta              = errors.New("dicom: file meta error")
+	ErrDataSet               = errors.New("dicom: data set error")
+	// ErrDeferredSequenceValueWrite reports a deferred value nested in a
+	// sequence item that cannot be written: its source location is lost, or
+	// the writer (WriteDataSetWithValidation) cannot stream it.
+	ErrDeferredSequenceValueWrite      = errors.New("dicom: deferred value nested in a sequence cannot be written")
 	ErrInvalidFileMetaGroupLength      = errors.New("dicom: invalid file meta group length element")
 	ErrInvalidFileMetaGroupLengthValue = errors.New("dicom: invalid file meta group length value")
 	ErrInvalidPreambleLength           = errors.New("dicom: invalid Part 10 preamble length")
@@ -45,6 +48,8 @@ type File struct {
 
 	source                   io.Closer
 	transferSyntaxResolution *TransferSyntaxResolution
+	partialRead              *PartialRead
+	incompletePixelDataRead  *IncompletePixelData
 }
 
 // BulkDataSource is a defined-length stream returned by BulkDataResolver.
@@ -54,7 +59,19 @@ type BulkDataSource = parser.BulkDataSource
 // WriteFileWithOptions.
 type BulkDataResolver = parser.BulkDataResolver
 
+// SequenceWriteLimits bounds structural planning for defined SQ/item writes.
+type SequenceWriteLimits = parser.SequenceWriteLimits
+
 type WriteFileOptions struct {
+	SequenceLimits SequenceWriteLimits
+	// BulkDataSize is metadata only and must not open or consume the source.
+	BulkDataSize func(core.BulkDataValue) (int64, error)
+	// DeflateLevel selects raw dataset Deflate compression (0..9). Nil keeps
+	// flate.DefaultCompression. It is invalid for other transfer syntaxes.
+	DeflateLevel *int
+	// Padding aligns the logical Part 10 prefix plus dataset, and Item Values.
+	// Deflate output is not guaranteed to have an aligned physical size.
+	Padding PaddingOptions
 	// Preamble provides the 128-byte Part 10 preamble. A nil value writes a
 	// zero-filled preamble.
 	Preamble []byte
@@ -74,9 +91,153 @@ type WriteFileOptions struct {
 	// whose File-set UID is conveyed as the Media Storage SOP Instance UID.
 	// The zero value retains the historical reconciliation behavior.
 	OmitReconciledDataSetSOPUIDs bool
+	// AllowPartial confirms that a File from a partial read
+	// (ReadFileOptions.AllowPartialRead) may be written; without it such a
+	// File is refused with ErrPartialFile. It never authorizes writing
+	// diagnosed incomplete Pixel Data, which requires explicit normalization.
+	AllowPartial bool
 	// BulkDataResolver materializes core.BulkDataValue references while writing
 	// the data set, including references nested in sequence items. The writer
 	// owns and closes every non-nil source Reader returned by the resolver.
+	BulkDataResolver BulkDataResolver
+	// SequenceLength chooses undefined (the default), preserved or defined
+	// lengths for sequences and items.
+	SequenceLength SequenceLengthPolicy
+	// GroupLength controls Group Length attributes outside File Meta, whose
+	// group length is always written.
+	GroupLength GroupLengthPolicy
+	// MetaMode chooses how File Meta Information is rebuilt; the zero value
+	// is FileMetaUpdate.
+	MetaMode FileMetaMode
+	// AETitles, when set, are recorded in File Meta Information.
+	AETitles FileMetaAETitles
+	// KeepPartialByteOrderUnits applies when the data set's values are held
+	// in the other byte order than the written syntax (an object read in
+	// Explicit VR Big Endian written in a Little Endian syntax, or the other
+	// way round). A fixed-width value whose length is not a whole number of
+	// its units, such as a malformed private FD of 4 bytes, is refused by
+	// default; with this option its whole units are reversed and the trailing
+	// partial unit is written unchanged, as a value written in its own byte
+	// order keeps its bytes.
+	KeepPartialByteOrderUnits bool
+}
+
+// ImplementationClassUID and ImplementationVersionName identify dicom-go in
+// File Meta Information (0002,0012) and (0002,0013), as in association
+// negotiation (net/ul).
+const (
+	ImplementationClassUID    = "1.2.826.0.1.3680043.10.543.1"
+	ImplementationVersionName = "DICOMGO"
+)
+
+// FileMetaMode chooses how WriteFileWithOptions builds File Meta Information
+// (group 0002), after DCMTK's file write modes. In every mode Media Storage
+// SOP Class and Instance UID follow the data set and Transfer Syntax UID the
+// encoding actually written.
+type FileMetaMode int
+
+const (
+	// FileMetaUpdate, the default, keeps the other File Meta elements (Source
+	// AE Title, Private Information and so on) and records dicom-go, the
+	// writer, as Implementation Class UID and Version Name.
+	FileMetaUpdate FileMetaMode = iota
+	// FileMetaCreate builds File Meta Information anew: the required
+	// elements, dicom-go's identity and the AETitles of the options only.
+	FileMetaCreate
+	// FileMetaPreserve keeps every existing File Meta element, another
+	// implementation's identity included; what is missing is added as in
+	// FileMetaUpdate.
+	FileMetaPreserve
+)
+
+// FileMetaAETitles are the AE titles recorded in File Meta Information when
+// set (PS3.10 7.1): Source (0002,0016) is the AE that wrote the file,
+// Sending (0002,0017) the AE that sent the instance over the network to the
+// AE that wrote it, and Receiving (0002,0018) the AE that received it.
+type FileMetaAETitles struct {
+	Source, Sending, Receiving string
+}
+
+// ErrInvalidFileMetaOptions reports an unknown FileMetaMode or an AE title
+// that is not a valid AE value (1 to 16 characters of the default character
+// repertoire without backslash, not all spaces).
+var ErrInvalidFileMetaOptions = errors.New("dicom: invalid File Meta options")
+
+type fileMetaOptions struct {
+	mode     FileMetaMode
+	aeTitles FileMetaAETitles
+}
+
+func (o fileMetaOptions) validate() error {
+	if o.mode < FileMetaUpdate || o.mode > FileMetaPreserve {
+		return fmt.Errorf("%w: mode %d", ErrInvalidFileMetaOptions, o.mode)
+	}
+	return o.aeTitles.Validate()
+}
+
+// Validate reports ErrInvalidFileMetaOptions for a set title that is not a
+// valid AE value.
+func (t FileMetaAETitles) Validate() error {
+	for _, title := range []string{t.Source, t.Sending, t.Receiving} {
+		if title != "" && !validAETitle(title) {
+			return fmt.Errorf("%w: AE title %q", ErrInvalidFileMetaOptions, title)
+		}
+	}
+	return nil
+}
+
+// validAETitle is the AE title rule of ul.ValidateAETitle (PS3.5 Table
+// 6.2-1) applied to a File Meta value as written. Object parsing does not
+// depend on the network packages, so the rule is repeated here and a ups test
+// keeps the two in step.
+func validAETitle(title string) bool {
+	if len(title) > 16 || strings.TrimSpace(title) == "" {
+		return false
+	}
+	for i := 0; i < len(title); i++ {
+		if title[i] < 0x20 || title[i] > 0x7e || title[i] == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+// SequenceLengthPolicy chooses how sequences and items encode their length.
+type SequenceLengthPolicy = parser.LengthPolicy
+
+const (
+	// SequenceLengthUndefined writes undefined lengths with delimiters.
+	SequenceLengthUndefined = parser.LengthPolicyUndefined
+	// SequenceLengthPreserve keeps the form each sequence was read with.
+	SequenceLengthPreserve = parser.LengthPolicyPreserve
+	// SequenceLengthDefined writes explicit lengths (dcmconv +e).
+	SequenceLengthDefined = parser.LengthPolicyDefined
+)
+
+// GroupLengthPolicy controls Group Length (gggg,0000) attributes.
+type GroupLengthPolicy = parser.GroupLengthPolicy
+
+const (
+	// GroupLengthPreserve writes Group Length attributes as they are.
+	GroupLengthPreserve = parser.GroupLengthPreserve
+	// GroupLengthRecalculate corrects the Group Length attributes present.
+	GroupLengthRecalculate = parser.GroupLengthRecalculate
+	// GroupLengthCreate writes a Group Length for every group.
+	GroupLengthCreate = parser.GroupLengthCreate
+	// GroupLengthRemove omits every Group Length.
+	GroupLengthRemove = parser.GroupLengthRemove
+)
+
+// WriteDataSetOptions controls WriteDataSetWithOptions.
+type WriteDataSetOptions struct {
+	SequenceLimits SequenceWriteLimits
+	BulkDataSize   func(core.BulkDataValue) (int64, error)
+	// DeflateLevel and Padding have the same meaning as WriteFileOptions,
+	// except top-level alignment starts at dataset offset zero.
+	DeflateLevel     *int
+	Padding          PaddingOptions
+	SequenceLength   SequenceLengthPolicy
+	GroupLength      GroupLengthPolicy
 	BulkDataResolver BulkDataResolver
 }
 
@@ -87,6 +248,10 @@ var (
 	tagMediaStorageSOPInstanceUID     = core.NewTag(0x0002, 0x0003)
 	tagTransferSyntaxUID              = core.NewTag(0x0002, 0x0010)
 	tagImplementationClassUID         = core.NewTag(0x0002, 0x0012)
+	tagImplementationVersionName      = core.NewTag(0x0002, 0x0013)
+	tagSourceAETitle                  = core.NewTag(0x0002, 0x0016)
+	tagSendingAETitle                 = core.NewTag(0x0002, 0x0017)
+	tagReceivingAETitle               = core.NewTag(0x0002, 0x0018)
 
 	tagSOPClassUID    = core.NewTag(0x0008, 0x0016)
 	tagSOPInstanceUID = core.NewTag(0x0008, 0x0018)
@@ -96,7 +261,7 @@ var (
 const (
 	part10PreambleLength   = 128
 	part10Magic            = "DICM"
-	implementationClassUID = "1.2.826.0.1.3680043.10.543.1"
+	implementationClassUID = ImplementationClassUID
 )
 
 func (f *File) Get(tag core.Tag) (core.Element, bool) {
@@ -209,8 +374,29 @@ func (f *File) SetTextOptions(opts TextOptions) {
 //		MaxFragments:    10000,
 //	})
 //
-// All numeric limit fields default to zero, which means unlimited.
+// Numeric limit fields default to zero, which means unlimited, except
+// MaxSequenceDepth, whose zero value applies parser.DefaultMaxSequenceDepth.
+// With StopBeforeTag or AllowIncompletePixelData, zero limits receive finite
+// defaults instead.
 type ReadFileOptions struct {
+	// AllowIncompletePixelData retains terminal root integer Pixel Data at
+	// physical EOF and returns an inspected partial File plus an error. Finite
+	// limits apply; unsupported read modes are refused. Decompression requires
+	// DecodeRecovery.IncompleteData. AllowPartial never authorizes writing this
+	// diagnosed input: normalize its complete frames before rewriting.
+	AllowIncompletePixelData bool
+	// StopBeforeTag enables a bounded Part 10 prefix read on an io.ReadSeeker.
+	// The first root header >= this copied threshold is consumed, its value
+	// is untouched. A stopped File returns ReadStopError and is incomplete.
+	// Nil retains complete reading. Deflated stops use logical coordinates.
+	StopBeforeTag *core.Tag
+	// PrefixMaxTokens caps dataset headers/control in the selective prefix pass;
+	// zero is 1,000,000. It does not count File Meta, which is read completely
+	// under its existing separate reader limits.
+	// A nonzero value requires StopBeforeTag. Negative values are refused.
+	PrefixMaxTokens int
+	// BulkDataDescriptor adds VR/length/path deferral on seekable, non-deflated sources.
+	BulkDataDescriptor *parser.BulkDataDescriptor
 	// Dictionary controls the dictionary used when parsing the main dataset.
 	// A nil value defaults to dictionary/std.Dictionary.
 	Dictionary dictionary.DataDictionary
@@ -228,19 +414,30 @@ type ReadFileOptions struct {
 	// InlineValueBytesThreshold controls when the underlying parser will stop
 	// materializing defined-length primitive element values into memory.
 	//
-	// If > 0 and an element value length is strictly greater than this
-	// threshold, its bytes will be consumed but the returned core.Element will
-	// have a nil Value (metadata-only for that element).
+	// If > 0 and an OB, OW, OF, OD or UN element value length is strictly
+	// greater than this threshold, its bytes will be consumed but the returned
+	// core.Element will have a nil Value (metadata-only for that element).
+	// Large values of other VRs are materialized, subject to MaxElementBytes.
 	// CopyValueTo can stream those skipped bytes only when the reader has a
 	// seekable source with an attached value provider. ReadFileWithOptions
 	// disables this threshold for non-seekable Part 10 inputs and materializes
 	// values instead.
-	// General SQ replay is intentionally unsupported: sequence item values are
-	// materialized even when this threshold is set.
+	// DeferNestedValues extends this policy into sequence items; the SQ
+	// containers themselves remain materialized.
 	//
 	// A zero value preserves historical behavior of always materializing
 	// defined-length values (subject to MaxElementBytes).
 	InlineValueBytesThreshold int64
+	// DeferNestedValues extends InlineValueBytesThreshold into sequence items,
+	// so large nested OB, OW, OF, OD and UN values (an encapsulated document,
+	// overlay or LUT data, a private blob) also stay on the source; values of
+	// other VRs nested in items stay materialized. Object.CopyNestedValueTo
+	// reads them and WriteFile streams them back. Sequences themselves are
+	// always materialized (#278).
+	DeferNestedValues bool
+	// DeferValueTags, when non-empty, limits InlineValueBytesThreshold to these
+	// tags; values of other tags are materialized whatever their length.
+	DeferValueTags []core.Tag
 	// MaxPixelDataBytes limits native Pixel Data values and the cumulative bytes
 	// of encapsulated Pixel Data. When non-zero, it replaces MaxElementBytes for
 	// Pixel Data while other elements keep their own ceiling.
@@ -254,8 +451,11 @@ type ReadFileOptions struct {
 	// a seekable prefix; its separate probe remains capped by this value and by
 	// TransferSyntaxProbeOptions.MaxProbeBytes.
 	MaxTotalBytes int64
-	// MaxSequenceDepth limits combined sequence and item nesting depth.
-	// A zero value means unlimited.
+	// MaxSequenceDepth limits combined sequence and item nesting depth; deeper
+	// input fails with parser.ErrMaxDepthExceeded. A zero value applies
+	// parser.DefaultMaxSequenceDepth (64 nested sequences), a larger value
+	// raises the limit and parser.UnlimitedSequenceDepth (any negative value)
+	// removes it.
 	MaxSequenceDepth int
 	// MaxElements limits the number of primitive elements read by each internal
 	// parser.Reader used by ReadFileWithOptions: one for file meta and one for
@@ -271,10 +471,27 @@ type ReadFileOptions struct {
 	// SkipPixelData consumes Pixel Data values without materializing their bytes.
 	// The Pixel Data element remains present with a nil Value.
 	SkipPixelData bool
-	// DeferPixelData consumes integer, Float, and Double Float Pixel Data values
-	// without materializing their bytes and keeps the original seekable source
-	// available for CopyValueTo/WriteFile round-trips. This option requires an
-	// io.ReadSeeker source.
+	// DataSetTags selects root attributes for metadata projection. Nil retains
+	// the complete historical dataset. Non-nil retains each selected value and
+	// its entire sequence subtree, plus character-set/context/private creators.
+	// Unselected root headers remain with core.DiscardedValue; their complete
+	// grammar is parsed without retaining their payloads or SQ/item collections.
+	// Requires SkipPixelData and excludes partial/prefix/deferred/sink modes.
+	// This is structural parsing, not uniform/IOD validation. Discarded data
+	// cannot be written. Caller-owned original bytes must remain available.
+	DataSetTags []core.Tag
+	// SeekUnselectedSequences passes each unselected defined-length root
+	// sequence of a DataSetTags projection by one seek on a seekable source,
+	// instead of parsing its items (parser.ReaderOptions.SeekUnselectedSequences).
+	// Non-seekable and deflated input and lengths overrunning the source keep
+	// the structural parse and its failures; malformed content inside a
+	// sequence passed by seek is not detected. It requires DataSetTags.
+	SeekUnselectedSequences bool
+	// DeferPixelData consumes top-level integer, Float, and Double Float Pixel
+	// Data values without materializing their bytes and keeps the original
+	// seekable source available for CopyValueTo/WriteFile round-trips. Native
+	// Pixel Data nested in sequence items, such as an Icon Image Sequence, is
+	// materialized. This option requires an io.ReadSeeker source.
 	DeferPixelData bool
 	// DeferWaveformData consumes Waveform Data (5400,1010) values without
 	// materializing their bytes, including values nested in Waveform Sequence
@@ -298,6 +515,12 @@ type ReadFileOptions struct {
 	// AllowMissingMetaElementGroupLength accepts Part 10 file meta information
 	// that starts with other group 0002 elements instead of (0002,0000).
 	AllowMissingMetaElementGroupLength bool
+	// AllowImplicitVRFileMeta reads File Meta Information written in Implicit
+	// VR Little Endian (a group 0002 tag not followed by a valid VR), using
+	// the file meta dictionary. The repair is reported on File.Meta as a
+	// BoundaryRecovery with reason BoundaryImplicitVRFileMeta. Writing always
+	// produces conforming Explicit VR Little Endian File Meta Information.
+	AllowImplicitVRFileMeta bool
 	// AllowMismatchPixelDataLength is kept for ParseOption source compatibility.
 	//
 	// Deprecated: this option has no effect. dicom-go preserves raw Pixel Data
@@ -315,6 +538,52 @@ type ReadFileOptions struct {
 	// OddLengthPolicy controls how odd element lengths are handled.
 	// The zero value uses the parser default.
 	OddLengthPolicy parser.OddLengthPolicy
+	// RecoverContainerOverruns reads a sequence or item whose declared length
+	// runs past its enclosing sequence or item only to that container's end,
+	// skips an item header with no body left and closes an undefined-length
+	// child still open at the end. Object.BoundaryRecoveries lists each
+	// repair. Without it these cases fail with parser.ErrContainerOverrun;
+	// values crossing a container end fail either way.
+	RecoverContainerOverruns bool
+	// MaxBoundaryRecoveries caps Object.BoundaryRecoveries; 0 means
+	// parser.DefaultMaxBoundaryRecoveries.
+	MaxBoundaryRecoveries int
+	// RecoverImplicitVRElements reads an element whose VR bytes are invalid
+	// in an Explicit VR Little Endian data set as Implicit VR, when its
+	// length is plausible; see parser.ReaderOptions. Each switch is listed by
+	// Object.BoundaryRecoveries (reason implicit-vr-element).
+	RecoverImplicitVRElements bool
+	// MaxImplicitVRElements caps those switches; 0 uses the parser default.
+	MaxImplicitVRElements int
+	// SequenceRecovery selects independent, reported repairs of elements that
+	// should be sequences and of misplaced delimiters; see
+	// parser.SequenceRecoveryOptions.
+	SequenceRecovery parser.SequenceRecoveryOptions
+	// AllowPartialRead returns, when the data set cannot be read to the end,
+	// the File built from completed elements and sequence-item prefixes,
+	// together with a *PartialReadError (errors.Is ErrPartialRead and the
+	// original cause). PartialRead.Path/Containers mark incomplete wrappers;
+	// truncated primitives and encapsulated Pixel Data are dropped.
+	// A partial File is never valid: File.PartialRead describes it,
+	// decompression refuses it and writing needs WriteFileOptions.AllowPartial.
+	// The transfer syntax recovery readers ignore it.
+	AllowPartialRead bool
+	// VRRecovery selects independent, reported repairs of wrong VRs
+	// and length fields; see parser.VRRecoveryOptions.
+	VRRecovery parser.VRRecoveryOptions
+	// RecoverDelimiterAnomalies repairs byte-swapped item tags, delimiters
+	// with a nonzero length, orphan delimiters and (FFFE,0000) group lengths
+	// inside sequences; see parser.ReaderOptions. Each repair is listed by
+	// Object.BoundaryRecoveries.
+	RecoverDelimiterAnomalies bool
+	// AllowZlibDeflate reads a Deflated Explicit VR Little Endian data set
+	// that starts with a valid zlib header (RFC 1950) instead of the raw
+	// deflate stream PS3.5 A.5 requires, as DCMTK does. The Adler-32 trailer
+	// is checked and the use is listed by Object.BoundaryRecoveries. Writing
+	// always produces raw deflate.
+	AllowZlibDeflate bool
+	// MaxDelimiterRecoveries caps those repairs; 0 uses the parser default.
+	MaxDelimiterRecoveries int
 }
 
 func OpenFile(path string) (*File, error) {
@@ -322,9 +591,19 @@ func OpenFile(path string) (*File, error) {
 }
 
 func OpenFileWithOptions(path string, opts ReadFileOptions) (result *File, err error) {
+	if err := projectionReadOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := incompleteReadOptions(opts); err != nil {
+		return nil, err
+	}
+	opts, err = normalizePrefixOptions(opts)
+	if err != nil {
+		return nil, err
+	}
 	finishFrames := finalizeFrameSink(&opts)
 	defer finishFrames(&err)
-	f, err := os.Open(path)
+	f, err := OpenSourceFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +621,7 @@ func OpenFileWithOptions(path string, opts ReadFileOptions) (result *File, err e
 		}
 	}()
 	result, err = ReadFileWithOptions(f, opts)
-	if err == nil && result != nil && result.Dataset != nil && result.Dataset.valueProvider != nil && result.Dataset.deferredCount > 0 {
+	if (err == nil || errors.Is(err, ErrPartialRead)) && result != nil && result.Dataset != nil && result.Dataset.valueProvider != nil && result.Dataset.deferredCount > 0 {
 		result.source = f
 		closeFile = false
 	}
@@ -377,6 +656,21 @@ func ReadFile(r io.Reader) (*File, error) {
 }
 
 func ReadFileWithOptions(r io.Reader, opts ReadFileOptions) (result *File, err error) {
+	if err := projectionReadOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := incompleteReadOptions(opts); err != nil {
+		return nil, err
+	}
+	opts, err = normalizePrefixOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	if opts.StopBeforeTag != nil {
+		if _, ok := r.(io.ReadSeeker); !ok {
+			return nil, ErrReadPrefixRequiresSeekable
+		}
+	}
 	finishFrames := finalizeFrameSink(&opts)
 	defer finishFrames(&err)
 	// Preserve ReadFile's historical zero-value behavior.
@@ -387,7 +681,11 @@ func ReadFileWithOptions(r io.Reader, opts ReadFileOptions) (result *File, err e
 		opts.Dictionary = std.Dictionary
 	}
 	seekableSource, readerSourceSeekable := r.(io.ReadSeeker)
-	if opts.DeferPixelData || opts.DeferWaveformData {
+	var preludeAudit *incompletePreludeAudit
+	if opts.AllowIncompletePixelData {
+		preludeAudit = &incompletePreludeAudit{source: r}
+	}
+	if opts.DeferPixelData || opts.DeferWaveformData || opts.BulkDataDescriptor != nil {
 		if !readerSourceSeekable {
 			return nil, ErrDeferredValueRequiresSeekable
 		}
@@ -405,7 +703,14 @@ func ReadFileWithOptions(r io.Reader, opts ReadFileOptions) (result *File, err e
 		if err != nil {
 			return nil, err
 		}
-		header, err := ReadPart10Header(seekableSource, opts)
+		headerSource := seekableSource
+		if preludeAudit != nil {
+			headerSource = incompletePreludeSeeker{incompletePreludeAudit: preludeAudit, seeker: seekableSource}
+		}
+		header, err := readPart10HeaderAt(headerSource, opts, streamBase)
+		if preludeAudit != nil && preludeAudit.failure != nil {
+			return nil, preludeAudit.failure
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -415,44 +720,109 @@ func ReadFileWithOptions(r io.Reader, opts ReadFileOptions) (result *File, err e
 		datasetOffset = header.DataSetOffset - streamBase
 		readerSource = seekableSource
 	} else {
-		br := bufio.NewReader(r)
+		headerSource := r
+		if preludeAudit != nil {
+			headerSource = preludeAudit
+		}
+		br := bufio.NewReader(headerSource)
 		prefix := make([]byte, part10PreambleLength+len(part10Magic))
-		if _, err := io.ReadFull(br, prefix); err != nil {
-			return nil, err
+		_, prefixErr := io.ReadFull(br, prefix)
+		if preludeAudit != nil && preludeAudit.failure != nil {
+			return nil, preludeAudit.failure
+		}
+		if prefixErr != nil {
+			return nil, prefixErr
 		}
 		if string(prefix[part10PreambleLength:]) != part10Magic {
 			return nil, ErrMissingPreamble
 		}
 		var err error
 		meta, syntax, datasetOffset, err = readFileMeta(br, int64(len(prefix)), opts)
+		if preludeAudit != nil && preludeAudit.failure != nil {
+			return nil, preludeAudit.failure
+		}
 		if err != nil {
 			return nil, wrapFileMetaError(err)
 		}
 		preamble = prefix[:part10PreambleLength]
 		readerSource = br
 	}
+	if preludeAudit != nil && preludeAudit.failure != nil {
+		return nil, preludeAudit.failure
+	}
 	readerReadOpts := opts
+	zlibWrapped := false
 	if syntax.Deflated {
-		if readerReadOpts.DeferPixelData || readerReadOpts.DeferWaveformData {
+		if opts.AllowIncompletePixelData {
+			return nil, wrapDataSetError(parser.ErrIncompletePixelDataOptions)
+		}
+		if readerReadOpts.DeferPixelData || readerReadOpts.DeferWaveformData || readerReadOpts.BulkDataDescriptor != nil {
 			return nil, wrapDataSetError(errDeflatedDeferredValue())
 		}
-		inflated := flate.NewReader(readerSource)
+		inflated, wrapped, err := inflatedDataSet(readerSource, opts.AllowZlibDeflate)
+		if err != nil {
+			return nil, wrapDataSetError(err)
+		}
 		defer func() { _ = inflated.Close() }()
 		readerSource = inflated
 		readerSourceSeekable = false
+		zlibWrapped = wrapped
 	}
 	if !readerSourceSeekable {
 		readerReadOpts.InlineValueBytesThreshold = 0
 	}
 	readerOpts := readerReadOpts.parserReaderOptions(datasetOffset)
-	reader := parser.NewReader(readerSource, syntax, readerOpts)
-	dataset, err := reader.ReadDataSet()
-	if err != nil {
-		return nil, wrapDataSetError(err)
+	var reader *parser.Reader
+	if opts.StopBeforeTag == nil {
+		reader = parser.NewReader(readerSource, syntax, readerOpts)
+	}
+	var dataset core.DataSet
+	var stop parser.ReadStop
+	var partial *PartialRead
+	if opts.StopBeforeTag != nil {
+		reader, err = newPrefixReader(readerSource, syntax, readerOpts, opts)
+		if err != nil {
+			return nil, wrapDataSetError(err)
+		}
+		dataset, stop, err = reader.ReadDataSetPrefix()
+		if err != nil {
+			return nil, wrapDataSetError(err)
+		}
+	} else if opts.AllowPartialRead {
+		dataset, err = reader.ReadDataSetPartial()
+		if err != nil {
+			if isContextError(err) {
+				return nil, wrapDataSetError(err)
+			}
+			partial = newPartialRead(wrapDataSetError(err), len(dataset.Elements))
+		}
+	} else {
+		dataset, err = readDataSetProjection(reader, opts)
+		if err != nil {
+			if !opts.AllowIncompletePixelData || !errors.Is(err, parser.ErrIncompletePixelData) {
+				return nil, wrapDataSetError(err)
+			}
+			info, certified := reader.IncompletePixelData()
+			if !certified {
+				return nil, wrapDataSetError(err)
+			}
+			partial = incompletePartial(info, len(dataset.Elements))
+		}
+	}
+	if preludeAudit != nil && preludeAudit.failure != nil {
+		return nil, preludeAudit.failure
+	}
+	if !syntax.ExplicitVR {
+		dataset = resolveImplicitContextualVRs(dataset, readerOpts.Dictionary, syntax.ByteOrder)
 	}
 	datasetObject := fromParsedDataSetWithTextOptions(dataset, readerOpts.Dictionary, opts.TextOptions)
 	datasetObject.SetValueByteOrder(syntax.ByteOrder)
+	datasetObject.attachIncompletePixelData(reader)
 	datasetObject.privateDiagnostics, datasetObject.privateDiagnosticsTruncated = reader.PrivateDiagnostics()
+	datasetObject.boundaryRecoveries, datasetObject.boundaryRecoveriesTruncated = reader.BoundaryRecoveries()
+	if zlibWrapped {
+		datasetObject.boundaryRecoveries = append([]parser.BoundaryRecovery{zlibDeflateRecovery(datasetOffset)}, datasetObject.boundaryRecoveries...)
+	}
 	file := &File{
 		Preamble:       preamble,
 		Meta:           meta,
@@ -460,7 +830,19 @@ func ReadFileWithOptions(r io.Reader, opts ReadFileOptions) (result *File, err e
 		TransferSyntax: syntax,
 	}
 	if readerOptionsNeedValueProvider(readerOpts) && readerSourceSeekable && file.Dataset.deferredCount > 0 {
-		file.Dataset.setValueProvider(&readerValueProvider{reader: reader})
+		file.Dataset.setValueProvider(newReaderValueProvider(reader, file.Dataset))
+	}
+	if stop.Stopped {
+		stopErr := &ReadStopError{Stop: stop, Elements: len(dataset.Elements)}
+		file.partialRead = &PartialRead{Offset: stop.Offset, Tag: stop.Header.Tag, Elements: len(dataset.Elements), RetainedElements: len(dataset.Elements), Err: fileReadStopCause{stop: stop, elements: len(dataset.Elements)}}
+		return file, stopErr
+	}
+	if partial != nil {
+		file.partialRead = partial
+		if datasetObject.incompletePixelData != nil {
+			file.incompletePixelDataRead = datasetObject.incompletePixelData
+		}
+		return file, &PartialReadError{Read: clonePartialRead(*partial)}
 	}
 	return file, nil
 }
@@ -488,37 +870,27 @@ func readFileMetaElements(r *bufio.Reader, baseOffset int64, opts ReadFileOption
 	metaOpts.SkipPixelData = false
 	metaOpts.DeferPixelData = false
 	metaOpts.DeferWaveformData = false
+	metaOpts.BulkDataDescriptor = nil
 	metaOpts.FrameSink = nil
 	metaOpts.EncapsulatedSink = nil
 	if opts.FileMetaDictionary != nil {
 		metaOpts.Dictionary = opts.FileMetaDictionary
 	}
 	metaReaderOpts := metaOpts.parserReaderOptions(baseOffset)
-	metaReader := parser.NewReader(r, transfer.ExplicitVRLittleEndian, metaReaderOpts)
+	if opts.AllowImplicitVRFileMeta {
+		if head, err := r.Peek(6); err == nil && implicitVRFileMetaHead(head) {
+			meta, end, err := readFileMetaElementsByGroup(r, parser.NewReader(r, transfer.ImplicitVRLittleEndian, metaReaderOpts), metaReaderOpts)
+			if err != nil {
+				return nil, 0, err
+			}
+			meta.recordImplicitVRFileMeta(baseOffset, end)
+			return meta, end, nil
+		}
+	}
 	if opts.AllowMissingMetaElementGroupLength {
-		return readFileMetaElementsByGroup(r, metaReader, metaReaderOpts)
+		return readFileMetaElementsByGroup(r, parser.NewReader(r, transfer.ExplicitVRLittleEndian, metaReaderOpts), metaReaderOpts)
 	}
-	first, err := metaReader.Next()
-	if err != nil {
-		return nil, 0, err
-	}
-	if first.Element.Tag() != core.NewTag(0x0002, 0x0000) {
-		return nil, 0, ErrInvalidFileMetaGroupLength
-	}
-	raw, ok := first.Element.RawBytes()
-	if !ok || len(raw) != 4 {
-		return nil, 0, ErrInvalidFileMetaGroupLengthValue
-	}
-	metaLen := binary.LittleEndian.Uint32(raw)
-	metaElements := []core.Element{first.Element}
-	metaReader = parser.NewReader(io.LimitReader(r, int64(metaLen)), transfer.ExplicitVRLittleEndian, metaOpts.parserReaderOptions(metaReader.Position()))
-	more, err := metaReader.ReadAll()
-	if err != nil {
-		return nil, 0, err
-	}
-	metaElements = append(metaElements, more...)
-	meta := FromDataSet(core.DataSet{Elements: metaElements}, metaReaderOpts.Dictionary)
-	return meta, metaReader.Position(), nil
+	return readDeclaredFileMeta(r, metaReaderOpts)
 }
 
 func readFileMetaElementsByGroup(r *bufio.Reader, metaReader *parser.Reader, metaReaderOpts parser.ReaderOptions) (*Object, int64, error) {
@@ -574,6 +946,15 @@ func ReadDataSet(r io.Reader, syntax transfer.Syntax) (*Object, error) {
 }
 
 func ReadDataSetWithOptions(r io.Reader, syntax transfer.Syntax, opts ReadFileOptions) (result *Object, err error) {
+	if err := projectionReadOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := incompleteReadOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := rejectPrefixOptions(opts); err != nil {
+		return nil, err
+	}
 	finishFrames := finalizeFrameSink(&opts)
 	defer finishFrames(&err)
 	syntax, err = validateReadableSyntax(syntax)
@@ -581,7 +962,7 @@ func ReadDataSetWithOptions(r io.Reader, syntax transfer.Syntax, opts ReadFileOp
 		return nil, err
 	}
 	_, seekable := r.(io.ReadSeeker)
-	if (opts.DeferPixelData || opts.DeferWaveformData) && !seekable {
+	if (opts.DeferPixelData || opts.DeferWaveformData || opts.BulkDataDescriptor != nil) && !seekable {
 		return nil, ErrDeferredValueRequiresSeekable
 	}
 	obj, _, err := readDataSetObject(r, syntax, opts, 0, seekable)
@@ -589,27 +970,64 @@ func ReadDataSetWithOptions(r io.Reader, syntax transfer.Syntax, opts ReadFileOp
 }
 
 func readDataSetObject(r io.Reader, syntax transfer.Syntax, opts ReadFileOptions, baseOffset int64, streamValues bool) (*Object, *parser.Reader, error) {
+	if opts.AllowIncompletePixelData && syntax.Deflated {
+		return nil, nil, parser.ErrIncompletePixelDataOptions
+	}
 	readerSource := r
+	legacy, isLegacy := transfer.LegacySyntax(syntax.UID)
+	if isLegacy && (opts.FrameSink != nil || opts.EncapsulatedSink != nil) {
+		return nil, nil, ErrLegacySyntaxFrameSink
+	}
+	zlibWrapped := false
 	if syntax.Deflated {
-		if opts.DeferPixelData || opts.DeferWaveformData {
+		if opts.DeferPixelData || opts.DeferWaveformData || opts.BulkDataDescriptor != nil {
 			return nil, nil, errDeflatedDeferredValue()
 		}
-		inflated := flate.NewReader(r)
+		inflated, wrapped, err := inflatedDataSet(r, opts.AllowZlibDeflate)
+		if err != nil {
+			return nil, nil, err
+		}
 		defer func() { _ = inflated.Close() }()
 		readerSource = inflated
 		streamValues = false
+		zlibWrapped = wrapped
 	}
 	readerOpts := opts.datasetParserReaderOptions(baseOffset, streamValues)
 	reader := parser.NewReader(readerSource, syntax, readerOpts)
-	dataset, err := reader.ReadDataSet()
-	if err != nil {
+	dataset, err := readDataSetProjection(reader, opts)
+	if err != nil && (!opts.AllowIncompletePixelData || !errors.Is(err, parser.ErrIncompletePixelData)) {
 		return nil, reader, err
 	}
+	if err != nil {
+		if _, certified := reader.IncompletePixelData(); !certified {
+			return nil, reader, err
+		}
+	}
+	if !syntax.ExplicitVR {
+		dataset = resolveImplicitContextualVRs(dataset, readerOpts.Dictionary, syntax.ByteOrder)
+	}
+	valueOrder := syntax.ByteOrder
+	if isLegacy {
+		dataset = normalizeLegacyDataSet(dataset, legacy)
+		valueOrder = binary.LittleEndian
+	}
 	obj := fromParsedDataSetWithTextOptions(dataset, readerOpts.Dictionary, opts.TextOptions)
-	obj.SetValueByteOrder(syntax.ByteOrder)
+	obj.SetValueByteOrder(valueOrder)
+	obj.attachIncompletePixelData(reader)
 	obj.privateDiagnostics, obj.privateDiagnosticsTruncated = reader.PrivateDiagnostics()
+	obj.boundaryRecoveries, obj.boundaryRecoveriesTruncated = reader.BoundaryRecoveries()
+	if zlibWrapped {
+		obj.boundaryRecoveries = append([]parser.BoundaryRecovery{zlibDeflateRecovery(baseOffset)}, obj.boundaryRecoveries...)
+	}
 	if readerOptionsNeedValueProvider(readerOpts) && streamValues && obj.deferredCount > 0 {
-		obj.setValueProvider(&readerValueProvider{reader: reader})
+		provider := newReaderValueProvider(reader, obj)
+		if isLegacy {
+			provider.swapWidth = legacySwapWidths(dataset, legacy)
+		}
+		obj.setValueProvider(provider)
+	}
+	if info, incomplete := obj.IncompletePixelData(); incomplete {
+		return obj, reader, &PartialReadError{Read: *incompletePartial(info, len(dataset.Elements))}
 	}
 	return obj, reader, nil
 }
@@ -619,9 +1037,18 @@ func OpenDataSet(path string, syntax transfer.Syntax) (*Object, error) {
 }
 
 func OpenDataSetWithOptions(path string, syntax transfer.Syntax, opts ReadFileOptions) (result *Object, err error) {
+	if err := projectionReadOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := incompleteReadOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := rejectPrefixOptions(opts); err != nil {
+		return nil, err
+	}
 	finishFrames := finalizeFrameSink(&opts)
 	defer finishFrames(&err)
-	f, err := os.Open(path)
+	f, err := OpenSourceFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -639,7 +1066,7 @@ func OpenDataSetWithOptions(path string, syntax transfer.Syntax, opts ReadFileOp
 		}
 	}()
 	result, err = ReadDataSetWithOptions(f, syntax, opts)
-	if err == nil && result != nil && result.valueProvider != nil && result.deferredCount > 0 {
+	if (err == nil || errors.Is(err, ErrPartialRead)) && result != nil && result.valueProvider != nil && result.deferredCount > 0 {
 		result.source = f
 		closeFile = false
 	}
@@ -652,7 +1079,14 @@ func WriteFile(w io.Writer, file *File) error {
 
 // RebuildFileMeta resynchronizes the file-meta object with the current dataset
 // and transfer syntax without copying the dataset or reparsing the whole file.
+// It applies FileMetaUpdate.
 func (f *File) RebuildFileMeta() error {
+	return f.RebuildFileMetaWithOptions(WriteFileOptions{})
+}
+
+// RebuildFileMetaWithOptions is RebuildFileMeta with the MetaMode and
+// AETitles of opts.
+func (f *File) RebuildFileMetaWithOptions(opts WriteFileOptions) error {
 	if f == nil {
 		return ErrNilFile
 	}
@@ -660,7 +1094,7 @@ func (f *File) RebuildFileMeta() error {
 	if err != nil {
 		return err
 	}
-	meta, err := buildFileMetaElements(f, syntax)
+	meta, err := buildFileMetaElements(f, syntax, fileMetaOptions{mode: opts.MetaMode, aeTitles: opts.AETitles})
 	if err != nil {
 		return err
 	}
@@ -670,11 +1104,20 @@ func (f *File) RebuildFileMeta() error {
 }
 
 func WriteFileWithOptions(w io.Writer, file *File, opts WriteFileOptions) error {
+	if err := parser.ValidateSequenceWriteLimits(opts.SequenceLimits); err != nil {
+		return err
+	}
 	if file != nil && file.Dataset != nil && file.Dataset.HasDiscardedValues() {
 		return core.ErrDiscardedValue
 	}
 	if file == nil {
 		return fmt.Errorf("dicom: nil file")
+	}
+	if file.incompletePixelDataRead != nil || file.partialRead != nil && !opts.AllowPartial {
+		return ErrPartialFile
+	}
+	if _, incomplete := file.Dataset.IncompletePixelData(); incomplete {
+		return ErrPartialFile
 	}
 	if opts.Preamble != nil && len(opts.Preamble) != part10PreambleLength {
 		return ErrInvalidPreambleLength
@@ -684,7 +1127,11 @@ func WriteFileWithOptions(w io.Writer, file *File, opts WriteFileOptions) error 
 	if err != nil {
 		return err
 	}
-	meta, err := prepareFileMeta(file, syntax)
+	level, err := serializationLevel(syntax, opts.DeflateLevel, opts.Padding)
+	if err != nil {
+		return err
+	}
+	meta, err := prepareFileMeta(file, syntax, fileMetaOptions{mode: opts.MetaMode, aeTitles: opts.AETitles})
 	if err != nil {
 		return err
 	}
@@ -716,15 +1163,38 @@ func WriteFileWithOptions(w io.Writer, file *File, opts WriteFileOptions) error 
 		return err
 	}
 
-	if err := writeDataSetWithOptions(buffered, dataset, syntax, parser.WriterOptions{BulkDataResolver: opts.BulkDataResolver}); err != nil {
+	if err := writeDataSetWithSerializationOptions(buffered, dataset, syntax, parser.WriterOptions{BulkDataResolver: opts.BulkDataResolver, BulkDataSize: opts.BulkDataSize, SequenceLimits: opts.SequenceLimits, LengthPolicy: opts.SequenceLength, GroupLength: opts.GroupLength, Padding: opts.Padding}, level, int64(part10PreambleLength+len(part10Magic)+len(meta.encoded)), opts.KeepPartialByteOrderUnits); err != nil {
 		return err
 	}
 	return buffered.Flush()
 }
 
 func WriteDataSet(w io.Writer, obj *Object, syntax transfer.Syntax) (err error) {
+	if _, incomplete := obj.IncompletePixelData(); incomplete {
+		return ErrPartialFile
+	}
 	buffered := bufio.NewWriter(w)
 	if err := writeDataSet(buffered, obj, syntax); err != nil {
+		return err
+	}
+	return buffered.Flush()
+}
+
+// WriteDataSetWithOptions writes a data set without File Meta, with explicit
+// sequence/group length, raw dataset Deflate level and padding policies.
+func WriteDataSetWithOptions(w io.Writer, obj *Object, syntax transfer.Syntax, opts WriteDataSetOptions) error {
+	if _, incomplete := obj.IncompletePixelData(); incomplete {
+		return ErrPartialFile
+	}
+	if err := parser.ValidateSequenceWriteLimits(opts.SequenceLimits); err != nil {
+		return err
+	}
+	level, err := serializationLevel(syntax, opts.DeflateLevel, opts.Padding)
+	if err != nil {
+		return err
+	}
+	buffered := bufio.NewWriter(w)
+	if err := writeDataSetWithSerializationOptions(buffered, obj, syntax, parser.WriterOptions{BulkDataResolver: opts.BulkDataResolver, BulkDataSize: opts.BulkDataSize, SequenceLimits: opts.SequenceLimits, LengthPolicy: opts.SequenceLength, GroupLength: opts.GroupLength, Padding: opts.Padding}, level, 0, false); err != nil {
 		return err
 	}
 	return buffered.Flush()
@@ -735,25 +1205,56 @@ func writeDataSet(w io.Writer, obj *Object, syntax transfer.Syntax) (err error) 
 }
 
 func writeDataSetWithOptions(w io.Writer, obj *Object, syntax transfer.Syntax, writerOpts parser.WriterOptions) (err error) {
+	level, err := serializationLevel(syntax, nil, writerOpts.Padding)
+	if err != nil {
+		return err
+	}
+	return writeDataSetWithSerializationOptions(w, obj, syntax, writerOpts, level, 0, false)
+}
+
+// writeDataSetWithSerializationOptions writes obj in syntax. keepPartial
+// writes the trailing partial unit of a value reversed to the other byte
+// order unchanged instead of refusing the value
+// (WriteFileOptions.KeepPartialByteOrderUnits).
+func writeDataSetWithSerializationOptions(w io.Writer, obj *Object, syntax transfer.Syntax, writerOpts parser.WriterOptions, level int, prefix int64, keepPartial bool) (err error) {
 	if obj == nil {
 		return fmt.Errorf("dicom: nil object passed to WriteDataSet")
 	}
 	if obj.HasDiscardedValues() {
 		return core.ErrDiscardedValue
 	}
-	if hasDeferredSequenceValue(obj) {
-		return ErrDeferredSequenceValueWrite
-	}
 	characterSet, err := obj.characterSetForVR(core.VRLO)
 	if err != nil {
 		return fmt.Errorf("dicom: resolve dataset Specific Character Set for writing: %w", err)
+	}
+	if writerOpts.DeferredValue == nil {
+		writerOpts.DeferredValue = obj.nestedDeferredValue
+	}
+	if writerOpts.DeferredValueLength == nil {
+		writerOpts.DeferredValueLength = obj.nestedDeferredLength
 	}
 	syntax, err = validateWritableSyntax(syntax)
 	if err != nil {
 		return err
 	}
+	if err := obj.CheckPixelDataEncoding(syntax); err != nil {
+		return err
+	}
+	original := obj.SortedElements()
+	sourceOrder := obj.ValueByteOrder()
+	reverse := valueOrderDiffers(sourceOrder, syntax.ByteOrder)
+	sampleWidth := 0
+	if reverse {
+		// Raw values are held in the order of the syntax the object came
+		// from; the writer encodes them in the destination order.
+		sampleWidth = pixelDataSampleWidth(original, sourceOrder)
+		if original, err = reverseElementsByteOrder(original, sourceOrder, keepPartial); err != nil {
+			return err
+		}
+		writerOpts.DeferredValue = reversingDeferredValue(writerOpts.DeferredValue, syntax.ByteOrder, keepPartial)
+	}
 	if syntax.Deflated {
-		deflater, err := flate.NewWriter(w, flate.DefaultCompression)
+		deflater, err := newPaddedDeflaterWithLevel(w, level)
 		if err != nil {
 			return err
 		}
@@ -768,11 +1269,30 @@ func writeDataSetWithOptions(w io.Writer, obj *Object, syntax transfer.Syntax, w
 		}()
 		w = deflater
 	}
+	count := &serializationCounter{destination: w}
+	w = count
 	writerOpts.CharacterSet = characterSet
 	writer := parser.NewWriterWithOptions(w, syntax, writerOpts)
-	for _, el := range obj.SortedElements() {
+	elements, err := writer.PrepareDataSetElements(original, func(el core.Element) (int64, error) {
+		n, err := obj.deferredEncodedLength(el)
+		if err != nil {
+			return 0, err
+		}
+		header := int64(8)
+		if syntax.ExplicitVR && (el.VR() == "" || el.VR().UsesLongExplicitLength()) {
+			header = 12
+		}
+		if n > math.MaxInt64-header {
+			return 0, fmt.Errorf("dicom: deferred encoded length overflow")
+		}
+		return header + n, nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, el := range elements {
 		if el.Value == nil {
-			if err := writeDeferredElement(writer, obj, el); err != nil {
+			if err := writeDeferredElement(writer, obj, el, reverse, sampleWidth, keepPartial); err != nil {
 				return err
 			}
 			continue
@@ -781,7 +1301,7 @@ func writeDataSetWithOptions(w io.Writer, obj *Object, syntax transfer.Syntax, w
 			return err
 		}
 	}
-	return nil
+	return writer.WriteDataSetPadding(count.n, prefix, original)
 }
 
 func hasDeferredSequenceValue(obj *Object) bool {
@@ -792,30 +1312,21 @@ func hasDeferredSequenceValue(obj *Object) bool {
 	if !ok || provider == nil || provider.reader == nil {
 		return false
 	}
-	hasNestedLocation := false
-	for _, location := range provider.reader.ValueLocations(tagWaveformData) {
-		if location.ItemOffsetSet {
-			hasNestedLocation = true
-			break
-		}
-	}
-	return hasNestedLocation && hasNilSequenceTag(obj.Elements(), tagWaveformData)
+	return hasNestedNilValue(obj.Elements(), false)
 }
 
-func hasNilSequenceTag(elements []core.Element, tag core.Tag) bool {
+func hasNestedNilValue(elements []core.Element, nested bool) bool {
 	for _, element := range elements {
+		if nested && isNestedDeferred(element) {
+			return true
+		}
 		sequence, ok := element.Value.(core.SequenceValue)
 		if !ok {
 			continue
 		}
 		for _, item := range sequence.Items {
-			for _, child := range item.Elements {
-				if child.Tag() == tag && child.Value == nil {
-					return true
-				}
-				if hasNilSequenceTag([]core.Element{child}, tag) {
-					return true
-				}
+			if hasNestedNilValue(item.Elements, true) {
+				return true
 			}
 		}
 	}
@@ -838,6 +1349,7 @@ func (o ReadFileOptions) parserReaderOptions(baseOffset int64) parser.ReaderOpti
 		dict = o.Dictionary
 	}
 	return parser.ReaderOptions{
+		AllowIncompletePixelData:     o.AllowIncompletePixelData,
 		Dictionary:                   dict,
 		MaxPrivateCreators:           o.MaxPrivateCreators,
 		MaxPrivateDiagnostics:        o.MaxPrivateDiagnostics,
@@ -851,13 +1363,25 @@ func (o ReadFileOptions) parserReaderOptions(baseOffset int64) parser.ReaderOpti
 		MaxElements:                  o.MaxElements,
 		MaxFragments:                 o.MaxFragments,
 		InlineValueBytesThreshold:    o.InlineValueBytesThreshold,
+		DeferNestedValues:            o.DeferNestedValues,
+		DeferValueTags:               o.DeferValueTags,
+		BulkDataDescriptor:           o.BulkDataDescriptor,
 		StrictReservedBytes:          o.StrictReservedBytes,
 		OddLengthPolicy:              o.OddLengthPolicy,
 		SkipPixelData:                o.SkipPixelData,
+		SeekUnselectedSequences:      o.SeekUnselectedSequences,
 		DeferPixelData:               o.DeferPixelData,
 		DeferWaveformData:            o.DeferWaveformData,
 		FrameSink:                    o.FrameSink,
 		EncapsulatedSink:             o.EncapsulatedSink,
+		RecoverContainerOverruns:     o.RecoverContainerOverruns,
+		MaxBoundaryRecoveries:        o.MaxBoundaryRecoveries,
+		RecoverImplicitVRElements:    o.RecoverImplicitVRElements,
+		MaxImplicitVRElements:        o.MaxImplicitVRElements,
+		RecoverDelimiterAnomalies:    o.RecoverDelimiterAnomalies,
+		VRRecovery:                   o.VRRecovery,
+		SequenceRecovery:             o.SequenceRecovery,
+		MaxDelimiterRecoveries:       o.MaxDelimiterRecoveries,
 	}
 }
 
@@ -874,8 +1398,8 @@ type preparedFileMeta struct {
 	encoded  []byte
 }
 
-func prepareFileMeta(file *File, syntax transfer.Syntax) (preparedFileMeta, error) {
-	elements, err := buildFileMetaElements(file, syntax)
+func prepareFileMeta(file *File, syntax transfer.Syntax, opts fileMetaOptions) (preparedFileMeta, error) {
+	elements, err := buildFileMetaElements(file, syntax, opts)
 	if err != nil {
 		return preparedFileMeta{}, err
 	}
@@ -889,7 +1413,10 @@ func prepareFileMeta(file *File, syntax transfer.Syntax) (preparedFileMeta, erro
 	return preparedFileMeta{elements: elements, encoded: encoded.Bytes()}, nil
 }
 
-func buildFileMetaElements(file *File, syntax transfer.Syntax) ([]core.Element, error) {
+func buildFileMetaElements(file *File, syntax transfer.Syntax, opts fileMetaOptions) ([]core.Element, error) {
+	if err := opts.validate(); err != nil {
+		return nil, err
+	}
 	metaByTag := make(map[core.Tag]core.Element)
 	if file != nil && file.Meta != nil {
 		for _, el := range file.Meta.Elements() {
@@ -900,24 +1427,37 @@ func buildFileMetaElements(file *File, syntax transfer.Syntax) ([]core.Element, 
 		}
 	}
 
-	sopClassUID, err := resolveFileMetaUID(file, metaByTag, tagSOPClassUID, tagMediaStorageSOPClassUID, ErrMissingSOPClassUID)
+	sopClassUID, sopClassRead, err := resolveFileMetaUID(file, metaByTag, tagSOPClassUID, tagMediaStorageSOPClassUID, ErrMissingSOPClassUID)
 	if err != nil {
 		return nil, err
 	}
-	sopInstanceUID, err := resolveFileMetaUID(file, metaByTag, tagSOPInstanceUID, tagMediaStorageSOPInstanceUID, ErrMissingSOPInstanceUID)
+	sopInstanceUID, sopInstanceRead, err := resolveFileMetaUID(file, metaByTag, tagSOPInstanceUID, tagMediaStorageSOPInstanceUID, ErrMissingSOPInstanceUID)
 	if err != nil {
 		return nil, err
 	}
 
-	metaByTag[tagMediaStorageSOPClassUID] = newStringElement(tagMediaStorageSOPClassUID, core.VRUI, sopClassUID)
-	metaByTag[tagMediaStorageSOPInstanceUID] = newStringElement(tagMediaStorageSOPInstanceUID, core.VRUI, sopInstanceUID)
+	if opts.mode == FileMetaCreate {
+		metaByTag = make(map[core.Tag]core.Element)
+	}
+	metaByTag[tagMediaStorageSOPClassUID] = derivedUIDElement(tagMediaStorageSOPClassUID, sopClassUID, sopClassRead)
+	metaByTag[tagMediaStorageSOPInstanceUID] = derivedUIDElement(tagMediaStorageSOPInstanceUID, sopInstanceUID, sopInstanceRead)
 	metaByTag[tagTransferSyntaxUID] = newStringElement(tagTransferSyntaxUID, core.VRUI, syntax.UID)
 
-	implementationUID := implementationClassUID
-	if existing := normalizedElementString(metaByTag[tagImplementationClassUID]); existing != "" {
-		implementationUID = existing
+	// The writer's identity, unless FileMetaPreserve keeps another one.
+	if existing := normalizedElementString(metaByTag[tagImplementationClassUID]); opts.mode == FileMetaPreserve && existing != "" {
+		metaByTag[tagImplementationClassUID] = derivedUIDElement(tagImplementationClassUID, existing, !isAuthoredText(metaByTag[tagImplementationClassUID]))
+	} else {
+		metaByTag[tagImplementationClassUID] = derivedUIDElement(tagImplementationClassUID, ImplementationClassUID, false)
+		metaByTag[tagImplementationVersionName] = newStringElement(tagImplementationVersionName, core.VRSH, ImplementationVersionName)
 	}
-	metaByTag[tagImplementationClassUID] = newStringElement(tagImplementationClassUID, core.VRUI, implementationUID)
+	for _, title := range []struct {
+		tag   core.Tag
+		value string
+	}{{tagSourceAETitle, opts.aeTitles.Source}, {tagSendingAETitle, opts.aeTitles.Sending}, {tagReceivingAETitle, opts.aeTitles.Receiving}} {
+		if title.value != "" {
+			metaByTag[title.tag] = newStringElement(title.tag, core.VRAE, strings.TrimSpace(title.value))
+		}
+	}
 
 	if _, ok := metaByTag[tagFileMetaInformationVersion]; !ok {
 		metaByTag[tagFileMetaInformationVersion] = core.NewRawElement(tagFileMetaInformationVersion, core.VROB, []byte{0x00, 0x01})
@@ -1016,17 +1556,26 @@ func cloneObjectForWrite(source *Object, dict dictionary.DataDictionary) *Object
 	return clone
 }
 
-func writeDeferredElement(writer *parser.Writer, obj *Object, el core.Element) error {
+// writeDeferredElement streams the deferred value of el from obj. reverse
+// reverses it by unit (sampleWidth is the Pixel Data sample width of obj)
+// when obj holds values in the other byte order than the writer, unless the
+// provider already produces that value in the writer's order (FrameSource
+// Pixel Data). keepPartial is the partial-unit rule of reversingCopy.
+func writeDeferredElement(writer *parser.Writer, obj *Object, el core.Element, reverse bool, sampleWidth int, keepPartial bool) error {
 	if obj == nil || obj.valueProvider == nil {
 		return fmt.Errorf("dicom: element %s has deferred value but no value provider", el.Tag())
 	}
-	return writer.WriteDeferredElement(el, func(w io.Writer) (int64, error) {
+	copyValue := func(w io.Writer) (int64, error) {
 		return obj.CopyValueTo(el.Tag(), w)
-	})
+	}
+	if reverse && deferredValueNeedsReversal(obj.valueProvider, el.Tag()) {
+		copyValue = reversingCopy(el, sampleWidth, keepPartial, copyValue)
+	}
+	return writer.WriteDeferredElement(el, copyValue)
 }
 
 func readerOptionsNeedValueProvider(opts parser.ReaderOptions) bool {
-	return opts.InlineValueBytesThreshold > 0 || opts.DeferPixelData || opts.DeferWaveformData || opts.FrameSink != nil
+	return opts.InlineValueBytesThreshold > 0 || opts.DeferPixelData || opts.DeferWaveformData || opts.BulkDataDescriptor != nil || opts.FrameSink != nil
 }
 
 func errDeflatedDeferredValue() error {
@@ -1130,18 +1679,41 @@ func resolveWriteTransferSyntaxWithOptions(file *File, opts WriteFileOptions) (t
 	return validateWritableSyntax(transfer.Syntax{UID: uid})
 }
 
-func resolveFileMetaUID(file *File, metaByTag map[core.Tag]core.Element, datasetTag, metaTag core.Tag, missing error) (string, error) {
+// resolveFileMetaUID returns the UID for a derived File Meta element and
+// whether it came from a value read from a stream rather than authored.
+func resolveFileMetaUID(file *File, metaByTag map[core.Tag]core.Element, datasetTag, metaTag core.Tag, missing error) (string, bool, error) {
 	if file != nil && file.Dataset != nil {
 		if value, ok := file.Dataset.GetString(datasetTag); ok {
 			if uid := transfer.NormalizeUID(value); uid != "" {
-				return uid, nil
+				element, _ := file.Dataset.Get(datasetTag)
+				return uid, !isAuthoredText(element), nil
 			}
 		}
 	}
 	if value := normalizedElementString(metaByTag[metaTag]); value != "" {
-		return value, nil
+		return value, !isAuthoredText(metaByTag[metaTag]), nil
 	}
-	return "", missing
+	return "", false, missing
+}
+
+func isAuthoredText(el core.Element) bool {
+	_, ok := el.Value.(core.StringValue)
+	return ok
+}
+
+// derivedUIDElement copies a UID into File Meta. A UID that was read keeps
+// its read-path leniency as raw, NUL-padded bytes, so a legacy file with a
+// non-conformant UID can still be rewritten; an authored UID stays text and
+// is validated by the writer (PS3.5 9.1).
+func derivedUIDElement(tag core.Tag, uid string, read bool) core.Element {
+	if !read {
+		return newStringElement(tag, core.VRUI, uid)
+	}
+	raw := []byte(uid)
+	if len(raw)%2 != 0 {
+		raw = append(raw, 0)
+	}
+	return core.NewRawElement(tag, core.VRUI, raw)
 }
 
 func normalizedElementString(el core.Element) string {
@@ -1217,4 +1789,12 @@ func unsupportedTransferSyntaxError(operation string, syntax transfer.Syntax) er
 		return fmt.Errorf("%w: transfer syntax %q (%s) is registered but not supported by this %s", transfer.ErrUnsupportedTransferSyntax, syntax.UID, syntax.Name, operation)
 	}
 	return fmt.Errorf("%w: transfer syntax %q is registered but not supported by this %s", transfer.ErrUnsupportedTransferSyntax, syntax.UID, operation)
+}
+
+// byteCounter counts written bytes and discards them.
+type byteCounter struct{ n int64 }
+
+func (c *byteCounter) Write(p []byte) (int, error) {
+	c.n += int64(len(p))
+	return len(p), nil
 }

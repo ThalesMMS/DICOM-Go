@@ -142,13 +142,13 @@ func TestPutResolvesParsedDeferredDuplicateAmbiguity(t *testing.T) {
 		deferred(4),
 		deferred(8),
 	}}, std.Dictionary, TextOptions{})
-	if !obj.ambiguousDeferred[tag] || obj.deferredCount != 0 {
-		t.Fatalf("parsed duplicate state = ambiguous %v count %d, want true/0", obj.ambiguousDeferred[tag], obj.deferredCount)
+	if !obj.HasDuplicateParsedTag(tag) || obj.deferredCount != 0 {
+		t.Fatalf("parsed duplicate state = ambiguous %v count %d, want true/0", obj.HasDuplicateParsedTag(tag), obj.deferredCount)
 	}
 
 	obj.Put(core.NewRawElement(tag, core.VROB, []byte{9, 8, 7, 6}))
-	if obj.ambiguousDeferred[tag] || obj.deferredCount != 0 {
-		t.Fatalf("updated duplicate state = ambiguous %v count %d, want false/0", obj.ambiguousDeferred[tag], obj.deferredCount)
+	if obj.HasDuplicateParsedTag(tag) || obj.deferredCount != 0 {
+		t.Fatalf("updated duplicate state = ambiguous %v count %d, want false/0", obj.HasDuplicateParsedTag(tag), obj.deferredCount)
 	}
 	var got bytes.Buffer
 	if _, err := obj.CopyValueTo(tag, &got); err != nil {

@@ -207,6 +207,9 @@ type BasicProfilePlan struct {
 	changes         []profilePlanChange
 	report          ProfileReport
 	applied         bool
+	// previewOnly marks a dry run whose pixel redaction could not run
+	// because Pixel Data was not loaded; Apply refuses it.
+	previewOnly bool
 }
 
 // Report returns a detached PHI-redacted copy of the dry-run report.
@@ -233,6 +236,9 @@ func (plan *BasicProfilePlan) Apply(ctx context.Context, obj *object.Object) (Pr
 	current := obj.ToDataSet()
 	if err := validateProfileDataSetBudget(current, plan.limits); err != nil {
 		return ProfileReport{}, err
+	}
+	if plan.previewOnly {
+		return ProfileReport{}, ErrDeferredValueUnavailable
 	}
 	if plan.applied || profileDigest(current) != plan.sourceDigest || !sameProfileByteOrder(obj.ValueByteOrder(), plan.sourceByteOrder) {
 		return ProfileReport{}, ErrStaleProfilePlan
@@ -279,6 +285,9 @@ func CloneFileWithBasicProfile(ctx context.Context, src *object.File, options Ba
 	}
 	clone, err := object.CloneFile(src)
 	if err != nil {
+		return nil, ProfileReport{}, err
+	}
+	if err := redactFileForProfile(ctx, clone, &normalized); err != nil {
 		return nil, ProfileReport{}, err
 	}
 	report, err := ApplyBasicProfile(ctx, clone.Dataset, normalized, uids)
@@ -355,7 +364,13 @@ func PlanBasicProfile(ctx context.Context, obj *object.Object, options BasicProf
 	if state.sopClassUID == "1.2.840.10008.1.3.10" {
 		return nil, ErrDICOMDIRPolicyRequired
 	}
+	if err := state.planPixelRedaction(obj); err != nil {
+		return nil, err
+	}
 	if err := state.addSourceResidualRisks(obj); err != nil {
+		return nil, err
+	}
+	if err := state.addPixelRedactionResidualRisks(); err != nil {
 		return nil, err
 	}
 	if selected[ProfileOptionRetainModifiedDates] {
@@ -374,6 +389,12 @@ func PlanBasicProfile(ctx context.Context, obj *object.Object, options BasicProf
 	}
 	planned := object.FromDataSet(result, std.Dictionary)
 	planned.SetValueByteOrder(obj.ValueByteOrder())
+	if err := state.applyPseudonym(obj, planned); err != nil {
+		return nil, err
+	}
+	if err := state.applyPixelRedaction(planned); err != nil {
+		return nil, err
+	}
 	if selected[ProfileOptionCleanPixelData] {
 		if profileHasDeferredValue(planned, isPixelCleanerTag) {
 			return nil, ErrDeferredValueUnavailable
@@ -412,11 +433,18 @@ func PlanBasicProfile(ctx context.Context, obj *object.Object, options BasicProf
 		planned.Put(core.NewRawElement(tagRecognizableVisualFeatures, core.VRCS, []byte("NO")))
 	}
 	state.addRequiredProfileAttributes(planned)
+	if err := state.applyEncryptedAttributes(obj, planned); err != nil {
+		return nil, err
+	}
 	result = planned.ToDataSet()
 	if err := validateProfileDataSetBudget(result, normalized.Limits); err != nil {
 		return nil, err
 	}
 	changes := profileChanges(source, result)
+	if state.pixelRedaction != nil {
+		redaction := *state.pixelRedaction
+		state.report.PixelRedaction = &redaction
+	}
 	if encoded, marshalErr := json.Marshal(state.report); marshalErr != nil || len(encoded) > normalized.Limits.MaxReportBytes {
 		return nil, ErrProfileResourceLimit
 	}
@@ -426,6 +454,7 @@ func PlanBasicProfile(ctx context.Context, obj *object.Object, options BasicProf
 		limits:          normalized.Limits,
 		changes:         changes,
 		report:          state.report,
+		previewOnly:     state.previewOnly,
 	}, nil
 }
 
@@ -498,6 +527,17 @@ func normalizeProfileOptions(options BasicProfileOptions) (BasicProfileOptions, 
 	if requested[ProfileOptionRetainSafePrivate] && options.SafePrivateRegistry == nil {
 		return BasicProfileOptions{}, nil, ErrSafePrivateRegistryRequired
 	}
+	if options.PixelRedaction != nil && (requested[ProfileOptionCleanPixelData] || options.PixelCleaner != nil) {
+		return BasicProfileOptions{}, nil, ErrInvalidProfileOptions
+	}
+	if err := validatePixelRedactionOptions(options.PixelRedaction, limits); err != nil {
+		return BasicProfileOptions{}, nil, err
+	}
+	encrypted, err := normalizeEncryptedAttributesOptions(options.EncryptedAttributes)
+	if err != nil {
+		return BasicProfileOptions{}, nil, err
+	}
+	options.EncryptedAttributes = encrypted
 	if requested[ProfileOptionCleanPixelData] && options.PixelCleaner == nil {
 		return BasicProfileOptions{}, nil, ErrPixelCleanerRequired
 	}
@@ -527,16 +567,20 @@ type profilePlanner struct {
 	dateShiftDays   int
 	sopClassUID     string
 	reportBytes     int
+	pixelRedaction  *PixelRedactionReport
+	previewOnly     bool
+	pseudonymized   bool
 }
 
 func (state *profilePlanner) addSourceResidualRisks(source *object.Object) error {
 	hasPixels := source.Has(tagPixelData) || source.Has(core.NewTag(0x7FE0, 0x0008)) || source.Has(core.NewTag(0x7FE0, 0x0009))
-	if !state.selected[ProfileOptionCleanPixelData] && hasPixels {
+	pixelsCleaned := state.selected[ProfileOptionCleanPixelData] || state.pixelAnnotationCleared()
+	if !pixelsCleaned && hasPixels {
 		if err := state.addResidualRisk(ResidualRisk{Code: "pixel-cleaning-not-attested", Tag: tagPixelData}); err != nil {
 			return err
 		}
 	}
-	if !state.selected[ProfileOptionCleanPixelData] && (hasPixels || source.Has(tagBurnedInAnnotation)) {
+	if !pixelsCleaned && (hasPixels || source.Has(tagBurnedInAnnotation)) {
 		value, ok := singleCSValue(source, tagBurnedInAnnotation)
 		if !ok || value != "NO" {
 			if err := state.addResidualRisk(ResidualRisk{Code: "burned-in-annotation-not-cleared", Tag: tagBurnedInAnnotation}); err != nil {
@@ -616,6 +660,25 @@ func (state *profilePlanner) transformDataSet(source core.DataSet, path []Attrib
 			creator := creators[privateCreatorTagForDataTag(tag)]
 			rule, registered := state.options.SafePrivateRegistry.lookup(tag, creator)
 			if registered && safePrivateRuleMatchesElement(rule, sourceElement) {
+				if isCSAHeader(tag, creator) {
+					raw, _ := sourceElement.Value.(core.RawValue)
+					scrubbed, outcome := scrubCSAElement(sourceElement, creator, raw, &state.report.CSA)
+					switch outcome {
+					case csaScrubbed:
+						result.Elements = append(result.Elements, scrubbed)
+						state.report.Summary.PrivateRetained++
+						if err := state.record(path, tag, ActionCodeClean, ProfileActionClean, "safe-private-csa-scrubbed"); err != nil {
+							return core.DataSet{}, err
+						}
+						continue
+					case csaUnscrubbable:
+						state.report.Summary.PrivateRemoved++
+						if err := state.record(path, tag, ActionCodeRemove, ProfileActionRemove, "safe-private-csa-unscrubbable"); err != nil {
+							return core.DataSet{}, err
+						}
+						continue
+					}
+				}
 				action := rule.Action
 				if action == ProfileActionKeep {
 					result.Elements = append(result.Elements, profileCloneElement(sourceElement))
@@ -1240,12 +1303,36 @@ func (state *profilePlanner) dummyElement(path []AttributePathStep, element core
 
 func (state *profilePlanner) addRequiredProfileAttributes(obj *object.Object) {
 	obj.Put(core.NewRawElement(tagPatientIdentityRemoved, core.VRCS, []byte("YES")))
-	obj.Put(core.NewRawElement(tagDeidentificationMethod, core.VRLO, []byte("DICOM Basic Application Confidentiality Profile")))
+	methods := []string{"DICOM Basic Application Confidentiality Profile"}
+	if redaction := state.pixelRedaction; redaction != nil {
+		if redaction.Attested {
+			methods = append(methods, "Operator-attested pixel region redaction")
+		} else {
+			methods = append(methods, "Unattested pixel region redaction")
+		}
+	}
+	if state.pseudonymized {
+		methods = append(methods, "Template pseudonyms for patient name and ID")
+	}
+	if state.options.EncryptedAttributes != nil {
+		methods = append(methods, encryptedAttributesDeidentificationMethod)
+	}
+	if len(methods) == 1 {
+		obj.Put(core.NewRawElement(tagDeidentificationMethod, core.VRLO, []byte(methods[0])))
+	} else {
+		obj.Put(core.Element{Header: core.ElementHeader{Tag: tagDeidentificationMethod, VR: core.VRLO}, Value: core.StringValue(methods)})
+	}
 	codes := []core.DataSet{profileMethodCode("113100", "Basic Application Confidentiality Profile")}
 	for _, option := range state.options.SelectedOptions {
 		if code, meaning, ok := profileOptionMethodCode(option); ok {
 			codes = append(codes, profileMethodCode(code, meaning))
 		}
+	}
+	if state.pixelAnnotationCleared() {
+		// PS3.15 E.3.1: attested removal of burned-in annotation on every
+		// frame is the Clean Pixel Data Option.
+		code, meaning, _ := profileOptionMethodCode(ProfileOptionCleanPixelData)
+		codes = append(codes[:1], append([]core.DataSet{profileMethodCode(code, meaning)}, codes[1:]...)...)
 	}
 	obj.Put(profileSequenceElement(tagDeidentificationMethodCodeSequence, codes))
 	status := "REMOVED"

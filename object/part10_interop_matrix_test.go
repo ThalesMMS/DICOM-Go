@@ -95,7 +95,10 @@ func part10InteropCases() []part10InteropCase {
 
 func writePart10InteropFixture(t *testing.T, path string, test part10InteropCase) {
 	t.Helper()
-	file := &object.File{Dataset: object.FromElements(part10InteropElements(test), std.Dictionary), TransferSyntax: test.syntax}
+	dataset := object.FromElements(part10InteropElements(test), std.Dictionary)
+	// The raw Pixel Data bytes are authored in the syntax's byte order.
+	dataset.SetValueByteOrder(test.syntax.ByteOrder)
+	file := &object.File{Dataset: dataset, TransferSyntax: test.syntax}
 	writePart10InteropFile(t, path, file)
 }
 

@@ -70,3 +70,36 @@ func BenchmarkReadFileLargePixelData(b *testing.B) {
 		}
 	})
 }
+
+// Run with:
+// go test -run '^$' -bench '^BenchmarkReadFileLargeNestedValues$' ./object -benchmem
+//
+// Memory of opening a file with a 2 MiB encapsulated PDF and 1 MiB private
+// blobs nested in sequence items, materialized or left on disk (#1141).
+func BenchmarkReadFileLargeNestedValues(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "nested.dcm")
+	if err := os.WriteFile(path, largeNestedValuePart10(b, 2<<20, 1<<20), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	for _, bench := range []struct {
+		name string
+		opts ReadFileOptions
+	}{
+		{"materialized", ReadFileOptions{}},
+		{"top_level_deferred", ReadFileOptions{InlineValueBytesThreshold: 64 << 10}},
+		{"nested_deferred", ReadFileOptions{InlineValueBytesThreshold: 64 << 10, DeferNestedValues: true}},
+	} {
+		b.Run(bench.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				file, err := OpenFileWithOptions(path, bench.opts)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
