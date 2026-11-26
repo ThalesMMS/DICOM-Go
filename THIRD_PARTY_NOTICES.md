@@ -290,10 +290,7 @@ Numerical fixtures computed by VTK 9.6.2 (tag commit
 `f49a1dbafa60b58ef22f6292ec58370453162192`) on synthetic phantoms: surface
 counts, areas and volumes, interpolated samples, slabs and stencil masks in
 [`testdata/upstream/vtk/`](testdata/upstream/vtk/README.md). No VTK code or
-data is copied; each fixture lists the VTK sources that computed it. The
-analysis baseline of the epic, commit
-`ac53123e515e6e97adf79d9a225101303049817e`, stays registered for later
-imports.
+data is copied; each fixture lists the VTK sources that computed it.
 
 - Upstream: <https://github.com/Kitware/VTK>
 - Copyright (c) 1993-2015 Ken Martin, Will Schroeder, Bill Lorensen
@@ -451,15 +448,7 @@ ITK code is copied.
 
 ### ITK — HDF5 transform files
 
-`registration.ReadITKHDF5` reads the dataset layout of ITK's
-`HDF5TransformIO` (`Modules/IO/TransformHDF5`, commit `519a94d954`) and
-`registration.DisplacementFieldTransform` follows the parameter layout and
-out-of-field behaviour of `DisplacementFieldTransform`
-(`Modules/Filtering/DisplacementField`). `internal/hdf5` implements the
-published HDF5 file format specification; no ITK or HDF5 library code is
-copied. The fixtures in `registration/testdata/itkhdf5` were written by the
-HDF5 C library through the [historical transform generator](https://github.com/ThalesMMS/go-dev/tree/3ddf654b09757f879330ce6c9ff3d40ceffc29a0/dicom-go-validation/scripts/itk_hdf5_transforms)
-and hold synthetic values only.
+The synthetic fixtures in `registration/testdata/itkhdf5` were written by the HDF5 C library. `registration.ReadITKHDF5` follows ITK transform layouts; `internal/hdf5` implements the published HDF5 format without copying ITK or HDF5 library code.
 
 - Upstream: <https://github.com/InsightSoftwareConsortium/ITK>
 - Copyright NumFOCUS

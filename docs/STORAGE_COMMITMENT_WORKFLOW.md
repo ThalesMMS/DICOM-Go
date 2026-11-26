@@ -18,8 +18,13 @@ restart recovery.
 - A result containing any failure uses Event Type ID 2. Its Referenced SOP and
   Failed SOP sequences form a complete, disjoint partition of the initiating
   request.
-- Failure Reason accepts the PS3.3 C.14 values `0110`, `0112`, `0119`, `0122`,
-  `0131`, and `0213`.
+- Failure Reason accepts the PS3.3 C.14.1.1 values `0110`, `0112`, `0119`,
+  `0122`, `0131`, and `0213`, named `StorageCommitmentFailureReason*`. They are
+  not DIMSE statuses: `A700` is never a Failure Reason.
+- A committer that cannot take a request because a configured bound (the
+  reference count or a full transaction store) is reached answers N-ACTION
+  with Resource limitation `0213H` (PS3.7 10.1.4.1.10); other refusals use
+  Processing failure `0110H`.
 - A callback on a separate association uses the same committing AE Title as the
   original association and negotiates the Storage Commitment SCP role.
 
@@ -40,6 +45,11 @@ type StorageCommitmentTransactionStore interface {
 `Create` must be durable before returning. `CompareAndSwap` must compare the
 stored `Version` and increment it atomically. `List` must honor its finite page
 limit. Every implementation must defensively clone reference and result slices.
+
+`StorageCommitmentTransaction.Clone`, `IsDue` and
+`StorageCommitmentState.Terminal` give persistent stores the same copy, due and
+purge semantics as the memory store; `examples/referencearchive` has a
+file-backed store built on them.
 
 `MemoryStorageCommitmentStore` is bounded and race-safe, but intentionally does
 not survive process restart. A database-backed application implements the same
@@ -75,11 +85,27 @@ record to `accepted` only after a successful response. An uncertain send remains
 pending; `RetryRequest` is explicit because silently repeating a Transaction
 UID after an uncertain exchange can create duplicate work at a peer.
 
+To accept a report on the original association, call
+`AwaitResultOnAssociation(ctx, assoc, transactionUID, wait)` after `Request`.
+It is the association's sole reader while active: it serves N-EVENT-REPORT
+with the workflow handlers, polls idle reads in 100 ms steps without consuming
+a partial PDU, and returns when the stored transaction is terminal (the result
+may also arrive on a separate callback association), when `wait` elapses, or
+when the committer releases (`PeerReleased`). After a timeout the caller can
+still release the association normally.
+
 For a separate callback listener, use `ServeListener`, or combine
 `workflow.NormalizedOptions(assoc)` with an application-owned
 `ServeAssociation` loop. The receiver validates the peer Calling/Called AE,
 role selection, Transaction UID, exact result partition, and failure reasons;
-it stores the result before returning N-EVENT-REPORT success.
+it stores the result before returning N-EVENT-REPORT success. `ServeListener`
+negotiates each connection on its own goroutine, within
+`ul.DefaultServerNegotiationTimeout` unless the accept options set another
+timeout. A connection that fails negotiation, such as one that sends bytes
+that are not an A-ASSOCIATE-RQ, is closed and reported to `OnError`; an
+accept failure that leaves the listener usable, such as running out of
+descriptors, is reported and retried after a pause of 5 ms doubling to 1 s.
+Only a canceled context or a failed listener, such as a closed one, ends it.
 
 `Wait` polls the injected store and never deletes a transaction when its context
 is canceled. Database-backed stores may additionally expose their own native
@@ -173,6 +199,11 @@ for deliberate local handling.
   are released after acknowledgement or aborted/closed after failure;
 - `ServeListener` owns each accepted association, but not the listener;
 - callback functions run outside store locks and receive detached records.
+
+`cmd/stgcmtscu` is a requestor built on this workflow: `Request`, then
+`AwaitResultOnAssociation` and, with `-listen`, `ServeListener` and `Wait`
+for a callback association; see
+[CLI_TOOLS.md](./CLI_TOOLS.md#stgcmtscu-storage-commitment).
 
 ## Interoperability
 

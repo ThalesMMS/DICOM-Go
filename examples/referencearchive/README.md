@@ -1,8 +1,5 @@
 # Reference archive
 
-A small runnable composition of the existing `index`, `qrmatch`, `net/dimse`,
-`net/ul` and safe Part 10 persistence helpers. The catalog belongs to this
-example; it is not a public library service or the Twin-Viewer archive.
 
 Run from the `dicom-go` module:
 
@@ -33,7 +30,16 @@ the index. No separate database or migration command is required.
 - Verification and Study Root C-FIND, C-GET and C-MOVE. C-GET negotiates the
   storage role on the requesting association; C-MOVE uses `StoreSession`.
 - Secondary Capture, CT Image Storage and MR Image Storage with Implicit VR
-  Little Endian or Explicit VR Little Endian. No codec/transcode dependency.
+  Little Endian, Explicit VR Little Endian or any encapsulated syntax in
+  `transfer.PreservableCompressedReceiveSyntaxes` (JPEG, JPEG-LS, RLE, JPEG 2000,
+  HTJ2K, JPEG XL, Encapsulated Uncompressed). Compressed instances are stored and
+  retrieved opaquely in their own syntax: C-GET and C-MOVE offer only the stored
+  syntax, so nothing is decoded or transcoded, and a requester that does not
+  accept it gets a failed sub-operation. The acceptor honours the proposer's
+  transfer syntax order so a C-GET context offering the stored syntax gets it.
+  Pixel Data that contradicts the negotiated or stored syntax (native bytes
+  under a compressed syntax, fragments under a native one) is refused with
+  C000 and never published. No codec/transcode dependency.
 - Canonical Study, Series and SOP UIDs, a nonempty Patient ID, and scalar
   standard-VR query metadata of at most 1024 UTF-8 bytes per selected value.
   This is an archive profile, not full SOP Class/IOD validation.
@@ -52,11 +58,64 @@ the index. No separate database or migration command is required.
   network destination. C-MOVE batch progress is reported after the bounded batch
   returns; it is not a per-instance real-time progress feed.
 
-**Storage Commitment is disabled and its SOP Class is not negotiated.** A
-successful store acknowledges this example's complete file publication and
-catalog admission. It does not promise power-loss durability, replicated
-storage, recovery after hardware failure, or clinical retention. DICOMweb is
-also outside this example.
+**Storage Commitment is disabled by default and its SOP Class is then not
+negotiated.** A successful store acknowledges this example's complete file
+publication and catalog admission. DICOMweb is outside this example.
+
+## Storage Commitment (opt-in)
+
+```sh
+go run ./examples/referencearchive -root ./reference-archive \
+  -commitment-dir ./reference-archive-commitments \
+  -commitment-callback MODALITY=127.0.0.1:11114
+```
+
+`-commitment-dir` (outside and not containing `-root`) and at least one
+`-commitment-callback AE=host:port` enable Storage Commitment Push Model
+(PS3.4 J.3, 2026d) as the committing SCP. Only then is the SOP Class
+negotiated, and the called AE must be the archive's AE Title. The library's
+`StorageCommitmentWorkflow` does the protocol work; the example supplies the
+policy, the durable transaction store and the callback routes.
+
+**What a commitment means here.** A reference in the Referenced SOP Sequence of
+the result means that, when the result was produced, the archive held that SOP
+Instance of that SOP Class, and that the file admitted to the catalog was the
+same file (identity, size, modification time) with the same SHA-256 as at
+admission and could be read and indexed again in full. That file was written to
+a private temporary file, synced, published without overwrite and (on Unix)
+the directory synced before admission, and retrieval returns exactly that file.
+Every other reference is in the Failed SOP Sequence with a PS3.3 C.14.1.1
+reason: 0122H for a SOP Class the archive does not store, 0112H for an instance
+it does not hold or whose file is gone, 0119H when the instance is held under
+another SOP Class, 0110H when the file changed or cannot be read. The result
+always partitions exactly the requested references.
+
+**Order and durability.** N-ACTION-RSP success is sent only after the
+transaction record is durable in `-commitment-dir`: each record is written to a
+temporary file, synced, atomically renamed and, on Unix, the directory is
+synced. A record that cannot be written refuses the request with 0110H; a full
+store (`-commitment-max-transactions`) refuses with Resource limitation 0213H.
+The result is persisted before the N-EVENT-REPORT is sent, and delivery is at
+least once with bounded backoff. After a restart the archive reloads every
+record and resumes accepted, processing and undelivered work. A reused
+Transaction UID with different references is refused; an identical retry is
+accepted once.
+
+**Delivery.** Results go on a separate association from the archive's AE Title
+to the requestor's allowlisted address, negotiating the Storage Commitment SCP
+role (PS3.4 J.3.3.1.2). Same-association delivery is not offered by this
+example because its association loop serves every service at once; the
+library supports it for a dedicated loop. A requestor without a callback route
+is accepted but its result stays undelivered until retries are exhausted.
+
+**Limits.** This is not a certified or clinical archive. Commitment covers one
+local file system: no replication, no protection against disk or controller
+failure, no retention policy, and no re-verification after the result. Windows
+has no directory sync through Go's `os` package; there the rename relies on
+NTFS metadata journaling. Files changed after admission are reported as
+failures within the process lifetime, but a restart re-admits whatever intact
+file it finds, because digests are not stored outside the process. Completed
+transactions are purged after 24 hours.
 
 ## Persistence, restart and ownership
 
@@ -138,12 +197,43 @@ two studies, four series, C-STORE, C-FIND, C-GET, C-MOVE, duplicate rejection,
 unknown destination rejection, C-GET cancellation counters and a disk restart.
 The independent reader/receiver compares every metadata field in the fixture
 and all 3876 pixel samples per store/get/move pass, before and after restart.
-It also verifies that Storage Commitment is not negotiated. Unit tests cover
+It also verifies that Storage Commitment is not negotiated by default.
+`TestReferenceArchiveIndependentStorageCommitment` (same gate) has pynetdicom
+act as the Storage Commitment requestor: C-STORE, N-ACTION, release, the
+N-EVENT-REPORT on a separate association (Event Type 2 with a 0112H failure,
+then Event Type 1) and a C-GET whose metadata and pixel SHA-256 match what was
+committed. Offline tests cover every Failure Reason above, a same-size
+same-time tampered file, restart between acceptance and processing, duplicate
+Transaction UIDs, failed record sync, a full store and cancellation. Unit tests cover
 failed writes, concurrent duplicates, byte/result/instance quotas, truncated
 pixels, missing files, inconsistent identities and post-publication failure.
 
 The peer qualification is specific to these native syntax, synthetic fixtures
 and service flows; it is not a claim of parity with another archive or PACS.
+
+Encapsulated preservation runs offline by default:
+`TestArchiveEncapsulatedStoreGetMovePreservesCodestreams` stores RLE (populated
+BOT, two-frame RGB), JPEG-LS (empty BOT, and two Items per frame with a
+populated BOT), JPEG Lossless SV1 and ten-frame JPEG 2000 files through
+`StoreSession`, then retrieves them with C-GET and C-MOVE. Every archived and
+retrieved Part 10 file must keep its syntax, identity, BOT, every fragment
+(SHA-256), a private attribute after Pixel Data and, for built-in codecs, every
+decoded sample; RLE/JPEG-LS frames also equal the independent native
+`MR_small.dcm`. `TestArchiveRejectsFalseSyntaxAndTruncatedEncapsulatedStores`
+and `TestEncapsulatedComparatorDetectsCorruption` cover false syntax, fragments
+on a native context, an aborted transfer, a duplicated delimiter, a lost trailing
+attribute and a corrupted late fragment.
+
+The independent peer gate uses DCMTK 3.7.0 (`storescu -R`, `getscu`,
+`movescu` to `storescp +xa`, and `dcmdump` with its default strict error
+handling) plus the pinned pydicom 3.0.2 for per-frame codestream hashes:
+
+```sh
+DICOMGO_DCMTK_INTEGRATION=1 DICOMGO_PYTHON=/path/to/interop-venv/bin/python go test ./examples/referencearchive -run TestArchiveEncapsulatedIndependentPeers -count=1 -v
+```
+
+JPEG 2000 is exercised as opaque transport only; no base-profile decoder is
+claimed.
 
 ## Deployment boundary
 

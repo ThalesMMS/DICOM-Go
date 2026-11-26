@@ -1,11 +1,5 @@
 # Full-sample pixel corpus
 
-The existing `pixeldata/codecfixture/testdata/codecfull/manifest.json` is the
-fixture inventory. `Case` remains the synthetic fixture API; `codecprofile`
-remains the codec/runtime authority. The
-[separate validation inventory](../../dicom-go-validation/docs/CAPABILITY_AUDIT.md)
-projects this same manifest without decoded samples. Inventory presence is
-structural evidence; an execution report records which exact tests ran.
 
 Entries record input Transfer Syntax, dimensions, components, allocated/stored
 bits, HighBit, signedness, photometry, planar configuration, frames, expected
@@ -23,6 +17,7 @@ through the public builtin registry against the complete CharLS reconstruction.
 The [Near-Lossless extension](JPEGLS_NEAR_LOSSLESS.md) adds 116 synthetic
 CharLS streams, complete decoder oracles, and separate original source hashes
 with explicit NEAR bounds, including four NEAR=127 default-threshold cases.
+
 
 ## Comparison contract
 
@@ -64,28 +59,6 @@ bounds, not clinical image-quality thresholds or generic decoder tolerances.
 
 ## Independent reconstruction and boundaries
 
-- JPEG-LS NEAR=2, 8/16 bits: full approved reconstruction from the direct C API of
-  CharLS 2.4.2, commit `36dd3307e070d8fbc765c3ba890b7e681046fa39`.
-  NEAR bounds encoder/source error, never differences between decoders.
-  The CharLS adapter is also checked against the full references.
-- RLE RGB16, two frames: 60,000 exact samples from pydicom 3.0.1's explicitly
-  selected **pure Python RLE** backend. Existing signed/multiframe RLE and
-  lossless JPEG-LS native/reference pairs remain full-frame baseline tests.
-- pydicom only reads the JPEG-LS container during regeneration. It never
-  selects a JPEG-LS plugin implicitly. Two wrappers around CharLS do not count as
-  independent implementations. Additional comparison evidence is maintained in
-  the [separate validation workspace](../../dicom-go-validation/docs/CAPABILITY_AUDIT.md).
-- Synthetic cases cover native 8/12/16/32 bits, both signs, odd dimensions,
-  extrema, runs and row boundaries over two frames. RLE covers 8/12/16 and rejects
-  32. Native RGB/YBR_FULL exercise planar/interleaved layouts and padding; RLE
-  rejects unsupported YBR and planar inputs. Existing frame-assembly tests cover
-  encapsulated-uncompressed fragmentation. Common multi-codec assembly remains
-  a separate capability expansion.
-- Historical point-only HTJ2K/public JPEG lossless cases remain explicitly marked
-  with `qualificationLimit`; decode success is not full reconstruction evidence.
-  Those families also retain full synthetic cases. Missing base adapters have
-  enumerated `baselineSkip` reasons and asserted typed unavailability. Unexpected
-  failures in supported cases fail the test.
 
 ## Local execution and regeneration
 

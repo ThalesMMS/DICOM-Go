@@ -118,6 +118,9 @@ Only the scalar attributes in the [Pull and Query subset](#pull-and-query-subset
 are predicates. Sequence matching is rejected; Specific Character Set and
 Timezone Offset From UTC may supply matching context but do not themselves
 count as a predicate. At least one actual matching predicate is required.
+The SCU declares UTF-8 for authored non-ASCII filters without an encoding
+declaration. The SCP persists decoded matching values and uses each
+candidate's declared encoding when applying the filter.
 
 The canonical filter is bounded to 16 keys, 16 values per key, and 4 KiB total
 matching-value bytes. Materializing existing instances scans at most
@@ -188,6 +191,15 @@ this process-local cap without an operational memory budget.
 present-empty universal/return-key states. `Service.QueryRoutes` returns exact
 streaming routes for Pull, Watch, and Query. `QueryClient` invokes a synchronous
 callback for each pending Identifier and supplies socket backpressure.
+`ParsedQuery.MatchesIdentifier` lets a caller enforce the same matching rules on
+pending responses. It requires a usable response value for every matching key
+and decodes the peer's declared character set and timezone. Return-only keys
+may be absent or empty. Required result identity and application permissions
+remain the caller's responsibility.
+
+`cmd/upsscu` exposes `Client` and `QueryClient` on the command line (create,
+get, set, change state, request cancel, subscriptions and C-FIND); see
+[CLI_TOOLS.md](./CLI_TOOLS.md#upsscu-unified-procedure-step).
 
 The implemented top-level matching/return attributes are:
 
@@ -205,6 +217,8 @@ The implemented top-level matching/return attributes are:
 
 Primitive text supports exact matching, `*`/`?` wildcard matching outside UI,
 case-insensitive CS matching, and DA/TM/DT range matching by temporal meaning.
+The SCP decodes text under the query and each candidate's respective Specific
+Character Set before matching. Projected results use the candidate's encoding.
 Timezone Offset From UTC declarations are applied to values without an embedded
 offset before comparison. Per PS3.4 C.2.2.2, a hyphen in a DA/TM/DT query value
 selects Range Matching; an application that starts from a local DT with a
@@ -216,6 +230,11 @@ matching key returns zero matches. Responses contain only requested keys plus
 required character-set or timezone context; declarations themselves never
 cause `FF01`, while a missing optional return key does.
 
+`MatchDateTimeRange` builds a key from optional inclusive DT bounds and checks
+their order at their stated precision. Query builders declare UTF-8 when
+authored matching values contain non-ASCII text and the caller has supplied no
+Specific Character Set.
+
 `dimse.StreamingCFindClient` sends C-CANCEL and drains the final response after
 local cancellation, result limits, callback errors, or callback panic. A failed
 drain marks the association state uncertain and follows `OperationErrorPolicy`.
@@ -225,6 +244,53 @@ association remains reusable.
 The SCP serializes the complete command-plus-dataset response, invalidates a
 retained yield after the provider returns, and applies byte/element/depth/match
 limits before sending.
+
+## DICOMweb (UPS-RS)
+
+`NewDICOMwebBackend(service, DICOMwebOptions)` adapts a `Service` to
+`dicomweb.WorkitemBackend` and `dicomweb.WorkitemSubscriptionBackend`, so
+`dicomweb.Server` serves the PS3.18 section 11 resources with the same
+validation, Transaction UID lock, subscriptions and event outbox as the DIMSE
+SCPs. Create adds an absent Transaction UID as zero-length and assigns a UID
+(`DICOMwebOptions.NewUID`, default `core.NewUID`) when the request names
+none. Retrieve and `includefield=all` searches never return the Transaction
+UID. Search uses the C-FIND matching rules over the query attribute subset
+below (multiple values separated by commas); without matching keys it lists
+every workitem, scanning at most `MaxSearchScanned` (100,000 by default).
+Cancellation requests record `RequestingAETitle` (default `DICOMWEB`) unless
+the body names a Requesting AE. Status mapping: `0112`/`C307` are `404`;
+`0111`, `C300`-`C302`, `C304`, `C310`-`C313` are `409`; `0124` is `403`;
+`0213` is `503`; other failures are `400`; the warnings `B304` (already
+canceled), `B306` (already completed) and `B301` (deletion lock refused) are
+successes with a `Warning` header.
+
+`ServiceOptions.EventSink` offers every due delivery to another transport
+before the DIMSE callback. `NewDICOMwebEventSink(hub)` publishes it to the
+open WebSocket channels of the Receiving AE Title; with no open channel the
+delivery falls back to the `CallbackResolver`, or, without one, stays pending
+and is retried with the normal backoff and `MaxAttempts`. With an EventSink a
+Receiving AE Title need not be a DIMSE callback target to subscribe.
+`RunDeliveries(ctx, interval)` drives `DeliverDue` whenever an event is
+committed, when `WakeDeliveries` is called (for example from
+`WorkitemEventHubOptions.OnConnect`) and at least every interval:
+
+```go
+var service *ups.Service
+hub := dicomweb.NewWorkitemEventHub(dicomweb.WorkitemEventHubOptions{
+    OnConnect: func(string) { service.WakeDeliveries() },
+})
+service, _ = ups.NewService(store, ups.ServiceOptions{EventSink: ups.NewDICOMwebEventSink(hub)})
+backend, _ := ups.NewDICOMwebBackend(service, ups.DICOMwebOptions{})
+server, _ := dicomweb.NewServer(dicomweb.ServerOptions{
+    Workitems: backend, WorkitemEvents: hub, Authorize: authorizer,
+})
+go service.RunDeliveries(ctx, time.Second)
+```
+
+`dicomweb_test.go` runs a workitem through create, subscribe, claim, update,
+cancellation request and completion over HTTP and receives every event on a
+WebSocket subscriber, and checks that events committed before the channel
+opens are still delivered.
 
 ## Limits and security
 

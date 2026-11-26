@@ -14,7 +14,10 @@ allowlist and a versioned schema. It intentionally omits patient attributes,
 UIDs, dates, descriptions, source paths, filenames, and free-form provenance.
 Unit and quantity metadata are limited to code and coding scheme; free-text code
 meanings are not included. Warning values are machine-readable codes and must
-never contain source metadata or diagnostic text copied from DICOM values.
+never contain source metadata or diagnostic text copied from DICOM values. The
+optional `slice_spacing_source` and `pixel_spacing_semantic` keys hold closed
+enumerations (`object.SliceSpacingSource`, `object.PixelSpacingSemantic`),
+never attribute text.
 
 Always set a positive `maxBytes` and handle `*nifti.SidecarSizeError`. The error
 reports sizes only and does not echo sidecar content. Treat output filenames,

@@ -54,6 +54,15 @@ Optional codec modules can reuse `pixeldata/codecfixture.Case` and
 `ValidateCase` for their adapter-specific fixtures without moving optional
 dependencies into the base module.
 
+DCMTK has no image corpus for its codecs, so its tools serve as runtime
+oracles instead (opt-in, `DICOMGO_DCMTK_INTEGRATION=1`; see the DCMTK section
+of [INTEROP_MATRIX.md](INTEROP_MATRIX.md)): `dcmcrle`/`dcmdrle` for RLE in
+both directions, `dcmcjpeg` streams for the JPEG decoders, `dcmdjpeg` for the
+JPEG Lossless encoder and its `+w6`/`+wc` workarounds, and `dcmcjpls`/
+`dcmdjpls` for JPEG-LS. Lossless results are compared exactly; lossy ones
+against `dcmdjpeg`'s decoding within a stated number of levels plus a PSNR
+floor, never byte for byte.
+
 ## JPEG Extended Process 4 qualification
 
 The default `pixeldata/jpeg` tests include a deterministic 12-bit SOF1 stream
@@ -102,3 +111,32 @@ component-ID mapping, scan-local predictors, and scan-local point transforms.
 Both sources are synthetic, contain no PHI, and are safe to redistribute with
 the repository. The DICOM integration fixture declares PixelRepresentation 0,
 PlanarConfiguration 0, RGB, and full-resolution 1x1 sampling.
+
+## Legacy 12-bit progressive qualification
+
+The [12-bit progressive profile](JPEG_PROGRESSIVE12.md) defines the restricted
+SOF2 subset, clean-room derivation, independent DCMTK/IJG12 gate, optional
+regeneration/export and committed own PHI-free corpus. Default tests consume
+independent reference samples; they never regenerate them with the decoder
+under test. The opt-in test runs native tools only in a selected isolated
+evidence directory and records complete metadata, commands and hashes.
+
+## JPEG 2000 YBR_FULL_422 qualification
+
+`pixeldata/codecfixture/testdata/codecs/jpeg2000-ybr422` holds a 17x6
+reversible codestream with chroma components at XRsiz=2 and YRsiz=1. It was
+encoded by OpenJPEG 2.5.4 `opj_compress` from synthetic planes. The directory
+also holds OpenJPEG's per-component reconstruction (`opj_decompress -c N`,
+which skips its sYCC guess) and the expected interleaved RGB. `generate.py`
+derives the RGB by chroma replication and the PS3.3 C.7.6.3.1.2 equations, so
+the oracle does not reuse the decoder under test. `generation.json` records
+the tool hashes, arguments, layouts and asset SHA-256 values. The optional
+JPEG 2000 adapter's tests check those hashes and compare the core backend
+with both references. The fixture is shared with the Rust port. Regenerate
+it with:
+
+```sh
+cd pixeldata/codecfixture/testdata/codecs/jpeg2000-ybr422
+DICOM_GO_OPENJPEG_COMPRESS=opj_compress \
+DICOM_GO_OPENJPEG_DECOMPRESS=opj_decompress python generate.py
+```

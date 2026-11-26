@@ -14,10 +14,6 @@ inside/outside membership.
 
 Regenerate with the pinned Python environment available during development:
 
-```sh
-PYTHONPATH=/tmp/codex-signed-distance-1348/python python3 registration/testdata/windowed_sinc/generate_oracles.py
-go test ./registration -run '^TestResampleWindowedSinc' -count=1
-```
 
 For another environment, install SimpleITK 2.5.3 and check that
 `Version_ITKVersionString()` is 5.4. The generator rejects a different

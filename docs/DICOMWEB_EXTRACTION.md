@@ -10,22 +10,17 @@ The Twin adapter delegates reusable request/response mechanics to
 - Dynamic bearer-token injection, in-memory access-token lifecycle, serialized
   refresh, redaction, and one retry of a challenged replayable request live in
   `net/dicomweb`. Streaming STOW-RS bodies are never replayed.
+- OpenID Connect discovery, the authorization-code (PKCE, loopback) and
+  device logins, refresh, revocation, UserInfo subject binding and ID-token
+  JWT/JWKS verification live in the optional `net/dicomweb/oidc` package.
 - DICOM JSON value extraction lives in `dicom-go/dicomjson`.
 
 Twin entry points that remain thin or application-owned are:
 
-- `Twin-Viewer/internal/backend/dicomweb`: node-to-endpoint mapping,
-  OAuth2/OIDC discovery and login flows, OS-protected refresh-credential
-  storage, TLS/client options, typed Twin error adaptation, and mapping neutral
-  DICOMweb study matches to `query.Match`.
-- `Twin-Viewer/internal/backend/netverify`, `query`, `retrieve`, `send` and
-  `receive`: DIMSE verify/query/retrieve/send/receive adapters that should stay
-  thin over neutral `net/dimse` and `net/ul` APIs.
-- `Twin-Viewer/internal/backend/session/operations.go`: session operation
-  dispatch wiring that must remain Twin-owned.
 
 Reusable QIDO-RS, WADO-RS and STOW-RS request/response helpers and bearer-token
-application belong in `dicom-go/net/dicomweb`. Application endpoint
-profiles, OAuth2/OIDC protocol flows, persistent credential storage,
+application belong in `dicom-go/net/dicomweb`; OpenID Connect protocol
+helpers belong in `dicom-go/net/dicomweb/oidc`. Application endpoint
+profiles, persistent credential storage,
 authorization policy, jobs, archive import/export, receiver policy, operation
 history, UI summaries and auto-query remain Twin/application responsibilities.

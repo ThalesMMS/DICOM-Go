@@ -29,6 +29,21 @@ as one input to a release decision, not as a compliance certificate.
 | Make an independent structural copy | `object.CloneFile` / `object.CloneFileWithOptions` | None. Every identifier and pixel is copied. |
 | Change only Study, Series, and SOP Instance UIDs | `CloneWithRemappedHierarchyUIDs` | None. This is referential-identity plumbing, not anonymization. |
 | Maintain an existing limited anonymization workflow | `CloneAnonymizedFile` / `AnonymizeObject` | Compatibility behavior only; it does not assert the PS3.15 Basic Profile. |
+| Release with authorized re-identification (for example a clinical trial) | `CloneFileWithBasicProfile` with `EncryptedAttributes`; `Reidentify`, `CloneFileReidentified` or `ReidentifyPath` with a recipient key | Same profile; the originals are encrypted for the recipient certificates (see [Reversible de-identification](#reversible-de-identification-encrypted-attributes-sequence)). |
+| De-identify a file too large to hold in memory | `BasicProfilePath` (or `AnonymizePath` for the compatibility helper) | Same result as the clone API written with `WriteFile`; Pixel Data is copied from the source instead of held, and the destination is replaced atomically. Pixel cleaning or burned-in masking reads the file whole. |
+
+For path operations on Deflated Explicit VR Little Endian, metadata-only
+processing inflates the dataset into a private temporary replay file. The
+inflated dataset is capped at 2 GiB. The compressed dataset is capped at
+2 GiB plus 1 MiB for stream framing. A header-only pass bounds serialized
+metadata to 128 MiB and applies a structural token budget before reading
+values. The parser defers top-level integer, Float and Double Float Pixel
+Data from the replay file. The writer
+recompresses the modified dataset in the original transfer syntax, preserving
+the uncompressed Pixel Data bytes. The replay file is removed before
+publication and on error. `WithMetadataPath` lets a synchronous preflight
+borrow the same source without publishing an output file.
+[PS3.5 A.5](https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_A.5.html)
 
 Do not select a helper because its name contains “clone” or “anonymized”. Select
 it from the guarantee required by the destination. In-place APIs are useful for
@@ -170,7 +185,7 @@ cleaning attestations:
 | Retain Institution Identity | Applies only that normative option column. |
 | Retain UIDs | Retains only UIDs marked `K`; other instance/reference UIDs remain remapped. |
 | Retain Safe Private | Requires an immutable, checksummed creator registry; unknown private data is removed. |
-| Clean Pixel Data | Requires a caller cleaner; `BurnedInAnnotation=NO` is written only after success. |
+| Clean Pixel Data | Requires a caller cleaner, or is recorded by an attested `PixelRedaction` that covers every frame (see below); `BurnedInAnnotation=NO` is written only after success. |
 | Clean Recognizable Visual Features | Requires a caller cleaner; `RecognizableVisualFeatures=NO` is written only after success. |
 
 Full Dates and Modified Dates are mutually exclusive. Table option overrides
@@ -184,6 +199,15 @@ equal source UIDs stay equal and distinct source UIDs remain distinct. Empty or
 unusable source UID components are minted independently and counted as
 unresolved; original UIDs never enter the report.
 
+`NewUIDRemapper` mints random version 4 UUID UIDs (`core.NewUID`).
+`NewKeyedUIDRemapper(key)` replaces each UID with `core.KeyedNameUID(key,
+uid)` instead, an HMAC-SHA-256 name-based UID. Every remapper with the same
+key and every run then give the same replacement, so batches de-identified
+separately keep their cross-references without a stored mapping table.
+Without the key a replacement reveals nothing of its source. Treat the key
+as a secret of the de-identifying site: anyone holding it can confirm a
+guessed source UID. UIDs minted for absent attributes stay random.
+
 Modified Dates uses a trusted `DateShiftPolicy`. The callback sees a detached
 object and returns one day offset for the whole plan, preserving relative
 intervals. The offset and original dates are not reported. Time-only values are
@@ -196,11 +220,154 @@ have VM 1 regardless of payload size. Each registry requires a version and
 SHA-256 provenance digest. Unknown creator data, shape mismatches, unmatched
 elements, and unused creator declarations are removed.
 
+A retained Siemens CSA Image or Series Header (0029,xx10/xx20 of "SIEMENS
+CSA HEADER"), whether kept by a safe-private rule or by a `PrivateTagPolicy`
+of `AnonymizeObject`, is scrubbed with `siemens.ScrubCSA`: the bytes CSA
+writers leave uninitialized (after the NUL of each name, VR and value, and
+value padding), which can hold leftovers of other memory such as patient
+names, become zero while the header reads the same. Headers in the DATASET,
+Interfile or XML formats have no such bytes and are kept as they are; a
+header that does not parse is removed. `ProfileReport.CSA` and `Report.CSA`
+count scrubbed headers, cleared bytes and removed headers; the profile
+records the reasons `safe-private-csa-scrubbed` and
+`safe-private-csa-unscrubbable`. On the gdcmData corpus the scrub clears
+every byte `gdcmclean --scrub` (GDCM 3.2.5) clears; it also clears the
+fourth VR byte and value padding, which GDCM keeps.
+
+### Operator-attested pixel redaction
+
+`PixelTextCandidates` offers optional local proposals for visual review of
+MONOCHROME or RGB preview frames. It groups contrasting small components in
+the upper and lower quarters, returns stored-pixel rectangles, and leaves
+the source image untouched. It accepts at most 1,048,576 pixels, returns at
+most 64 proposals and checks context cancellation throughout the scan.
+It performs no OCR and cannot determine whether a region contains identifying
+information. Empty or accepted proposal lists never create
+`PixelRedactionAttestation`. Callers retain responsibility for inspecting
+all frames and selecting the final regions.
+
+`BasicProfileOptions.PixelRedaction` removes burned-in annotation from
+operator-specified rectangles (stored pixel coordinates; `Frame` is zero-based
+or `PixelRegionAllFrames`). Every sample in a rectangle becomes `Fill` (zero by
+default; it must fit Bits Stored and Pixel Representation). The engine uses
+`pixeldata.RedactDataSet`:
+
+- native little-endian Pixel Data is redacted in place and keeps its transfer
+  syntax; big-endian native becomes Explicit VR Little Endian;
+- encapsulated Pixel Data is decoded, redacted and re-encoded in the source
+  transfer syntax with a registered *lossless* encoder, after which the result
+  is decoded again and must equal the redacted frames exactly; without such an
+  encoder (or for lossy sources such as JPEG baseline or JPEG-LS near-lossless)
+  the output is native Explicit VR Little Endian and keeps Lossy Image
+  Compression `01`. `pixeldata.RedactionOutputLosslessOnly` fails instead of
+  storing native. Redaction never re-encodes lossily.
+
+Because the transfer syntax may change, encapsulated redaction runs only in
+`CloneFileWithBasicProfile` and `BasicProfilePath`; the Object-level APIs
+return `ErrPixelRedactionRequiresFile`. A dry run over deferred Pixel Data
+(`PlanBasicProfile` on a file read with `DeferPixelData`) validates geometry
+and reports the outcome, but its plan cannot be applied.
+
+`Attestation` (`AttestPixelRedaction(regions, fill)`) binds the operator's
+confirmation to the exact rectangles and fill through an order-independent
+digest; a mismatching attestation fails with
+`ErrStalePixelRedactionAttestation`. Only an attested redaction that covers
+every frame writes Burned In Annotation `NO` and adds code 113101 (Clean Pixel
+Data Option) to De-identification Method Code Sequence; De-identification
+Method also gains "Operator-attested pixel region redaction". An unattested
+redaction or uncovered frames still change the pixels but keep the source
+Burned In Annotation, record "Unattested pixel region redaction" when
+applicable, and add the residual risks `pixel-redaction-not-attested` or
+`pixel-redaction-frames-not-covered` (so `Complete=false`). Redaction cannot be
+combined with `ProfileOptionCleanPixelData`/`PixelCleaner`. Reports carry only
+counts, transfer syntax UIDs and booleans (`ProfileReport.PixelRedaction`).
+
+### Pseudonym templates
+
+`BasicProfileOptions.Pseudonymizer` (`NewPseudonymizer(template, secret)`)
+replaces the zeroed Patient's Name and Patient ID (Table E.1-1 action `Z`
+permits a dummy value) with rendered templates. Tokens are `{counter[:N]}`, a
+sequence number in first-seen order within one Pseudonymizer, and
+`{hash[:N]}`, upper-case hexadecimal HMAC-SHA-256 of the original identity
+under a caller-held secret of at least 16 bytes, deterministic for every
+Pseudonymizer with the same secret. Each non-empty field needs a token;
+literals are printable ASCII without `\`, braces or `=` (and no `^` in Patient
+ID); rendered values are limited to 64 characters. The identity is Issuer of
+Patient ID plus Patient ID, else Patient's Name plus Birth Date
+(`PatientPseudonymIdentity`). Two identities rendering the same value fail with
+`ErrPseudonymCollision` instead of being merged. The Pseudonymizer keeps only
+keyed digests of identities; reports count `PatientPseudonyms` and De-identification
+Method records "Template pseudonyms for patient name and ID", never values.
+
+### Reversible de-identification (Encrypted Attributes Sequence)
+
+`BasicProfileOptions.EncryptedAttributes` makes a de-identification reversible
+for authorized recipients, such as the coordinating centre of a clinical trial
+(PS3.15 E.1.1 and Annex C, PS3.3 C.12.1.1.4.1). After the plan is computed,
+the original value of every top-level attribute that the profile removed or
+replaced is copied into the single item of a Modified Attributes Sequence
+(0400,0550). A changed attribute inside a sequence stores the whole original
+top-level sequence. That Encrypted Attributes Data Set is encoded in Explicit
+VR Little Endian and encrypted as CMS EnvelopedData (RFC 5652) for each
+certificate in `Recipients`. It is appended as a new item of the Encrypted
+Attributes Sequence (0400,0500), whose Encrypted Content Transfer Syntax UID
+(0400,0510) is `1.2.840.10008.1.2.1` and whose Encrypted Content (0400,0520)
+holds the DER ContentInfo.
+
+- Key transport is RSAES-OAEP with SHA-256 and MGF1-SHA-256 by default.
+  `KeyTransportRSAPKCS1v15` serves recipients whose software predates OAEP.
+  Each recipient needs an RSA key of at least 2048 bits. A Key Usage extension,
+  when present, must allow key encipherment. Recipients are named by issuer
+  and serial number, or by Subject Key Identifier with `SubjectKeyIdentifier`.
+- Content encryption is AES-256-CBC by default, with AES-128-CBC or
+  AES-192-CBC selectable. A fresh content key and IV are drawn from
+  `crypto/rand` for every object. No key or plaintext appears in the report.
+- Pixel Data (and Float/Double Float Pixel Data) is never stored, so pixel
+  cleaning and redaction are not reversed. The source Specific Character Set
+  is stored with the originals. The original values of the markers the profile
+  writes (Patient Identity Removed, De-identification Method and its Code
+  Sequence, Longitudinal Temporal Information Modified) are always stored.
+  De-identification Method gains "Encrypted Attributes Sequence for authorized
+  re-identification".
+- `ProfileReport.EncryptedAttributes` counts the recipients and stored
+  attributes and names the algorithms and transfer syntax.
+- Certificates are trusted as given. The caller decides who is authorized and
+  whether a certificate is current. The implementation is a clean-room,
+  standard-library-only CMS writer and reader (`crypto/*`, `encoding/asn1`).
+
+`Reidentify(ctx, obj, key)` reverses the most recent reversible
+de-identification addressed to a `RecipientKey`. That key is a certificate plus
+an `*rsa.PrivateKey` or any RSA `crypto.Decrypter`. `ParseRecipientKey` reads
+PEM or DER, PKCS #8 or PKCS #1, unencrypted keys. Reidentify copies the originals back,
+removes the markers the source did not have, and removes that Encrypted
+Attributes item, or the sequence when no item remains. The item for the key is
+the last one naming its certificate. Layered de-identifications therefore peel
+in reverse order, and items for other recipients stay. `CloneFileReidentified`
+also rebuilds File Meta, and `ReidentifyPath` streams Pixel Data like
+`BasicProfilePath`. `DecryptEncryptedAttributes` returns the originals without
+changing the object. Nothing changes on error.
+
+Without a recipient private key, nothing is recoverable. A recipient who is not
+named fails with `ErrRecipientNotFound`. A key that does not match its
+certificate fails with `ErrRecipientKey`. A wrong key behind a certificate that
+names the recipient fails with `ErrEncryptedAttributesDecrypt`, the same error
+as a padding failure. Decrypted content is untrusted because any certificate
+holder can produce it. It is parsed with bounded limits, must hold exactly one
+Modified Attributes item, and may not restore File Meta or item delimiter tags.
+The reader also accepts BER (OpenSSL's streamed output),
+RSAES-OAEP with SHA-1/384/512 and Triple-DES CBC content written by older
+de-identifiers. Key agreement, KEK and password recipients are not supported.
+`dcmanon -encrypt-for` and `dcmanon -reidentify` expose both directions on the
+command line.
+
+### Compatibility masker
+
 The compatibility pixel masker supports ordinary native byte-aligned layouts.
 Packed pixels and subsampled YBR layouts fail with
 `ErrUnsupportedPixelRedaction`; bounds are overflow-safe and no partial pixel
 mutation occurs after validation failure. Encapsulated or semantically cleaned
-pixels require a caller-owned cleaner in the strict profile API.
+pixels require `PixelRedaction` or a caller-owned cleaner in the strict profile
+API.
 
 The strict engine walks nested Sequences recursively. Standard attributes that
 are not listed in the pinned confidentiality table are preserved, so callers
@@ -231,10 +398,6 @@ encoded bytes, nesting, elements, sequence items, and fragments.
 failure returns before a clone is exposed and never mutates the source; mutable
 payload buffers in a successful clone are detached from the source.
 
-Applications must use neutral output names, reject destinations inside a live
-archive or aliased to a source, use restrictive/atomic writes, and keep paths
-out of user-visible de-identification reports. The Twin Viewer applies these
-product-level controls around its compatibility export workflow.
 
 ## Validation and claims
 

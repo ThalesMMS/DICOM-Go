@@ -31,14 +31,16 @@ The same encoder registry can be supplied to `net/storetranscode`.
 ## Qualified subset and units
 
 - Unsigned MONOCHROME1/MONOCHROME2 and RGB; RGB uses canonical sample-interleaved
-  native input with PlanarConfiguration=0. Output JPEG-LS scans use ILV=0.
+  native input with PlanarConfiguration=0. Output JPEG-LS scans use ILV=0
+  unless `EncoderOptions.Interleave` selects line (ILV=1) or sample (ILV=2)
+  interleaving for RGB; see [interleaved encoding](JPEGLS_INTERLEAVE.md#interleaved-encoding).
 - BitsAllocated 8 or 16, BitsStored 2..BitsAllocated, HighBit=BitsStored-1;
   MAXVAL is the full stored precision range. Dimensions are positive 16-bit
   DICOM dimensions and native frame byte length must match exactly.
 - NEAR is an integer in `1..min(255, MAXVAL/2)`. No implicit clipping of an
   invalid parameter, signed input, palette, YBR or incompatible metadata.
 - Default JPEG-LS thresholds and RESET=64, no custom MAXVAL, mapping tables,
-  color transforms, restart markers or ILV=1/2 encoding.
+  color transforms or restart markers.
 
 The error bound is the absolute difference between **unsigned stored samples**
 before and after this encoding step. It is not a general HU, display intensity,
@@ -85,13 +87,6 @@ and quantization boundaries. Each has two distinct frames. The optional
 CharLS test decodes the **actual transcoder output** and checks all **1,839,024
 samples in 216 frames** against their original source bounds.
 
-The approved `jpegls-encode-near/` corpus stores every encoded stream, original
-sample buffer and complete CharLS reconstruction with SHA256 and per-entry
-provenance in the shared #902 manifest. Always-on tests compare encoder bytes
-to the qualified streams, then require exact equality with the independent
-reconstruction and separately check NEAR against every source sample. These
-two checks do not use NEAR as tolerance between decoders. Signed inputs are
-negative tests, not advertised support.
 
 CharLS is pinned to 2.4.2, commit
 `36dd3307e070d8fbc765c3ba890b7e681046fa39` (BSD-3-Clause). Native code remains

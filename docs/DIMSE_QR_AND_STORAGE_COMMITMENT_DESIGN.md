@@ -20,8 +20,11 @@ It is a design/roadmap document: it describes intended behavior and boundaries, 
 ## Non-goals (initial implementation)
 
 - Full DICOM conformance statement.
-- UPS, retired Patient/Study Only, Color Palette, or other specialized query
-  models beyond the separately documented Modality Worklist profile.
+- Specialized query models beyond this initial design's patient hierarchy and
+  separately documented Modality Worklist profile. Later opt-in Hanging Protocol
+  and Color Palette FIND/MOVE/GET implementations are documented in
+  [NON_PATIENT_QR.md](NON_PATIENT_QR.md); they are available subsets, not current
+  release exclusions. Retired Patient/Study Only remains outside that profile.
 - Asynchronous operation windows greater than one. Initial APIs keep one
   outstanding DIMSE operation per association unless a dispatcher explicitly owns
   that association.
@@ -47,8 +50,10 @@ Patient Root Query/Retrieve Information Model:
 - GET: `1.2.840.10008.5.1.4.1.2.1.3`
 
 Supported Patient Root helper levels are `PATIENT`, `STUDY`, `SERIES` and
-`IMAGE`. Retired Patient/Study Only and Color Palette Query/Retrieve models are
-not part of the current release scope.
+`IMAGE`. Retired Patient/Study Only models remain outside the implemented
+profile. Color Palette and Hanging Protocol have separate, bounded non-patient
+FIND/MOVE/GET profiles; see [NON_PATIENT_QR.md](NON_PATIENT_QR.md) for the current
+key/retrieval contract, caller responsibilities and qualification limits.
 
 Modality Worklist Information Model - FIND:
 
@@ -91,6 +96,12 @@ an SCP validation policy rather than disabling the check globally.
 - The UL layer can now propose and accept SCP/SCU Role Selection items and
   exposes requested/accepted roles on `ul.Association`. DIMSE service helpers
   still need to enforce service-specific role requirements.
+- An acceptor that serves C-GET can require the Storage SCP role per SOP
+  Class with `ul.AcceptOptions.PresentationContextRules` (`Roles:
+  &ul.RequestorRoles{SCP: true}`): the Storage context is then accepted only
+  when the requestor proposes that role. Such a rule refuses plain C-STORE
+  senders on the same listener, so an archive that also receives C-STORE
+  keeps the legacy `RoleSelections` list or allows both roles.
 
 ### SOP Class Extended Negotiation
 
@@ -180,6 +191,15 @@ detail as well as for successful replies. A missing SCP handler returns
 3. Read C-FIND-RSP loop:
    - Pending responses may include a response Identifier.
    - Final response indicates Success/Cancel/Warning/Failure.
+4. To stop early, for example at a result limit, `FindClient.FindEach` calls
+   a synchronous callback for each pending response; when it returns false
+   the client sends C-CANCEL for the request's Message ID, discards the
+   pending responses already in flight (`FindEachOutcome.Discarded`) and
+   returns once the final response (normally `FE00`) arrives, leaving the
+   association reusable. A peer that does not answer within
+   `FindEachOptions.CancelDrainTimeout` (default 10 s) yields
+   `ErrFindCancelNotAnswered`. Evidence: `TestFindEachCancelsWhenTheCallbackStops`,
+   `TestFindEachBoundsTheDrainOfAPeerThatIgnoresTheCancel`.
 
 ### Modality Worklist C-FIND
 

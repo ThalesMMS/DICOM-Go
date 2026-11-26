@@ -15,19 +15,6 @@ bounded output buffer, and a short timeout.
 
 The module-local `.doccheck.json` files define the stable validation surface:
 
-- `include` lists authoritative Markdown files or source directories. Build
-  outputs and caches are intentionally absent.
-- `exemptions` names an exact file or narrow glob, the exempt rule, and a
-  required current reason. An exemption for historical issue provenance does
-  not disable link or anchor validation.
-- `current_sections` lists documents or headings whose issue references must
-  remain current. `allowed_issues` is the explicit offline baseline; update it
-  only after verifying issue state.
-- `path_references` pairs selected literal documentation text with a
-  repository-relative target. This covers normative paths written in prose or
-  code spans without guessing that every code span is a path.
-- `help_commands` pairs one exact fenced command with its expected help text
-  and timeout. Arbitrary fenced commands are never executed.
 
 Diagnostics use `repository/path.md:line: doccheck/rule: message`. Local links
 are URL-decoded, constrained to the repository (including resolved symlinks),

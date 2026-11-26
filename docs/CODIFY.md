@@ -4,7 +4,7 @@
 source and a value-free report of substitutions/omissions. It uses the existing
 bounded object traversal and public `object`/`core` constructors. The generator
 does not parse DICOM, serialize DICOM, read files, fetch BulkDataURI, run the
-generated code, publish an issue or send data anywhere.
+generated code or send data anywhere.
 
 The CLI reads Part 10 with the existing object parser. From the module directory:
 
@@ -129,16 +129,4 @@ generated artifact when required.
 
 ## Local evidence
 
-`go test ./codify ./internal/codifycli` compiles generated programs/packages in
-temporary modules with networking disabled. Reconstructed fixtures are compared
-using the independent in-memory semantic oracle introduced in #901, in both
-byte orders. Additional checks cover exact float bits, fragments, BulkDataURI,
-escaped Unicode/control characters, nil/empty/multiple values, nested sequences,
-integer edges, deterministic formatting and structural non-disclosure canaries.
-CLI tests cover deid policy, finite zero defaults, cancellation, binary/output
-limits and preservation of an existing destination. No clinical fixture is used.
 
-This implementation uses this repository's object model and independently
-written generation logic; no external code or fixtures were copied.
-Source-inspection notes live in the
-[separate validation workspace](../../dicom-go-validation/docs/REFERENCE_NOTES.md).

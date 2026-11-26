@@ -10,6 +10,13 @@ materializing every file or retaining one file descriptor per input.
   set byte range is copied verbatim in the original Transfer Syntax, including
   compressed, video, Big Endian, and deflated representations. A native
   Explicit/Implicit Little Endian fallback is re-encoded only when negotiated.
+  Deflated Explicit VR Little Endian sources are native data sets: they are
+  proposed as Deflated first and then as Explicit/Implicit Little Endian, which
+  requires inflation but no pixel codec, bounded by 1024x the file size. A
+  Deflated data set sent verbatim whose bitstream has an odd length gets the
+  PS3.5 A.5 NULL pad, so no P-DATA fragment is odd (DCMTK aborts on one). Native
+  sources are never deflated implicitly, and encapsulated sources are offered
+  only in their own syntax.
   The final path component may not be a symbolic link, and each attempt opens
   the physical path with no-follow semantics before revalidating metadata.
 - `NewDescribedPathStoreSource` accepts metadata already persisted by an archive
@@ -34,8 +41,24 @@ remote Error Comment.
 `PlanStoreBatch` runs before the first network dial. It preserves input order,
 deduplicates identical `(SOP Class, ordered writable Transfer Syntax list)`
 contexts, assigns odd IDs `1..255`, and starts a new association before a 129th
-unique context. `net/ul` independently rejects any direct attempt to propose
-more than 128 contexts or duplicate IDs.
+unique context. Deduplication is per association: a pair repeated after a split
+is proposed again on the association that carries it. `net/ul` independently
+rejects any direct attempt to propose more than 128 contexts or duplicate IDs.
+Each item is sent on its own planned context, so the wire syntax is the one the
+peer accepted for that context (the acceptor's order, or the proposer's order
+when it sets `PreferProposedTransferSyntaxOrder`), never map iteration order.
+
+`TestStoreSessionHeterogeneousBatchAgainstSyntaxProfiles` sends CT, RLE MR,
+32-bit RT Dose (Implicit), RT Plan, Deflated RTSTRUCT, nested SR and 12-lead ECG
+waveform files with an unreadable file in the middle to peers that keep every
+original syntax, accept only native or accept only Deflated; each persisted file
+must equal its source attribute by attribute, including items, pixels,
+fragments and waveform bytes, and unproducible items are refused without a
+payload. `TestStoreSessionContextBoundariesOpenAssociationsOnlyWhenNeeded`
+executes 127, 128 and 129 unique contexts against a peer. The opt-in
+`TestStoreSessionHeterogeneousBatchIndependentPeers` repeats the batch against
+DCMTK `storescp +xa` with dcmdump and pydicom 3.0.2 comparisons
+(`DICOMGO_DCMTK_INTEGRATION=1`, optional `DICOMGO_PYTHON`).
 
 Path and in-memory sources advertise the original Transfer Syntax plus only the
 native Explicit/Implicit Little Endian fallbacks that `object.WriteDataSet` can
@@ -69,6 +92,13 @@ command may have reached the peer yields `StoreOutcomeUnknown`, uses A-ABORT,
 and does not repeat that item by default. With `ContinueOnError`, later items
 can continue on a fresh association.
 
+A release that fails or goes unanswered after every item of its association has
+its outcome leaves those outcomes as they are and is counted in
+`StoreBatchResult.ReleaseFailures`. With `ContinueOnError` a batch that spans
+several associations goes on to the next one, and `StoreBatch` returns a
+`StoreError` of stage `release` once the batch ends; without it the batch stops
+at the first failed release and its later items stay not-sent.
+
 Dial retry is bounded by `MaxAssociationAttempts`. Ambiguous item retry is
 disabled unless `RetryUncertain` is set; enabling it gives at-least-once
 semantics and may create a duplicate stored instance. All item results remain in
@@ -79,7 +109,10 @@ Planning limits are finite by default. Item and batch byte limits are also
 enforced against bytes actually written, including sources whose size was only
 a hint. `MaxInFlightBytes` further caps payload bytes admitted at once. The serial
 baseline admits one payload; the opt-in pipeline admits up to the effective
-invoked window without exceeding this budget. Progress callbacks run
+invoked window without exceeding this budget. It bounds the sum of outstanding
+objects, not the size of one: an object above it waits until nothing else is
+outstanding and is then sent alone, with nothing admitted beside it. The
+per-object bound is `PlanOptions.Limits.MaxItemBytes`. Progress callbacks run
 synchronously after the payload handle is closed; callback panic/error is
 redacted and stops new work.
 
@@ -98,6 +131,9 @@ go run ./cmd/storescu -- -max-invoked 4 -called ORTHANC 127.0.0.1:4242 image.dcm
 `-max-invoked` defaults to 1 (serial). Values greater than one propose an
 Asynchronous Operations Window and pipeline only when the peer accepts a
 window greater than one.
+
+`-max-send-pdu` caps outgoing P-DATA PDUs below the peer's Maximum Length;
+the default 0 sends up to 128 KiB (`ul.DefaultMaxSendPDU`), as DCMTK does.
 
 Output uses only one-based source ordinals, outcome, and status.
 

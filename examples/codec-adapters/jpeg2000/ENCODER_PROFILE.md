@@ -1,7 +1,8 @@
-# OpenJPEG Part 1 lossless encoder
+# OpenJPEG Part 1 lossless and lossy encoders
 
 This optional nested module implements `pixeldata.FrameEncoder` for
-`1.2.840.10008.1.2.4.90` only. Enable `jpeg2000_openjpeg` or `codecfull` and
+lossless `1.2.840.10008.1.2.4.90` and lossy `1.2.840.10008.1.2.4.91`
+transfer syntaxes. Enable `jpeg2000_openjpeg` or `codecfull` and
 explicitly register an encoder:
 
 ```go
@@ -19,7 +20,11 @@ Version tokens must match exactly; prefixes such as 2.5.40 or 2.5.4.1 are
 rejected by the shared encoder/decoder preflight.
 Decoder registration does not enable or require this encoder. Base builds do
 not acquire this module or a native dependency; no global encoder registry is
-modified. The `.91`, Part 2, HTJ2K and JPEG XL encode directions remain absent.
+modified. `.91` has its own lossy encoder (below); Part 2 and JPEG XL encode
+directions remain absent here. The base module's dependency-free pure-Go
+encoder (`pixeldata/jpeg2000`) covers `.90`, `.91` and HTJ2K `.201`-`.203`
+without OpenJPEG; see
+[JPEG 2000 and HTJ2K encoder](../../../docs/JPEG2000_ENCODER.md).
 
 ## Sample profile and pipeline
 
@@ -48,6 +53,57 @@ this adapter **rejects sub-8-bit input** instead of misreporting precision.
 Neither runtime patching nor a second JPEG 2000 parser is introduced. The exact
 upstream implementation inspected was [OpenJPEG 2.5.4, commit
 6c4a29b](https://github.com/uclouvain/openjpeg/blob/6c4a29b00211eb0430fa0e5e890f1ce5c80f409f/src/bin/jp2/convert.c).
+
+## Lossy `.91` encoder
+
+`NewOpenJPEGLossyEncoder` / `RegisterOpenJPEGLossyEncoder(ctx, registry,
+opts, coding)` register `1.2.840.10008.1.2.4.91` with the same runtime
+preflight, sample profile, PNM route, limits, cancellation and output checks
+as the lossless encoder. `OpenJPEGLossyOptions` selects the coding, like
+`opj_compress` (and `gdcmconv -K -r -q -t -n --irreversible`):
+
+- `Rates`: one compression ratio per quality layer, decreasing (`-r`); or
+  `Quality`: one target PSNR in dB per layer, increasing (`-q`); exactly one.
+  OpenJPEG counts a ratio against the stored precision, so a 12-bit image in
+  16-bit containers is compressed further than the ratio says against its
+  native bytes.
+- `TileWidth`/`TileHeight` (`-t`), `Resolutions` (`-n`, zero picks up to six,
+  every tile side must hold 2^(n-1) samples) and `Progression` (`-p`, LRCP by
+  default).
+- The irreversible 9/7 wavelet (`-I`) unless `Reversible` asks for the 5/3
+  one, whose codestream the rates then truncate.
+- RGB goes through the component transform, and the frame's Photometric
+  Interpretation becomes `YBR_ICT` (`YBR_RCT` when reversible), unless
+  `KeepRGB` keeps it RGB (`-mct 0`).
+
+The encoder declares the Lossy Image Compression Method `ISO_15444_1`; the
+transcoder requires `AllowLossy`, sets Lossy Image Compression to `01` and
+appends the ratio and method to their history, as for lossy JPEG.
+
+
+| Image | Coding | Ratio | PSNR |
+| --- | --- | ---: | ---: |
+| 12-bit mono 256x192 | 80:1 | 105.6:1 | 29.6 dB |
+| 12-bit mono 256x192 | 40:1 | 57.6:1 | 35.7 dB |
+| 12-bit mono 256x192 | 20:1 | 27.0:1 | 43.1 dB |
+| 12-bit mono 256x192 | 10:1 | 13.4:1 | 52.4 dB |
+| 12-bit mono 256x192 | 5:1 | 6.7:1 | 66.2 dB |
+| 12-bit mono 256x192 | layers 40:1, 10:1; 64x64 tiles; 4 resolutions; RPCL | 13.4:1 | 44.9 dB |
+| 12-bit mono 256x192 | PSNR 45 dB | 23.4:1 | 44.9 dB |
+| 12-bit mono 256x192 | reversible 5/3 truncated at 20:1 | 27.2:1 | 38.2 dB |
+| 8-bit RGB 160x120 (YBR_ICT) | 80:1 | 79.0:1 | 34.5 dB |
+| 8-bit RGB 160x120 (YBR_ICT) | 40:1 | 39.6:1 | 44.6 dB |
+| 8-bit RGB 160x120 (YBR_ICT) | 20:1 | 19.9:1 | 53.3 dB |
+| 8-bit RGB 160x120 (YBR_ICT) | 10:1 and 5:1 | 16.1:1 | 55.2 dB |
+| 8-bit RGB 160x120 (YBR_ICT) | layers 40:1, 10:1; 64x64 tiles; 4 resolutions; RPCL | 11.8:1 | 52.5 dB |
+| 8-bit RGB 160x120 (YBR_ICT) | PSNR 45 dB | 40.9:1 | 44.2 dB |
+| 8-bit RGB 160x120 (YBR_RCT) | reversible 5/3 truncated at 20:1 | 20.0:1 | 45.2 dB |
+| 8-bit RGB 160x120 (RGB kept) | 20:1 | 19.9:1 | 44.7 dB |
+
+The smooth synthetic colour image reaches the encoder's full quality near 16:1,
+so the 10:1 and 5:1 requests stop there. The figures describe these images
+only; they are not a diagnostic quality claim. A JPEG Extended 12-bit lossy
+encoder (the optional sibling of this item) is not provided.
 
 ## Resources and failure behavior
 
@@ -103,7 +159,6 @@ The verifier explicitly selects FFmpeg's **native `jpeg2000` decoder**, not its
 layout when comparing stored samples. OpenJPEG is the encoder implementation
 and FFmpeg native is the independent decoder implementation.
 
-Qualification on 2026-09-07:
 
 | Component | Platform/version | SHA-256 of executable |
 | --- | --- | --- |
@@ -119,13 +174,6 @@ WSL. To repeat that test from PowerShell, set
 paths using `wslpath`; production code has no WSL dependency. macOS encoding
 has not been qualified by this increment.
 
-The existing Go metadata/decoder dependency is pinned to `go-jpeg2000 v1.3.0`
-(commit `8f771261d4f6c05dbbb0bdba9c70af57aca62d95`, Apache-2.0). Broad race
-validation exposed v1.2.1's encoder returning a T1 coder to its pool before
-copying truncation points during synthetic fixture generation. v1.3.0 copies
-that state before pooling; the full adapter race suite passes with the update.
-The adapter, codecfull example and Twin-Viewer resolve the same fixed version.
-This optional dependency does not enter the root module's dependency graph.
 
 OpenJPEG is BSD-2-Clause; see [its existing runtime/packaging
 profile](OPENJPEG_PROFILE.md). The source-built verifier package used here is

@@ -3,7 +3,11 @@
 This nested module provides the optional native JPEG-LS pixel data adapter for
 `dicom-go`. The base module already provides dependency-free JPEG-LS Lossless
 (`1.2.840.10008.1.2.4.80`) decode and explicit encode for its qualified pure-Go
-subset, plus explicit unsigned Near-Lossless decode/encode. This module stays
+subset, plus Near-Lossless decoding (including signed monochrome stored codes)
+and explicit unsigned Near-Lossless encoding. The signed decoder's NEAR bound
+applies to codes, not signed values across the sign discontinuity; see
+[the base decoder's scope](../../../docs/JPEGLS_NEAR_LOSSLESS.md).
+This module stays
 separate so applications can select and independently qualify a CharLS backend
 without imposing a native dependency on other consumers.
 
@@ -33,6 +37,14 @@ Supported boundaries:
 
 ## CharLS backend
 
+The lossless adapter additionally accepts the separate nonstandard HP1/HP2/HP3
+profile only with `pixeldata.DecodeRecovery.JPEGLSHPColorTransforms` in the
+decode context, or `DecoderInput.AllowHPColorTransforms` for direct backend
+calls. It is limited to unsigned RGB8/RGB16, NEAR=0, ILV=1/2 and full-range
+precision. Applied transformations and the CharLS backend are reported in
+codec diagnostics. Strict refusal, standard encoders and `.81` remain unchanged.
+See [HP compatibility and qualification](../../../docs/JPEGLS_HP_COMPATIBILITY.md).
+
 The `jpegls_charls` profile loads the CharLS shared library dynamically at
 runtime. CharLS is a BSD-3-Clause C++17 JPEG-LS implementation with a stable C
 API for interoperability. The Go dynamic loader uses `github.com/ebitengine/purego`
@@ -41,14 +53,6 @@ CharLS 2.4.2. The `codecfull` release profile rejects any other version.
 
 Expected setup:
 
-- macOS: install CharLS with Homebrew or another package manager that places
-  `libcharls.2.dylib` on the dynamic loader path.
-- Linux: install the distro CharLS runtime/development package, or build CharLS
-  with CMake so `libcharls.so.2` is on the dynamic loader path.
-- Windows amd64/arm64: the production Twin-Viewer ZIP packages include the
-  architecture-specific CharLS 2.4.2 DLL built from the pinned, SHA-256
-  verified upstream source archive. Standalone applications can place
-  `charls-2-x64.dll` or `charls-2-arm64.dll` beside the executable.
 
 Set `DICOM_GO_CHARLS_LIBRARY` to an absolute library path to override automatic
 library discovery. The loader verifies the required symbols and rejects
@@ -71,11 +75,6 @@ if err := jpeglscodec.Register(registry, jpeglscodec.NewCharLSDecoder()); err !=
 Without `-tags jpegls_charls`, `NewCharLSDecoder()` returns a decoder that
 reports `ErrDecoderUnavailable`.
 
-Twin-Viewer receives JPEG-LS Lossless through the builtin pure-Go registry in
-every profile. Its explicit `jpegls_charls` profile adds the CharLS-backed
-Near-Lossless decoder. The plain `jpegls` profile registers only the unavailable
-Near-Lossless boundary, so `.81` reports `JPEG-LS decoder unavailable` while
-`.80` remains available without native CharLS.
 
 ## Tests
 

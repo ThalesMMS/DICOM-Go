@@ -1,9 +1,5 @@
 # Incremental encoded frame delivery
 
-Issue #909 builds on [shared Item assembly](ENCAPSULATED_FRAME_ASSEMBLY.md)
-and [cancelable frame channels](FRAME_CHANNEL_STREAMING.md). The base profile is
-pure Go. The ordinary `parser.Reader` still parses all element headers, Items,
-sequences and Part 10 datasets; there is no parallel dataset parser.
 
 ## API and qualified scope
 
@@ -57,10 +53,6 @@ synchronously and only reports successful file completion after the final read.
 
 ## Boundaries and delivery time
 
-The assembler reuses #908's JPEG marker scanner, Item range assembly, limits and
-offset ordering checks. Length-delimited APP/COM/table/scan-header payloads are
-opaque, including embedded SOI, EOI and DICOM delimiter-looking bytes. Entropy
-stuffing and markers split between Items are handled by the same state machine.
 
 The first complete codestream is delivered immediately after its final Item,
 before reading the next Item header or waiting for the sequence delimiter. BOT
@@ -70,7 +62,8 @@ Empty BOT uses unambiguous SOI/EOI framing, never fragment-count division.
 
 EOT/Lengths must both be present, nonempty OV values with one entry per frame;
 BOT must be empty and each frame must occupy one Item. EOT lengths equal the
-codestream length through EOI, excluding any terminal zero pad. Invalid tables,
+codestream length through EOI, excluding a terminal single pad byte (see the
+[assembly rules](ENCAPSULATED_FRAME_ASSEMBLY.md)). Invalid tables,
 lengths, extra images in one Item, odd Items and truncated markers fail closed.
 EOT tables are checked before payload allocation. The frame/fragment/byte limits
 also apply before each Item buffer allocation.

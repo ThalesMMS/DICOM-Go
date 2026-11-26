@@ -56,13 +56,18 @@ Rules:
    and `pixeldata/frame`, but never application UI packages.
 9. `roi` owns headless ROI masks, vector ROI geometry, measurements,
    segmentation operations and statistics. It may consume `render` geometry and
-   volumes; `render` must not import `roi`.
+   volumes; `render` must not import `roi`. `roi/autothreshold` computes
+   automatic histogram thresholds over any value sequence, including the
+   pixels of a `roi` mask; `roi` must not import it.
 10. `deid` and `dicomdir` own small reusable DICOM object utilities. They may
    consume `object` and `core`; they must not import application code or viewer
    workflows.
 11. The root `dicom` package remains a small compatibility facade over common
    read, write, and validation paths, not an implementation package. New
    high-level file and dataset workflows belong in `object`.
+
+The [resident 2D frame identity](RENDER_FRAME_IDENTITY.md) contract defines
+immutable adapter generations, bounded cache residency and pixel ownership.
 
 ## Public API shape
 

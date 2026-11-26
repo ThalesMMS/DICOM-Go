@@ -16,7 +16,7 @@ dicomweb store
 
 Examples in this document use only synthetic identifiers and the reserved
 `example.test` domain. Do not substitute clinical identifiers in retained
-terminal transcripts, issue attachments, or CI logs.
+terminal transcripts or logs.
 
 ## Common endpoint and execution flags
 
@@ -87,11 +87,46 @@ default. `-allow-insecure-auth` is the explicit per-invocation opt-in for a
 trusted test environment. It does not enable TLS, suppress warnings, or change
 certificate validation for HTTPS. Production credentials should use HTTPS.
 
+HTTPS uses the system trust store unless these flags, which match the DIMSE
+tools, say otherwise. They require an `https://` base URL:
+
+- `-ca FILE` trusts the CA certificates of a PEM file instead of the system
+  roots. Repeat it for several files. Use it for a server with a private CA.
+- `-tls-server-name NAME` requires the server certificate to match `NAME` and
+  sends it as SNI, for a server reached by an address its certificate lacks.
+- `-cert FILE` and `-key FILE` present a PEM client certificate and its
+  unencrypted private key to a server that requires mutual TLS.
+
+There is no flag that disables certificate verification.
+
 Diagnostics redact Authorization headers, credential values, URL user
 information, query strings, UIDs, and local paths. They retain only the
 operation, error class, HTTP status where available, and bounded counts. Output
 datasets and retrieved files are operator-selected data outputs, not diagnostic
 logs, and remain subject to the site's PHI handling policy.
+
+A request that fails before an HTTP status adds a `cause` and one line of
+advice to `kind=request_failure`:
+
+| Cause | Meaning |
+| --- | --- |
+| `tls_unknown_authority` | The server certificate is not signed by a trusted CA; pass `-ca`. |
+| `tls_server_name_mismatch` | The certificate does not match the host or `-tls-server-name`. |
+| `tls_certificate_invalid` | The certificate is expired, not yet valid or not a server certificate. |
+| `tls_not_offered_by_server` | The endpoint did not answer with TLS, for example a plain HTTP port. |
+| `tls_rejected_by_server` | The server refused the handshake, for example for a missing or untrusted client certificate. |
+| `host_not_resolved` | The host name does not resolve. |
+| `connection_refused` | Nothing accepts connections at that host and port. |
+| `connection_closed` | The server closed the connection before answering. |
+| `host_unreachable` | The host or its network is unreachable. |
+
+HTTP 401 and 403 keep `kind=auth_status` with the status and say whether the
+credentials were rejected or lack authorization.
+
+```text
+store: kind=request_failure endpoint=https://pacs.example.test cause=tls_unknown_authority: the server certificate is not signed by a trusted CA; pass the issuing CA with -ca
+verify: kind=auth_status endpoint=https://pacs.example.test status=401: the server rejected or did not receive credentials; check the authentication flags
+```
 
 ## Output safety
 

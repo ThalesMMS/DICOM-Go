@@ -1,9 +1,5 @@
 # OpenJPEG Fallback Profile
 
-Date: 2026-06-22
-
-Issue: [#136](https://github.com/ThalesMMS/go-dev/issues/136)
-
 ## Decision
 
 `jpeg2000_openjpeg` is an explicit native fallback profile for JPEG 2000 Part 1
@@ -15,10 +11,6 @@ Applications must opt in by building with `-tags jpeg2000_openjpeg` or by
 calling `RegisterOpenJPEG` / `RegisterOpenJPEGDefault` from the optional nested
 module.
 
-`RegisterOpenJPEG` registers OpenJPEG for JPEG 2000 Part 1 still-image transfer
-syntaxes and keeps JPEG 2000 Part 2 plus HTJ2K registered through the pure-Go
-fallback. That split lets codec-full validation use OpenJPEG where it has been
-qualified without regressing existing Twin-Viewer HTJ2K behavior.
 
 ## Backend
 
@@ -64,11 +56,6 @@ lossy codestreams through the shared `pixeldata/codecfixture` harness. The same
 fixtures are compared against the pure-Go backend to prove that the fallback
 covers codestreams the pure-Go backend currently decodes incorrectly.
 
-Twin-Viewer has a `LoadDICOMPaths` integration test under
-`-tags jpeg2000_openjpeg` that loads an OpenJPEG-generated Part 10 file through
-`internal/viewer/study`. The existing `jpeg2000` viewer test suite also runs
-under combined `-tags 'jpeg2000 jpeg2000_openjpeg'` to prove HTJ2K remains
-displayable through the pure-Go fallback when OpenJPEG is selected.
 
 HTJ2K remains on the pure-Go controlled profile until an OpenJPEG/OpenJPH/Grok
 or equivalent fallback path is explicitly qualified for HTJ2K. The local
@@ -122,8 +109,27 @@ From the `dicom-go` root:
 make codec-jpeg2000-openjpeg-check
 ```
 
-From the `Twin-Viewer` root:
 
 ```sh
 make codec-jpeg2000-openjpeg-check
 ```
+
+## Lossless coding controls and dcmconv source-checkout composition
+
+`OpenJPEGEncoderOptions.TileWidth`, `TileHeight` and `Resolutions` now control
+only the `.90` lossless encoder. Zero fields preserve the existing single-tile,
+geometry-derived (at most six) defaults. Tile dimensions must both be zero or
+both positive up to 65535; levels are zero or 1..33. Per frame, every actual edge
+tile side must hold 2^(levels-1) samples. This is deliberate conservative
+admission; explicit levels are never silently clamped. The coding remains rate
+1, reversible 5/3, no component transform. The existing encodeWith subprocess
+lifecycle/resource limits are reused. `.91` constructors refuse these lossless
+fields and retain OpenJPEGLossyOptions as their coding contract.
+
+The library-root dcmconv alternate modfile composes this nested module only in
+an explicit source checkout; default library go.mod/go.sum and this adapter's
+modfile/sum remain unchanged. See [dcmconv contracts](../../../docs/DCMCONV_PARITY.md).
+Additional `dcmconv_interop` tests require real qualified runtime paths and check
+actual markers and independent decoded samples; absence is a failure in that
+explicit qualification profile, not a new blanket skip. No performance claim is
+made by these synthetic correctness checks.

@@ -58,12 +58,72 @@ are rejected by the probe. Their Pixel Data bytes are not reliable codec
 evidence; callers must supply their Transfer Syntax explicitly through the
 ordinary read APIs.
 
+A dictionary VR mismatch lowers an explicit VR candidate by at most the share
+of known elements that mismatch, so a few retired VRs in an otherwise
+consistent ACR-NEMA prefix do not make the probe ambiguous.
+
 `TransferSyntaxProbeReport` distinguishes `selected`, `ambiguous`, and
 `impossible`. Candidate diagnostics contain only syntax metadata, fixed reason
 codes, conformance/failure classes, offsets, and counts. They never contain
 element values, unknown File Meta UID text, or arbitrary parser error strings.
 `ErrTransferSyntaxProbeAmbiguous` and
 `ErrTransferSyntaxProbeImpossible` can be tested with `errors.Is`.
+
+## Legacy encodings
+
+`AllowLegacySyntaxes` accepts two native encodings that have no standard
+Transfer Syntax UID. The `transfer` package describes them but does not
+register them, so the ordinary readers keep rejecting them:
+
+| Encoding | How it is selected | Normalization |
+|---|---|---|
+| `transfer.ImplicitVRBigEndianACRNEMA` (ACR-NEMA 1.0/2.0) | Added to the default probe candidates | Every fixed-width value is reversed to Little Endian; OW, Pixel Data included, by 16-bit words; UN values are kept |
+| `transfer.PrivateGEImplicitVRBigEndianPixelData` (`1.2.840.113619.5.2`) | A File Meta Transfer Syntax UID naming it is read as declared | The data set is Implicit VR Little Endian; 16-bit native Pixel Data is swapped from Big Endian (DCMTK `EXS_PrivateGE_LEI_WithBigEndianPixelData`, GDCM `ImplicitVRBigEndianPrivateGE`) |
+
+After the read the File, or raw data set, holds Implicit VR Little Endian
+values: `File.TransferSyntax` and `TransferSyntaxResolution.Syntax` are
+Implicit VR Little Endian and `TransferSyntaxResolution.Legacy` records the
+encoding that was read. Deferred values are swapped as they are copied.
+Frame and encapsulated sinks are refused (`object.ErrLegacySyntaxFrameSink`)
+because they see values before normalization. Writing produces a standard
+Implicit VR Little Endian file.
+
+Pixel data decompression accepts a File whose effective syntax is the one
+its `TransferSyntaxResolution` recorded, even when `(0002,0010)` still holds
+the value the File was recovered from. A File whose syntax was changed after
+the read keeps the File Meta consistency check. `File.ValidateFile` and
+`File.ValidatePart10Identity` compare `(0002,0010)` with the legacy encoding
+that was read, which File Meta declares truthfully. `AllowUnknownTransferSyntaxUID`
+never infers a syntax for a legacy UID, because a standard syntax would read
+GE Big Endian pixels as Little Endian.
+
+## Native Pixel Data under a compressed syntax
+
+A file can declare a compressed, encapsulated syntax while its Pixel Data is
+a defined-length native value; the data set parses (all encapsulated syntaxes
+are Explicit VR Little Endian), so the transfer syntax probe keeps the
+declared syntax and the codec refuses the value. Pixel data decoding does not
+guess: `DecodeRecovery.NativePixelDataUnderEncapsulated` (opt-in, in
+`DecompressOptions` and `TranscodeOptions.Recovery`) reads it as native only
+when its length is exactly Rows x Columns x Samples per Pixel x Bits
+Allocated / 8 x Number of Frames (plus one pad byte for an odd size), as GDCM
+does, and reports `native-pixel-data-under-encapsulated-syntax`. The
+decompressed data set, or the transcoded one, declares its real syntax.
+
+## Encapsulated Pixel Data with a defined length
+
+PS3.5 A.4 requires encapsulated Pixel Data to have an undefined length.
+Some writers give it a defined one, so the Items are read as the bytes of an
+OB value and the codec refuses them (`ErrIncompatiblePixelData`).
+`DecodeRecovery.DefinedLengthFragments` (opt-in, in `DecompressOptions` and
+`TranscodeOptions.Recovery`) reads such a value as the fragment sequence only
+when it is exactly a Basic Offset Table Item and at least one fragment Item,
+each with a defined length inside the value, optionally ended by a Sequence
+Delimitation Item of length 0; bytes left over, a truncated or
+undefined-length Item or more than 100000 Items leave it unchanged. It
+reports `encapsulated-defined-length`, and a transcode writes a conforming
+fragment sequence. gdcmData `JPEGDefinedLengthSequenceOfFragments.dcm` decodes
+with it (and ReconcileWithCodestream for its Bits Stored) to GDCM's MD5.
 
 ## Resource bounds and replay
 

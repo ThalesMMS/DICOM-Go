@@ -1,9 +1,5 @@
 # Hanging Protocol and Color Palette Query/Retrieve profiles
 
-Implemented for issue #918 / Epic #899. Normative baseline: DICOM PS3.4 **2026c**,
-Annex U (U.4.1–U.4.3, Table U.6-1) and Annex X (X.4.1–X.4.3, Table X.6-1),
-retrieved directly from NEMA on 2026-09-07. These profiles are explicit subsets;
-they do not claim complete IOD or service-class conformance.
 
 - [Hanging Protocol attributes](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_U.6.html)
 - [Color Palette attributes](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_X.6.html)
@@ -101,15 +97,6 @@ identity, batch descriptors, status limits, exact Storage role requirements and
 C-CANCEL for FIND/MOVE/GET. Real loopback tests exercise both synchronous clients
 and AsyncSession against the same existing Association SCP.
 
-`TestNonPatientProfilesAgainstPynetdicom` uses pinned **pydicom 3.0.2 /
-pynetdicom 3.0.4**, opt-in through `DICOMGO_PYNETDICOM_INTEGRATION=1` and
-`DICOMGO_PYTHON`. On Windows/amd64 it verified both models over independently
-negotiated FIND/GET/MOVE contexts, four find cases, two reverse stores and two
-destination stores with full synthetic dataset equality, invalid Identifier
-A900 and unknown destination A801. This extends the #903 test gate; it does not
-qualify every optional key, a complete IOD or HOROS support. Additional
-qualification scope is tracked in the
-[separate validation inventory](../../dicom-go-validation/docs/CAPABILITY_AUDIT.md).
 
 Run `go run ./examples/nonpatientqr` for synthetic discovery followed by actual
 retrieval on loopback. Its minimal metadata fixtures are protocol demonstrations,

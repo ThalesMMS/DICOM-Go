@@ -25,6 +25,14 @@ unbuffered channel applies immediate backpressure. Memory also includes the
 current producer frame and any buffers retained by the consumer. Metadata is
 copied by value. The parser's existing byte limits still apply.
 
+Each `Frame.Data` holds one frame of `Metadata.FrameSize()` bytes. Bits
+Allocated 1 frames are contiguous in one LSB-first bit stream, so the Pixel
+Data value holds the total bit count rounded up once to a byte (plus an
+even-length pad byte), not a whole number of bytes per frame. When frames start
+mid-byte, the sink shifts each one to bit zero of its own buffer and zeroes the
+unused tail bits, matching `pixeldata.ExtractNativeFrames`. A value shorter than
+the declared frames fails with `ErrFrameDataSizeMismatch`.
+
 `Reader.ReadAll` and `ReadDataSet` finalize their sink on success, parse failure,
 sink error or cancellation. Token-level `Next` users own finalization when they
 stop reading. `object.ReadFileWithOptions`, `ReadDataSetWithOptions` and their

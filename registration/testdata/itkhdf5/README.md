@@ -3,15 +3,6 @@
 Synthetic transform files for `ReadITKHDF5` and `internal/hdf5`. No
 patient data; no file is copied from ITK or another project.
 
-They were written by the HDF5 C library (1.14, the copy bundled with ITK at
-commit `519a94d954`, `Modules/ThirdParty/HDF5`, built locally) through
-the [historical HDF5 generator](https://github.com/ThalesMMS/go-dev/blob/3ddf654b09757f879330ce6c9ff3d40ceffc29a0/dicom-go-validation/scripts/itk_hdf5_transforms/h5gen.c), which reproduces
-the layout of ITK's `HDF5TransformIO`: version strings at the root, then
-`/TransformGroup/<N>/TransformType`, `TransformFixedParameters` and
-`TransformParameters`, a composite transform first and its components in
-ITK's queue order. ITK itself was not built (the full toolkit did not fit on
-the build machine), so the files are ITK's layout written by HDF5, not files
-written by ITK's own writer.
 
 | File | Format | Content |
 |---|---|---|

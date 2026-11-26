@@ -21,9 +21,12 @@ Supported boundaries:
   `1.2.840.10008.1.2.4.112`;
 - supports one fragment per frame, plus multi-fragment assembly for a single
   frame;
-- validates common unsigned monochrome/RGB 8-bit and 16-bit DICOM pixel
-  metadata before decode;
+- validates common monochrome/RGB 8-bit and 16-bit DICOM pixel metadata
+  before decode;
 - converts `djxl` PGM/PPM output to native DICOM little-endian frame bytes;
+  signed monochrome samples are read as offset-binary codestream values
+  (value + 2^(BitsStored-1)) and returned as two's complement, the same
+  convention as the base module's pure-Go `pixeldata/jpegxl` codec;
 - optionally decodes through a session-owned `jpegxl-helper` process using the
   public libjxl C API, with request IDs, size limits, and CLI fallback;
 - returns typed errors for unavailable `djxl`, unsupported metadata,
@@ -89,7 +92,7 @@ this adapter.
 ## Unsupported behavior
 
 This adapter does not encode, transcode, stream JPIP/media payloads, or register
-itself by default. It rejects signed pixel metadata, planar RGB, unsupported
+itself by default. It rejects Pixel Representation values other than 0 and 1, planar RGB, unsupported
 photometric interpretations, unsupported bit allocation, and fragment layouts
 that cannot be mapped to complete still-image frames.
 

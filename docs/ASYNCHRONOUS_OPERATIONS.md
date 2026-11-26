@@ -51,10 +51,6 @@ Incoming services register `AsyncRequestHandler` values, preferably in
 Handlers receive complete detached messages and must use `Respond`; a
 terminal response must be sent before the handler returns.
 
-`StoreSession` stays on the serial `StoreClient` loop unless
-`MaxInvokedOperations` is greater than one **and** the peer's effective
-invoked window is greater than one. Twin-Viewer Send defaults to 1/1;
-`cmd/storescu -max-invoked` defaults to 1. See [`CSTORE_SESSION.md`](CSTORE_SESSION.md).
 
 The context supplied to `Invoke` owns that operation. Cancellation sends
 C-CANCEL for C-FIND/C-MOVE/C-GET and continues draining until the final response.

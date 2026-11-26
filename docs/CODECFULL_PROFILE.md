@@ -1,6 +1,5 @@
 # Codecfull clinical release profile
 
-Issue: [#554](https://github.com/ThalesMMS/go-dev/issues/554)
 
 `codecfull` is the explicit, fail-closed release profile for DICOM still-image
 pixel decoding. It keeps optional native dependencies out of the base
@@ -11,12 +10,6 @@ The canonical per-transfer-syntax decode/encode and dependency matrix is
 [`CODEC_CAPABILITY_MATRIX.md`](CODEC_CAPABILITY_MATRIX.md). This document adds
 the release evidence and packaging contract for that matrix.
 
-From the `dicom-go` module, Twin Viewer codecfull production builds use:
-
-```sh
-cd ../Twin-Viewer
-CODEC_TAGS=codecfull make build
-```
 
 The profile refuses to initialize unless all four audited runtimes are
 available:
@@ -36,6 +29,10 @@ is not required to initialize `codecfull`. Fallback remains the qualified
 `djxl` CLI. Every `ojph_expand` runtime also carries an adjacent
 `<executable>.codecfull` qualification marker naming the audited OpenJPH version
 and source commit, so stripped binary contents are not used as provenance.
+
+Twin supports an explicit native JPEG 2000/HTJ2K development session
+with its own resource and qualification limits. Release artifacts use the
+audited CLI adapters for JPEG 2000 and HTJ2K.
 
 ## Qualified evidence
 
@@ -93,7 +90,3 @@ license paths, preflight the complete profile, and copy those resources into
 each application artifact. Every codecfull artifact includes
 `codec-capabilities.json` and the four upstream license sets.
 
-The checked-in Twin-Viewer package entrypoints gate the audited Windows/amd64
-and macOS/arm64 profiles. The macOS entrypoint builds the same four exact
-upstream versions before verifying runtime versions, transitive dependencies,
-licenses, the corpus, and the manifest.

@@ -7,14 +7,6 @@ library's generic DIMSE services still leave persistence policy to their caller.
 
 ## Identity and names
 
-`core.IsValidUID` is the single semantic validator inherited from #805: numeric
-OID components, canonical component spelling and a 64-byte UI limit. This follows
-[PS3.5 Chapter 9](https://dicom.nema.org/medical/dicom/current/output/chtml/part05/chapter_9.html).
-Dataset UI padding uses the existing `core.NormalizeUID` behavior (trailing
-SPACE/NUL only); leading/interior bytes are not repaired. Both SOP identities
-must be UI with one value. Dataset and command SOP Class/Instance UIDs must agree,
-and the SOP Class must equal the accepted abstract syntax. Command parsing now
-rejects multiple UID values instead of silently selecting the first.
 
 Invalid identities are refused. There is no compatibility switch that silently
 sanitizes or replaces an invalid identity. `SafeFileBase` remains a legacy name
@@ -66,16 +58,56 @@ Consumers must use `.dcm` as the publication boundary and ignore `.partial`.
 an open, unfinished file and does not offer the complete-instance publication
 contract. Neither receiving CLI uses it for persistence.
 
+## Bit-preserving reception
+
+`storescp -bit-preserving` and `dimse.StorageSCPOptions.StreamSink`
+store a data set without building it in memory or re-encoding it, after DCMTK's
+`storescp --bit-preserving`. The File Meta Information is built from the
+command's SOP UIDs and the accepted transfer syntax
+(`object.EncodeFileMetaHeader`), and the P-DATA bytes follow unchanged, so the
+stored file equals the sent data set byte for byte outside group 0002 (a
+Deflated data set keeps its deflate stream and any PS3.5 A.5 pad byte). The
+temporary, publication and naming guarantees above are the same
+(`netstore.BeginStream`, then `Commit` or `Abort`).
+
+Only the command is checked while streaming: valid SOP UIDs, the SOP Class equal
+to the accepted abstract syntax, and `MaxDataSetBytes` (over it the C-STORE is
+answered 0xA700, the rest of the data set is drained and nothing is published).
+`storescp` then parses the stored file within its limits and checks its identity
+before publication, as its re-encoding path does. `dimse.FileStreamSink` does the
+same only with `Verify`; without it a data set whose content differs from the
+command is stored as received. A sink that returns a nil stream leaves that
+C-STORE to the in-memory `StoreHandler`. The heap stays about 7 MiB above its
+starting point while 64 MiB are streamed in 4 KiB PDUs; the parsing path holds
+the whole data set as an object.
+
+## Spooled reception
+
+`dimse.StorageSCPOptions.SpoolDir` and, for a C-GET requestor,
+`dimse.WithCGetSpoolDir` keep the `StoreHandler` contract but write
+each data set to a temporary file of the directory (`.dimse-spool-*`) as its
+P-DATA arrives. The file is then parsed with `DeferPixelData`,
+`InlineValueBytesThreshold` (`SpoolInlineBytes`, by default 64 KiB) and
+`DeferNestedValues`: the handler receives an `*object.Object` whose Pixel Data
+and other long values stay in the file and are read on demand, and
+`object.WriteFile` streams them back. The identity, CT Pixel Data and
+encoding checks and the size limits apply as for the in-memory reception; a
+data set over `MaxDataSetBytes`, or one the spool cannot hold, is answered
+0xA700 and drained. The data set is valid until the handler and
+`OnCStoreResponse` return; the file is removed after the response. A removal
+that fails, as when a scanner briefly holds the file on Windows, is retried a
+few times with a growing delay; a file that stays is reported to
+`StorageSCPOptions.OnSpoolRemoveError` (`dimse.WithCGetSpoolRemoveError` for
+C-GET), without changing the C-STORE response, so the application can remove
+it later. A Deflated
+data set is read into memory, because values cannot be deferred on a
+compressed stream. The live heap stays at its starting point while a 64 MiB
+data set is received and written back; the in-memory reception holds all of
+it.
+
+
 ## Containment and diagnostics
 
-The shared `internal/nofollow` primitives were extracted from the existing
-transcode path implementation. Unix traverses from an absolute anchor using
-`openat` and `O_NOFOLLOW`; Linux preserves the narrowly scoped `O_PATH` fallback
-for an unreadable traversal root. Windows uses a verified volume handle and
-relative `NtCreateFile` with `OBJ_DONT_REPARSE`. This does not change transcode
-replacement policy or relax #892's sandbox checks. Creation, publication and
-cleanup operate relative to the opened directory, never via a string-prefix
-containment approximation.
 
 The output root and its ancestor namespace must be configured by a trusted
 operator. Untrusted peers control command/dataset values, not local directory
@@ -102,15 +134,4 @@ ancestors, directory replacement, default log redaction and injected write,
 sync, close, cancellation, publication and post-commit failures. Network tests
 exercise the handlers actually used by both CLIs.
 
-Executed locally on 2026-09-07: Windows/amd64 NTFS and Linux/amd64 WSL2 with
-`-race`, plus Windows/386. Symlink tests ran on both systems. The extracted
-transcode primitives also passed the Linux chroot reproduction: uid 65534,
-unreadable root, descriptor traversal fallback, directory replacement and symlink
-rejection. Other Unix platforms and remote/SMB filesystems were not executed.
-No CI workflow is required or provided.
 
-The reproduced local defects were acceptance through sanitization, premature
-final-name visibility, ambiguous command multiplicity and verbose identity/path
-logging. Source-inspection provenance is retained in the
-[separate validation notes](../../dicom-go-validation/docs/REFERENCE_NOTES.md).
-No external implementation or clinical attachment was copied.

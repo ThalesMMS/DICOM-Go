@@ -13,26 +13,6 @@ no external parser or codec implementation was copied.
 
 ## Frame bounds
 
-- BOT entries are little-endian uint32 offsets to Item **Tags**, relative to
-  the first Item after the BOT. The count must equal NumberOfFrames; the first
-  offset is zero, subsequent entries increase strictly, and all entries align
-  to actual Items. Eight-byte Item headers and final padding count in offsets.
-- EOT and Lengths must both be present, nonempty OV attributes with one entry
-  per frame. BOT must be empty and each frame must occupy exactly one Item.
-  Lengths exclude the optional single zero pad, whose parity/value are checked.
-  EOT does not enable multiple-Item frames.
-- With empty tables, one Item per declared frame is unambiguous at the Item
-  level. Otherwise a bounded marker scanner finds complete codestreams. It
-  skips APP/COM/table/scan-header payloads by length, handles JPEG byte stuffing
-  and JPEG-LS bit stuffing, and carries marker state across Item boundaries.
-  EOI must terminate an Item, optionally followed by one zero pad. A fragment
-  cannot contain data from two frames. No division by expected frame count or
-  search for DICOM Sequence Delimitation bytes inside payloads is performed.
-- Offset tables establish Item ranges; they do not prove that the enclosed
-  codec stream is valid. `ValidateFrame` lets consumers check structural
-  SOI/EOI and trailing data separately. The Go standard JPEG wrapper uses it
-  because `image/jpeg` otherwise ignores extra images after EOI; it also checks
-  decoded header dimensions before allocating the image.
 
 `JPEG` and `JPEGLS` are the only accepted formats. RLE, Encapsulated Uncompressed,
 JPEG 2000, JPEG XL and video retain their existing syntax-specific paths. In

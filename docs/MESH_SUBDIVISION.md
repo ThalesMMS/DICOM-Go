@@ -1,0 +1,54 @@
+# Adaptive conformant linear mesh subdivision
+
+`mesh.SubdivideEdges` refines an existing indexed triangle mesh in patient-LPS millimeters. It splits only edges strictly longer than the explicit positive `MaxEdgeLengthMM`. It shares each inserted midpoint by the undirected pair of vertex indices across all incident faces, and completes conformant one-, two- or three-edge split templates per face. New internal diagonals can require another pass; the actual float32 output edge lengths are checked before reporting completion. Original vertex indices and coordinates remain unchanged. No projection, smoothing, anatomical detail recovery or UI integration is supplied.
+
+## Input and topology profile
+
+The caller keeps input mesh and attribute arrays stable for the call. Coordinates and supplied normals must be finite; indices must be valid. Repeated-index or geometrically zero-area triangles, duplicate faces, inconsistent winding, nonmanifold edges and disconnected vertex fans are refused. Boundary and closed orientable manifold meshes, multiple disconnected components and unused vertices are supported. Within this identity-based profile, midpoint sharing and oriented templates preserve topology, components, boundary loops and winding; no welding, self-intersection repair or semantic anatomical guarantee is made. Intersecting/coincident components are not merged.
+
+Positions use float64 midpoint arithmetic then the existing mesh float32 storage. A midpoint rounding onto an endpoint, zero-area child or nonpositive child/parent orientation is an explicit precision refusal. Extremely small thresholds may therefore be unrepresentable at large coordinate magnitudes. Successful completion states the largest measured edge length and criterion in mm, not an inferred resolution of the anatomy.
+
+## Attributes and ownership
+
+The output owns mesh and numeric arrays. Supplied normals preserve original entries; each new normal is the normalized endpoint average. Zero/antipodal averages refuse rather than invent a normal. Vertex scalars use existing scalar name/units conventions, finite float64 values and one value per vertex. `SubdivisionLinear` averages endpoint values; `SubdivisionEqualOnly` supports noninterpolable categories only when both endpoint values are exactly equal, refusing unequal endpoints. Policy values outside these two are errors. Constant subnormal scalars are preserved through the finite-sum midpoint calculation.
+
+Face attributes use one finite scalar or numeric label-like value per triangle, copied exactly from parent to every child without interpolation. At most32 vertex and32 face attributes are accepted, each with unique valid names within its category. `ParentFaces` identifies the original source face for every output triangle, including across multiple passes; callers may use this explicit provenance to copy external face payloads. Arbitrary vector/categorical vertex payloads are not accepted by this scalar API and must not be assumed transferred. Callers retain those external arrays; no external attribute store is discovered or discarded by the library.
+
+## Explicit budgets and atomic refusal
+
+All budgets are mandatory positive values: `MaxVertices`, `MaxTriangles`, `MaxBytes`, `MaxPasses` (1–64). Counts also obey uint32 corner/vertex capacity and host-int capacity. Counts, arithmetic and logical byte admission precede planned allocation. Bytes charge cumulative logical array allocations, including retired pass arrays and temporary arrays, making the policy deliberately conservative across passes. This includes initial manifold validation scratch, all owned output/attribute/parent arrays and each pass's sort/midpoint scratch. It excludes caller inputs, allocator padding, garbage collector and runtime overhead; it is not an RSS guarantee.
+
+The initial topology reservation is111 bytes per face plus5 per vertex, with a4096-byte fixed allowance and256 bytes per input attribute metadata. Each pass reserves108 bytes per current face for two conservatively16-byte edge records per corner and one uint32 midpoint per corner. Each owned output reserves512 bytes metadata plus256 per attribute, mesh arrays (12 bytes per vertex, another12 with normals,12 per triangle),4 bytes parent provenance per face, and8 bytes per supplied scalar sample. Reserved charges may exceed actual language-level data sizes and are reported as `AllocatedBytes` logical charged bytes, not measured allocator bytes.
+
+Every stop before full criterion satisfaction returns nil result and a wrapping `SubdivisionError`; its report gives criterion, source/last completed counts, completed passes, charged bytes, observed maximum where available and stop reason. Budget errors wrap `ErrBudgetExceeded`, malformed data/attributes wrap `ErrInvalidField`; midpoint/normal precision failure uses `ErrSubdivisionPrecision`. Cancellation wraps the actual context error and never exposes a partially generated mesh. No truncated triangle budget output or last-pass partial result is silently published. A successful result has `Stop == "complete"` and every measured edge at or below threshold. Repeating a completed result at the same threshold keeps mesh/attributes byte-value stable and completes zero refinement passes.
+
+Context checks occur before work and at bounded loop intervals in validation, copies, edge scans, sorting, candidate count and generation; reused manifold validation checks at4096-entry intervals, new ordinary loops at1024, and each unique-edge group is checked individually (group starts can advance by one or two corners, so index masking cannot safely bound their interval). No goroutines, global scratch, cache or background work are added. Empty input is an owned complete result.
+
+## Original acceptance and prepared qualification
+
+Synthetic open plane and closed tetrahedron tests establish direct geometric truth, area and enclosed volume, unchanged components/Euler characteristic/boundary loops, opposite directed uses of shared edges, and no vertex strictly inside an unsplit edge. Per-child original face provenance supports plane-distance and barycentric containment checks with1e-6 mm fixture tolerance. Every generated child must retain parent orientation. A disconnected already-short triangle remains unchanged while the neighboring long component refines. Tests cover all eight edge masks, repeated thresholds, scalar/normal/face policies and ownership, nonfinite/invalid/degenerate/nonmanifold inputs, precision stagnation, exact/minus-one bytes and all count/pass budgets, plus pre-cancelled, preflight and deterministic cancellation after a complete conformant generation pass. The latter calibrates a context-call checkpoint from an intentional one-pass refusal, then cancels there with the normal pass budget and requires nil output with one completed pass. These fixtures test a linear existing surface, not anatomy.
+
+## Actual private synthetic qualification
+
+
+Open and closed analytic focal fixtures passed threshold, shared edge incidence, no T-junction, winding, component/Euler/boundary-loop, original-parent plane distance and barycentric containment, area and volume assertions. The open selective fixture recorded7 vertices/3 faces →22/25,2 passes,11,080 charged bytes and largest edge0.5590169943749475mm at threshold.6mm. The closed fixture recorded4/4 →82/160,3 passes,38,424 charged bytes and largest edge0.5mm at threshold.6mm. These logged fixtures differ from the benchmark's closed.4mm threshold below. Distance/area/volume checks passed their fixed synthetic tolerances; individual errors were not logged, so no measured maximum distance error is claimed. All eight masks, scalar/face/normal policies, subnormal scalar preservation, source/result independence, repeated-threshold stability, malformed/precision refusal, exact/minus-one byte/count/pass limits and post-complete-pass cancellation passed. No anatomy was evaluated.
+
+The unchanged cost profiles were open16×16 grid at1mm/threshold.6mm, closed2mm-axis tetrahedron/threshold.4mm, and the same grid with two linear vertex scalars plus one face label. All used at most100,000 vertices,200,000 triangles,16 passes and64MiB cumulative charged arrays. Observed expansions were stable across all three runs: plane/attributes289 vertices and512 faces →2,113 vertices and4,096 faces (vertex expansion7.311418685121107×, faces8×),2 passes; closed4/4 →130/256 (vertices32.5×, faces64×),3 passes.
+
+| Profile/run | Iterations | Input V/T | Output V/T | Passes | Charged bytes | ns/op | B/op | allocs/op |
+| --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| plane 1 | 255 | 289/512 | 2113/4096 | 2 | 931,145 | 803,357 | 929,424 | 30 |
+| plane 2 | 291 | 289/512 | 2113/4096 | 2 | 931,145 | 839,282 | 929,424 | 30 |
+| plane 3 | 288 | 289/512 | 2113/4096 | 2 | 931,145 | 841,197 | 929,424 | 30 |
+| closed 1 | 5293 | 4/4 | 130/256 | 3 | 50,904 | 40,208 | 45,937 | 35 |
+| closed 2 | 5822 | 4/4 | 130/256 | 3 | 50,904 | 40,406 | 45,936 | 35 |
+| closed 3 | 5962 | 4/4 | 130/256 | 3 | 50,904 | 39,086 | 45,936 | 35 |
+| attributes 1 | 291 | 289/512 | 2113/4096 | 2 | 1,043,321 | 837,027 | 1,044,432 | 45 |
+| attributes 2 | 286 | 289/512 | 2113/4096 | 2 | 1,043,321 | 852,847 | 1,044,432 | 45 |
+| attributes 3 | 284 | 289/512 | 2113/4096 | 2 | 1,043,321 | 841,330 | 1,044,432 | 45 |
+
+Observed ranges: plane0.803357–0.841197ms/op,929,424B/op,30 allocations; closed0.039086–0.040406ms/op,45,936–45,937B/op,35 allocations; attributes0.837027–0.852847ms/op,1,044,432B/op,45 allocations. Logical charge was931,145 /50,904 /1,043,321 bytes respectively. The attribute profile's measured allocator bytes exceed logical charge by1,111B/op, consistent with the explicitly separate allocator accounting; MaxBytes bounds logical arrays, not B/op or RSS. No allocator-size threshold or comparative/clinical gain was invented after outputs. These are local observations for three synthetic profiles, not throughput or anatomical quality guarantees.
+
+Compilation and focused/cost evidence are private functional qualification. Four Go files remain byte-identical to actual generation2; this final generation changes the guide only. The combined library integration passed `make check` in 82.69 seconds, including existing callers, with all 8,690 repository source paths unchanged before/after. The final prose update is checked separately with `make docs-check`; the focused tests and benchmarks are reused because their Go sources are unchanged.
+
+The public [VTK adaptive subdivision API contract](https://vtk.org/doc/nightly/html/classvtkAdaptiveSubdivisionFilter.html) informed the feature boundary only. This implementation is independently written from midpoint arithmetic and triangle templates; no external implementation code or assets were copied. It does not claim VTK numerical parity.

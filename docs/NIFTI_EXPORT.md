@@ -23,18 +23,46 @@ replayable because metadata and pixels are deliberately separate passes.
 ## Geometry policy
 
 The default is fail-closed. Every frame must have finite Image Position
-Patient, Image Orientation Patient, and Pixel Spacing. The exporter requires a
+Patient, Image Orientation Patient, and Pixel Spacing (the opt-in image-grid
+single slice below is the one exception). The exporter requires a
 single Series Instance UID and Frame of Reference UID, rejects QUADRUPED
 coordinates, separates explicit temporal positions, and uses tighter geometry
 tolerances than the viewer. A volume is ordered by projection onto the slice
 normal, never by path or input order.
 
-The voxel-to-patient affine uses DICOM LPS coordinates and is premultiplied by
-`diag(-1,-1,1,1)` for NIfTI RAS. Both qform and sform use scanner-anatomical
-code 1. Non-orthogonal source geometry cannot be represented by qform and is
-rejected unless `GeometryResampleLinear` is explicitly selected. Resampling
-uses the validated `render` volume path, writes float32 modality values, and is
-reported in `Report` and the sidecar.
+
+## Single-slice export
+
+One frame is refused with `CodeSingleSlice` unless `Options.SingleSlice`
+opts in. The output is a 3D image with `nz = 1`, so the through-plane
+voxel size is recorded:
+
+- `SingleSlicePatient` exports a frame with Image Position, Image
+  Orientation (Patient) and Pixel Spacing. The third affine column is the
+  slice normal (row x column cosine), and qform/sform keep scanner code 1.
+- `SingleSliceImageGrid` also accepts one frame without patient geometry
+  (DX, CR, scalar US, secondary capture) from a single source, which may
+  then lack a Frame of Reference UID. It writes `qform_code = sform_code = 0`
+  (NIfTI method 1, no quaternion or srow): the grid claims no patient
+  position or orientation. In-plane `pixdim` comes from
+  `object.PixelSpacingAt` (for example detector Imager Pixel Spacing, named
+  in `Report.PixelSpacingSemantic` and the sidecar's
+  `pixel_spacing_semantic`), or 1 mm with the warning
+  `pixel-spacing-default-1mm`. The warning `no-patient-geometry` is always
+  reported, and `Read` needs `ReadOptions.AllowMissingTransform`. A frame
+  whose patient geometry is present but invalid still fails; it is never
+  demoted to an image grid.
+
+The through-plane `pixdim[3]` follows `object.ResolveSliceSpacing`: Spacing
+Between Slices (its magnitude, when negative), then Slice Thickness, then
+1 mm, the precedence ITK's DICOM readers use (commits 9467d94115 and
+296bed66ff). `Report.SliceSpacingSource` and the sidecar's
+`slice_spacing_source` name the source (`spacing-between-slices`,
+`slice-thickness`, `default`); the latter two also add the warnings
+`slice-spacing-from-slice-thickness` and `slice-spacing-default-1mm`. A
+volume reports `positions`, because its spacing is always measured between
+slice positions. Two or more frames, or one frame per time point of a 4D
+input, keep the volume rules.
 
 ## Pixels and scaling
 
@@ -48,7 +76,17 @@ uniform slope/intercept in the NIfTI header. `ScalingApplyFloat32` and
 `ScalingApplyFloat64` apply each frame's transform exactly once. A Parametric
 Map is accepted only through its validated Real World Value Mapping; coded
 units and quantitative concept must remain consistent across every source, and
-the calibrated payload is emitted as float64.
+the calibrated payload is emitted as float64. Pixel Padding, stored NaN and
+finite values outside all applicable mapping domains or whose calibration
+overflows are written as NaN.
+Stored ±Inf is carried as ±Inf in the float64 payload. `Read` preserves
+these representations. `Report.UnmeasuredVoxels` counts each kind, and
+`Report.Warnings` and the sidecar name them with
+`parametric-map-padding-written-as-nan`, `parametric-map-nan-preserved`,
+`parametric-map-outside-mapping-written-as-nan`,
+`parametric-map-mapping-overflow-written-as-nan`, and
+`parametric-map-infinite-preserved`. Invalid mapping metadata fails with
+`CodePixels`.
 
 Native path sources stream through `FrameSink` with O(one frame) working
 memory. A codec that only supports whole-object decode uses the explicitly
@@ -67,11 +105,29 @@ only when metadata identifies temporal order but omits timing, and cannot
 override contradictory irregular timing. Every time point must resolve to the
 same spatial grid and affine.
 
+## NRRD and MetaImage from the same plan
+
+`Plan.Layout` describes the planned grid (dimensions, datatype, the
+full-precision LPS affine, spacings and the uniform scaling) and
+`Plan.WriteVoxels` runs the same validated pixel pass as `Plan.Write` without
+the NIfTI header. `nrrd.WritePlan` (gzip or raw encoding) and
+`metaimage.WritePlan` (single-file `.mha`, zlib or uncompressed; the
+compressed stream is spooled to a temporary file so `CompressedDataSize`
+precedes it) frame those voxels in the left-posterior-superior space, so the
+three formats share ordering, geometry checks, resampling and limits, and a
+NRRD or MetaImage file carries the affine without NIfTI's float32 rounding.
+Neither format stores a value transform: a plan that preserves a non-identity
+slope/intercept is refused before the pixel pass (choose an applied
+floating-point policy), as is an image-grid single slice without patient
+geometry. `nrrd.WriteSlicerSegmentation` writes labelmaps as 3D Slicer
+segmentations (`.seg.nrrd`); see `NIFTI_IMPORT.md`.
+
 ## Provenance and PHI
 
 NIfTI extensions are not emitted. `Report.Sidecar` is a closed, size-capped,
 non-PHI JSON schema containing only dimensions, datatype, scaling policy,
-reordering/resampling, coded units and quantity, timing, and stable warnings. See
+reordering/resampling, coded units and quantity, timing, the slice spacing
+source and pixel spacing semantic codes, and stable warnings. See
 `NIFTI_EXPORT_SECURITY.md`. Pixel data may itself contain burned-in identifying
 information; exporting a volume is not de-identification.
 
@@ -112,3 +168,7 @@ PY
 
 Nibabel is an optional external verification dependency and is not required by
 the normal Go build.
+
+The package's own reader round-trips every export; see
+[NIFTI_IMPORT.md](NIFTI_IMPORT.md) for reading NIfTI back into DICOM
+geometry.

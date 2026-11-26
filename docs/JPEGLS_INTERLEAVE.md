@@ -10,7 +10,8 @@ YBR_FULL, signed RGB, subsampling, partial/mixed interleaved scans, mapping
 tables, HP color transforms, NEAR>0 and restart markers are not qualified.
 Near-Lossless is now available through the separate [`.81` decoder](JPEGLS_NEAR_LOSSLESS.md).
 The existing ILV=0 monochrome/palette profiles and explicitly registered ILV=0
-encoder remain available.
+encoder remain available; the encoder also writes ILV=1/2 on request (see
+[interleaved encoding](#interleaved-encoding)).
 
 This follows [ITU-T T.87 (1998), Annexes A, B and C](https://www.itu.int/rec/T-REC-T.87-199806-I/en).
 The new scan control was written in-tree from those algorithms: shared adaptive
@@ -39,15 +40,6 @@ precisions (2-16) run through ILV=0/1/2; one-column and one-row images test edge
 Two additional 8/16-bit profiles exercise non-default LSE thresholds.
 All 651,483 reconstructed samples are checked exactly across the 57 streams.
 
-The explicit candidate generator is `scripts/generate-jpegls-interleave.py v1`.
-It calls the CharLS 2.4.2 C API directly, encodes and independently decodes every
-stream, and verifies every source byte before writing the candidate record.
-The main #902 corpus manifest pins input/output hashes, layouts, license and
-provenance. `jpegls/generation.json` records the actual runtime binary SHA256.
-Default Go tests read committed data and need neither CharLS nor Python.
-Additional comparison evidence and source-inspection notes live in the
-[separate validation workspace](../../dicom-go-validation/docs/REFERENCE_NOTES.md).
-The fixture generator uses [CharLS 2.4.2, 36dd330](https://github.com/team-charls/charls/tree/36dd3307e070d8fbc765c3ba890b7e681046fa39), BSD-3-Clause.
 
 Generated images are project-authored synthetic data under the repository MIT
 license, with no patient data. The external libraries remain tools/reference
@@ -79,3 +71,35 @@ main 8-bit interleaved streams, including shortened entropy with a forged EOI.
 Public decoding retains bounded frame assembly and the 512 MiB working-set
 checks, honors cancellation, and publishes no partial frame list on failure.
 Concurrent use of the stateless codec is covered by race tests.
+
+## Interleaved encoding
+
+`EncoderOptions.Interleave` selects `InterleaveLine` (ILV=1) or
+`InterleaveSample` (ILV=2) for unsigned RGB frames, lossless (`.80`) or with an
+explicit NEAR (`.81`); the default stays ILV=0, and one-component frames always
+use one ILV=0 scan. The scan control mirrors the decoder: one scan naming the
+three components in frame-header order, shared adaptive contexts, independent
+component neighbors, one run index per component for line interleave, and for
+sample interleave run mode only when every component's gradients are zero,
+with one vector run whose interruption codes each component with RItype=0.
+
+Evidence:
+
+- `TestInterleavedEncoderReproducesCharLSEntropy` encodes the samples of every
+  ILV=1 and ILV=2 RGB stream of the CharLS 2.4.2 lossless and near-lossless
+  corpora (48 of each: 2-16 stored bits, NEAR 0-255, edge shapes and the
+  preset-parameter streams) and requires CharLS's scan header and
+  entropy-coded bytes, then the pure-Go decoder's exact reconstruction.
+- `TestInterleavedEncoderRoundTrips` round-trips synthetic frames of 2-16
+  stored bits, NEAR 0-3 and shapes from 1x1 to 129x33 (exact when lossless,
+  within NEAR otherwise).
+- Opt-in: DCMTK `dcmdjpls` (CharLS-based) decodes line and sample interleaved
+  streams to the source (`TestIndependentDecoderAcceptsGeneratedCodestreams`,
+  `DICOM_GO_JPEGLS_INDEPENDENT=1`), and with the `jpegls_charls` tag CharLS
+  decodes them to the source or the pure-Go reconstruction and encodes the
+  same samples into streams of exactly the same size
+  (`TestCharLSDecodesPureGoInterleavedEncoderOutput`; 8 and 12 bits, NEAR 0
+  and 2, 256x192); the test logs both encode times, and native CharLS was
+  at least 2.5 times faster on an Apple M4 Pro.
+  `BenchmarkEncoderRGB8Interleave` measures the pure-Go cost; on its 512x512
+  synthetic frame ILV=1/2 streams are about 5% smaller than ILV=0.

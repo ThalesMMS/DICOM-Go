@@ -1,31 +1,8 @@
 # Codec Dependency Policy
 
-`dicom-go` is the reusable DICOM parser, transfer syntax, pixel data, DIMSE and
-DICOMweb library used by Twin-Viewer. Its default build must remain pure Go,
-permissively licensed, and usable without native codec libraries.
 
 ## License and dependency rules
 
-- Default module dependencies must be pure Go and permissively licensed under
-  MIT, BSD, Apache-2.0, or similarly permissive terms.
-- Do not vendor, link, port, generate from, or copy LGPL, GPL, AGPL, or other
-  reciprocal/copyleft codec implementations into `dicom-go` or Twin-Viewer.
-- Native or CGO codec adapters are allowed only when they are the best
-  production path, are permissively licensed, and live behind an explicit build
-  tag or nested optional module.
-- Optional adapters must register codecs explicitly. Importing the base module
-  must never register JPEG-LS Near-Lossless, JPEG 2000 / HTJ2K, JPEG XL, or
-  future native adapters implicitly. The dependency-free JPEG-LS Lossless
-  subset belongs to the explicit `pixeldata/builtin` registry.
-- Decompression and transcoding helpers use explicit caller-owned decoder and
-  encoder registries. Decoder availability never implies encoder availability,
-  and there is no mutable default encoder registry.
-- The default module may include audited pure-Go encoders such as RLE Lossless
-  and JPEG-LS Lossless. Encoders remain explicitly registered and must publish
-  direction-specific capability evidence before an application enables them.
-- Metadata and encapsulated Pixel Data parsing must keep working without an
-  optional codec. Missing decoder support should return typed unsupported or
-  dependency-unavailable errors, not panic.
 
 ## Build profiles
 
@@ -39,7 +16,7 @@ summarizes build profiles and their gates.
 | `jpeg2000` | Opt-in JPEG 2000 / HTJ2K still-image decoding for the controlled fixture-backed profile. | Adapter stays in `examples/codec-adapters/jpeg2000`; current dependency is pure Go, with documented clinical fallback gaps. | `make codec-jpeg2000-profile-check`; app-level `-tags jpeg2000` |
 | `jpeg2000_openjpeg` | Opt-in OpenJPEG-backed JPEG 2000 Part 1 fallback for external/native codec-full validation; JPEG 2000 Part 2 and HTJ2K stay on the pure-Go fallback. | Adapter stays in `examples/codec-adapters/jpeg2000`; requires the OpenJPEG `opj_decompress` executable at runtime; default builds do not register it. | `make codec-jpeg2000-openjpeg-check`; app-level `-tags jpeg2000_openjpeg` |
 | `jpegls_charls` | Optional JPEG-LS Near-Lossless and extended-mode adapter backed by a dynamically loaded CharLS shared library. | Nested optional module plus explicit `jpegls_charls` build tag; the native runtime must not enter the base module. | `make codec-jpegls-charls-check`; app-level `-tags jpegls_charls` |
-| `jpegxl_djxl` | Opt-in JPEG XL still-image decoding through the `djxl` runtime from `libjxl`. An optional supervised `jpegxl-helper` worker may be started by Twin when packaged; it is not part of the base module. | Nested optional module plus explicit `jpegxl_djxl` build tag; requires the `djxl` executable at runtime; must not enter the base module. Current strategy is documented in [`JPEGXL_DECODER_STRATEGY.md`](JPEGXL_DECODER_STRATEGY.md). | `make codec-jpegxl-djxl-check`; app-level `-tags jpegxl_djxl` |
+| `jpegxl_djxl` | Opt-in JPEG XL still-image decoding through the `djxl` runtime from `libjxl`. An optional supervised `jpegxl-helper` worker may be started by Twin when packaged; it is not part of the base module. | Nested optional module plus explicit `jpegxl_djxl` build tag; requires the `djxl` executable at runtime; must not enter the base module. Current strategy is documented in `JPEGXL_DECODER_STRATEGY.md`. | `make codec-jpegxl-djxl-check`; app-level `-tags jpegxl_djxl` |
 | `codecfull` | Fail-closed clinical/release profile combining all qualified still-image codecs. | Nested `examples/codecfull` module; requires CharLS 2.4.2, OpenJPEG 2.5.4, OpenJPH 0.31.0, and libjxl 0.11.2 at runtime. Packaging publishes licenses and `codec-capabilities.json`; the base module remains unchanged. | `make codecfull-check`; app-level `-tags codecfull` |
 
 The nested `jpegls` adapter accepts an injected decoder. Applications that
@@ -83,12 +60,4 @@ Directory symlinks are rejected with a diagnostic to avoid cycles and omitted
 subtrees. These checks inspect dependency names; they do not replace license
 review of an upstream dependency.
 
-## Twin-Viewer relationship
 
-Twin-Viewer may enable optional codecs with its own build tags, but the reusable
-adapter, decoder, encoder, and transcoder boundaries belong in `dicom-go`.
-Normal `make build` and
-package-script builds leave `CODEC_TAGS` empty and must remain usable without
-native codec libraries. Qualified clinical or codec-full builds opt in
-explicitly with `CODEC_TAGS=codecfull`; other optional profiles likewise require
-documented tags and commands.

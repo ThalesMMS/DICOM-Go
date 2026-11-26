@@ -1,0 +1,17 @@
+# Shape bounded face-normal initialization
+
+`ShapeDetectionParams.Initialization` defaults to `CityBlockSeeds`, preserving all existing InterfaceLocal city-block seeds and DenseBand defaults. `BoundedFaceNormalSeeds` is an explicit option only for InterfaceLocal with supplied edge potential. Invalid enum or use with DenseBand is rejected before input reads. No image identifier, fixture ID, stopping change or new PDE operator selects this option implicitly.
+
+For each sign-crossing axial face, linearly interpolate its crossing fraction from the current signed initialization values. Use the nearest crossing per axis. Physical face distances d_a use that axis spacing; the local affine plane through these intersections has normal distance1/sqrt(sum1/d_a²). Bound this magnitude by the unchanged minimum-spacing-scaled city-block seed d_city. Exactzero remainszero. Opposite phase negates the seed; reflected axes leave magnitude unchanged. Only the initial numerical embedding changes; uniform city-block layer increments, anchor ownership/pruning, PDE, CFL, boundary operator and output/stopping contracts remain unchanged.
+
+The bound is deliberate: d_new<=d_city ensures no seed leaves the current admitted active/layer envelope, and for one crossed axis physicaldistance>=citydistance because h_a>=hmin, so d_new=d_city exactly. This is a bounded local normal seed, NOT a global Euclidean signed distance transform or ITK layer ownership imitation. Stable scaled hypot avoids reciprocal overflow and uses only three stack distances per visited sample, no new volume-size buffers. Standard context/seed/heap/output limits continue to apply.
+
+Motivation: actual original fixture initialization at(9,10) has ITK+.286731005 versus oldCityBlock+.35; firststep increments coincide. Independent local plane intersections at.35/.5mm give.286731172mm. This proves a metric difference, not an oldcontractbug or exclusivefinalHDcause. The explicit profile subsequently passed all 192 fixed geometric qualification cases; this is not proof of an exclusive final-Hausdorff cause.
+
+Independent tests cover isotropic2D/3D, anisotropic and axis permutation, oppositephase/reflections, unequalfractions, exactzero, allsingleaxes/oldgauge, defaultlegacy seed, invalid/dense-before-read and cancellation-before-writes. The delivered public corpus test selects the initialization option uniformly: all504 originalcases/77inputblobs/oracles unchanged,192geometric qualifications retain originalDice/HD thresholds,physicalspacing,P/C,maxiterations andRMS. Characterization312 remains characterization. Legacy default/control assertions remain unchanged and run independently; the public corpus uniformly selects the declared profile. Original 987-voxel/HD=2.1 mm default RED evidence remains historical fact.
+
+Implementation authority is independently derived local affine-plane geometry and public behavioral evidence; no external algorithm was copied.
+
+Measured private G3 qualification: five independent top-level tests passed,42default/interface+edge tops passed, and all192geometric qualifications of the additional504case corpus passed. Characterization312 cases had150criteria-met and162criteria-RED; none is relabeled qualification. The prior weak-radial-2d-n100 case has1019voxels, Dice.977886978 andHD2.0mm under explicit BoundedFaceNormalSeeds, while defaultCityBlock retains historical987/HD2.1 limitation. This is not default or complete ITK parity. Processes normalexit/reaped/drained with exactsourceguards.
+
+

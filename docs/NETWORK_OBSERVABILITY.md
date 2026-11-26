@@ -38,6 +38,31 @@ observability := &ul.ObservabilityOptions{
 }
 ```
 
+## Peer-supplied strings
+
+AE titles and UIDs in events can come from the peer, so they may contain
+bytes an operator must not see verbatim: a newline that forges a log line,
+a terminal escape sequence, a bidirectional override. Before an event
+reaches an observer:
+
+- AE titles are normalized with `ul.NormalizeAETitle`, which removes space
+  and NUL padding, then passed through the endpoint policy. Plaintext mode
+  escapes them with `telemetry.EscapePeerString`; HMAC mode hashes the
+  normalized value. Titles come from the A-ASSOCIATE-RQ only; the
+  A-ASSOCIATE-AC echo is ignored (PS3.8 9.3.3), so an acceptor cannot
+  replace the titles a requestor reports.
+- `AbstractSyntaxUID` and `TransferSyntaxUID` are escaped the same way, for
+  an accept-any SCP or a command's Affected SOP Class UID.
+
+The acceptor emits the A-ASSOCIATE-RQ event before it refuses an invalid AE
+title (see the AE title rules in `CONFORMANCE.md`), so that event can carry
+an escaped invalid title. `EscapePeerString` keeps printable text, doubles a
+backslash and writes control characters, invalid UTF-8 and other
+non-printable runes as Go escapes (`\x00`, `\n`, `\u202e`); a clean string is
+returned without allocating. Applications should apply it to any other
+peer-supplied string they log or display, and compare or look up the
+unescaped value.
+
 ## Raw PDU capture
 
 Raw capture is disabled by default and is a separate API from high-level
@@ -66,6 +91,16 @@ goroutines. The limit includes silent negotiations and established handlers.
 A-ASSOCIATE-RQ, returns transient RJ / Presentation Provider / local-limit-
 exceeded (result 2, source 3, reason 2).
 
+As in `net/http.Server.Serve`, an accept failure that leaves the listener
+usable, such as running out of descriptors (EMFILE/ENFILE, WSAEMFILE/
+WSAENOBUFS on Windows) or an error that reports itself as temporary, is
+counted in `AcceptErrors` and accepting resumes after a pause of 5 ms doubling
+to 1 s; a closed listener or a canceled context ends `Serve`. A connection that
+fails negotiation without a rejection, such as one that sends bytes that are
+not an A-ASSOCIATE-RQ, is closed and counted in `NegotiationErrors`; the server
+keeps serving. `Listener.AcceptContext` applies the same accept policy to
+application-owned loops.
+
 `Shutdown(ctx)` first stops admission and lets handlers drain. At the deadline
 it cancels handler contexts, marks active associations aborted, and closes their
 connections. Handler callbacks must cooperate with context cancellation. Go
@@ -88,10 +123,6 @@ server, err := ul.NewAssociationServer(listener, ul.AssociationServerOptions{
 })
 ```
 
-Existing `Listener.AcceptAssociation` loops remain supported. This server seam
-lets CLIs and applications such as Twin-Viewer adopt the common admission,
-correlation and shutdown policy incrementally without replacing their clinical
-workflow callbacks or product counters.
 
 `dimse.ServiceQueue` separately bounds active and queued service jobs. Close
 cancels job contexts, uses one shared completion channel, recovers job panics,
