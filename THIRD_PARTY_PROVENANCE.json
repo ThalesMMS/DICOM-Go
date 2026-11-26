@@ -1,0 +1,1869 @@
+{
+ "schema": 1,
+ "upstreams": {
+  "amrshadid-go-dicom-daecea14": {
+   "project": "amrshadid/go-dicom",
+   "repository": "https://github.com/amrshadid/go-dicom",
+   "commit": "daecea14be3fbc27300aff20912ed7c8c8a0d599",
+   "license": "MIT",
+   "license_file": "examples/codec-adapters/jpeg2000/internal/j2kcore/LICENSE.amrshadid-go-dicom",
+   "license_sha256": "ac3f98f05e03c3c2c1d5756c76b89f168a9040e31477216fb7c8554d122d63f7",
+   "notice_heading": "### amrshadid/go-dicom — JPEG 2000 Part 1 decoder"
+  },
+  "dcmqi-506306a0": {
+   "project": "dcmqi",
+   "repository": "https://github.com/QIICR/dcmqi",
+   "commit": "506306a0980876058a0f2060c645b74d23cdc555",
+   "license": "BSD-3-Clause",
+   "license_file": "testdata/upstream/dcmqi/LICENSE.dcmqi",
+   "license_source": "LICENSE.txt",
+   "notice_heading": "### dcmqi — TID 1500 fixture",
+   "license_sha256": "80e43c3804421ff9563dd7212b968bef8003fd448ed20e699e08bc8cedc9df5e"
+  },
+  "dcmtk-39fcab07-embedded": {
+   "project": "DCMTK",
+   "repository": "https://github.com/DCMTK/dcmtk",
+   "commit": "39fcab076dfabc5d51295141ecd46d88dc1e95d2",
+   "license": "BSD-3-Clause",
+   "license_file": "testdata/upstream/dcmtk/LICENSE.DCMTK",
+   "license_source": "COPYRIGHT",
+   "notice_heading": "### DCMTK — standard data dictionary",
+   "license_sha256": "6c8ade56fa8742607397cf1652ce18d04a94c97b2d7d68fe69ebd407b1f214a0"
+  },
+  "dcmtk-8d68392d": {
+   "project": "DCMTK",
+   "repository": "https://github.com/DCMTK/dcmtk",
+   "commit": "8d68392db66cd69e13dc878dc9889681062ad479",
+   "license": "BSD-3-Clause",
+   "license_file": "testdata/upstream/dcmtk/LICENSE.DCMTK",
+   "license_source": "COPYRIGHT",
+   "notice_heading": "### DCMTK — test data and vectors",
+   "license_sha256": "6c8ade56fa8742607397cf1652ce18d04a94c97b2d7d68fe69ebd407b1f214a0"
+  },
+  "dcmtk-ac002900": {
+   "project": "DCMTK",
+   "repository": "https://github.com/DCMTK/dcmtk",
+   "commit": "ac002900cab167509881e5b837cdef5dcb07cd37",
+   "license": "BSD-3-Clause",
+   "license_file": "dictionary/curated/LICENSE.DCMTK",
+   "license_sha256": "8a5fc8f3f77762491a9a9a0f7b91e5de95f5d8028f5f704b594e8adcee40e746",
+   "notice_heading": "### DCMTK — selected private dictionary definitions"
+  },
+  "gdcm-2cd05d13": {
+   "project": "GDCM (Grassroots DICOM)",
+   "repository": "https://github.com/malaterre/GDCM",
+   "commit": "2cd05d13222b175e791b5ae3c08feeabcc1ed1f0",
+   "license": "BSD-3-Clause",
+   "license_file": "testdata/upstream/gdcm/LICENSE.GDCM",
+   "license_source": "Copyright.txt",
+   "notice_heading": "### GDCM — test tables",
+   "license_sha256": "31a64b1bc4f367401fdd689daee273af8195c24eb5d8dcd5b694f201b06721ed"
+  },
+  "gdcm-2cd05d13-embedded": {
+   "project": "GDCM (Grassroots DICOM)",
+   "repository": "https://github.com/malaterre/GDCM",
+   "commit": "2cd05d13222b175e791b5ae3c08feeabcc1ed1f0",
+   "license": "BSD-3-Clause",
+   "license_file": "dictionary/curated/LICENSE.GDCM",
+   "license_source": "Copyright.txt, Source/DataDictionary/COPYRIGHT.dicom3tools",
+   "notice_heading": "### GDCM — selected private dictionary definitions",
+   "license_sha256": "41d33ab722f02cbb5055ad811b5a7b2a1f0cfd0bfcba59f30c748a059d07ae2e"
+  },
+  "go-jpeg2000-8f771261": {
+   "project": "go-jpeg2000",
+   "repository": "https://github.com/mrjoshuak/go-jpeg2000",
+   "commit": "8f771261d4f6c05dbbb0bdba9c70af57aca62d95",
+   "license": "Apache-2.0",
+   "license_file": "internal/htj2k/LICENSE.go-jpeg2000",
+   "license_sha256": "8b7851242c00b76a89325bc76d081c69b6b6e0cc459e3ffc2cefa6939a31ce64",
+   "notice_heading": "### go-jpeg2000 and OpenJPEG — HTJ2K CxtVLC codebook"
+  },
+  "horos-2a130506": {
+   "project": "Horos",
+   "repository": "https://github.com/horosproject/horos",
+   "commit": "2a130506f2ae651fcd52becbd5469c107bbbf795",
+   "license": "LGPL-3.0",
+   "license_url": "https://www.gnu.org/licenses/lgpl-3.0.txt",
+   "notice_heading": "### Horos — VR Muscles-Bones color lookup table"
+  },
+  "itk-35b196e1": {
+   "project": "ITK (Insight Toolkit)",
+   "repository": "https://github.com/InsightSoftwareConsortium/ITK",
+   "commit": "35b196e13c366e0386389a71c936a0436c568cea",
+   "license": "Apache-2.0",
+   "license_file": "testdata/upstream/itk/LICENSE.ITK",
+   "license_source": "LICENSE, NOTICE",
+   "notice_heading": "### ITK — test vectors",
+   "license_sha256": "7ded379fcf8f2d98bf7f8f89ba9bc84deb66db776d16eb727d0b4c1cd568360a"
+  },
+  "itk-35b196e1-embedded": {
+   "project": "ITK (Insight Toolkit)",
+   "repository": "https://github.com/InsightSoftwareConsortium/ITK",
+   "commit": "35b196e13c366e0386389a71c936a0436c568cea",
+   "license": "Apache-2.0",
+   "license_file": "testdata/upstream/itk/LICENSE.ITK",
+   "license_source": "LICENSE, NOTICE",
+   "notice_heading": "### ITK — histogram matching",
+   "license_sha256": "7ded379fcf8f2d98bf7f8f89ba9bc84deb66db776d16eb727d0b4c1cd568360a"
+  },
+  "itk-morphology-35b196e1": {
+   "project": "ITK (Insight Toolkit)",
+   "repository": "https://github.com/InsightSoftwareConsortium/ITK",
+   "commit": "35b196e13c366e0386389a71c936a0436c568cea",
+   "license": "Apache-2.0",
+   "license_file": "testdata/upstream/itk/LICENSE.ITK",
+   "license_source": "LICENSE, NOTICE",
+   "notice_heading": "### ITK — grayscale reconstruction and morphological watershed",
+   "license_sha256": "7ded379fcf8f2d98bf7f8f89ba9bc84deb66db776d16eb727d0b4c1cd568360a"
+  },
+  "itk-n4-35b196e1": {
+   "project": "ITK (Insight Toolkit)",
+   "repository": "https://github.com/InsightSoftwareConsortium/ITK",
+   "commit": "35b196e13c366e0386389a71c936a0436c568cea",
+   "license": "Apache-2.0",
+   "license_file": "testdata/upstream/itk/LICENSE.ITK",
+   "license_source": "LICENSE, NOTICE",
+   "notice_heading": "### ITK — N4 bias field correction",
+   "license_sha256": "7ded379fcf8f2d98bf7f8f89ba9bc84deb66db776d16eb727d0b4c1cd568360a"
+  },
+  "skimage-ee0a7a3e": {
+   "project": "scikit-image",
+   "repository": "https://github.com/scikit-image/scikit-image",
+   "commit": "ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8",
+   "license": "BSD-3-Clause",
+   "license_file": "testdata/upstream/skimage/LICENSE.skimage",
+   "license_source": "LICENSE.txt",
+   "notice_heading": "### scikit-image — automatic threshold fixture",
+   "license_sha256": "611d3207504dcb4a808df209d2e7c9b4f2e89fe690f84735c0d548160966b527"
+  },
+  "vtk-ac53123e": {
+   "project": "VTK (Visualization Toolkit)",
+   "repository": "https://github.com/Kitware/VTK",
+   "commit": "ac53123e515e6e97adf79d9a225101303049817e",
+   "license": "BSD-3-Clause",
+   "license_file": "testdata/upstream/vtk/LICENSE.VTK",
+   "license_source": "Copyright.txt",
+   "notice_heading": "### VTK — numerical fixtures",
+   "license_sha256": "11232448be82e0ea2c2c66219c2e36389f42249894070ee10c549ff182fc08b6"
+  },
+  "vtk-f49a1dba": {
+   "project": "VTK (Visualization Toolkit)",
+   "repository": "https://github.com/Kitware/VTK",
+   "commit": "f49a1dbafa60b58ef22f6292ec58370453162192",
+   "license": "BSD-3-Clause",
+   "license_file": "testdata/upstream/vtk/LICENSE.VTK",
+   "license_source": "Copyright.txt",
+   "notice_heading": "### VTK — numerical fixtures",
+   "license_sha256": "11232448be82e0ea2c2c66219c2e36389f42249894070ee10c549ff182fc08b6"
+  },
+  "brotli-ed738e84": {
+   "project": "Brotli",
+   "repository": "https://github.com/google/brotli",
+   "commit": "ed738e842d2fbdf2d6459e39267a633c4a9b2f5d",
+   "license": "MIT",
+   "license_file": "internal/brotli/LICENSE.brotli",
+   "license_sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+   "notice_heading": "### Brotli — static dictionary"
+  }
+ },
+ "artifacts": [
+  {
+   "path": "dictionary/curated/catalog.json",
+   "upstream": "dcmtk-ac002900",
+   "sha256": "4e428ee6b13c2ecc0dbb36d8205cab1698be2d6e680213bace24a44ea86bba85",
+   "distribution": "embedded",
+   "transformation": "246 reviewed private.dic rows; each record carries its own line, row, source hash and license (see docs/CURATED_PRIVATE_CATALOG.md). catalog_gen.go is generated from this file.",
+   "sources": [
+    {
+     "file": "dcmdata/data/private.dic",
+     "lines": "251-2558",
+     "sha256": "ab0e0823ac0a6db8415bc7b5316814b47e8b9820879897945da9a6769c3da71c",
+     "url": "https://github.com/DCMTK/dcmtk/blob/ac002900cab167509881e5b837cdef5dcb07cd37/dcmdata/data/private.dic"
+    }
+   ]
+  },
+  {
+   "path": "dictionary/curated/catalog_gdcm.json",
+   "upstream": "gdcm-2cd05d13-embedded",
+   "sha256": "8f991bd8a031fb49e399200d66bd7f518b2d5433a48d693b8799d4dc7820d8e5",
+   "distribution": "embedded",
+   "transformation": "48 privatedicts.xml rows selected by dictionary/curated/gdcm_selection.tsv; each record carries its own line, row, source hash and license (see docs/CURATED_PRIVATE_CATALOG.md). Written by cmd/privatecataloggen -import-gdcm from the pinned file; catalog_gen.go is generated from it and catalog.json.",
+   "generated_by": "cmd/privatecataloggen",
+   "sources": [
+    {
+     "file": "Source/DataDictionary/privatedicts.xml",
+     "lines": "2642-10230",
+     "sha256": "d3744ac3678d4c089742d4cfc30616301f59da0ad528708f2a51e4332ef8fea4",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Source/DataDictionary/privatedicts.xml"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/codestream.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/codestream.go",
+     "sha256": "bdc492722f9ef9245002a557997d3f844d063f22b3cb1c44a3e0feef3e689e34",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/codestream.go"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/decode.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/decode.go",
+     "sha256": "3585e93edc2eab4bdda30536114ee888b244aa32700a4ff3edd3a039fa91598e",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/decode.go"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/dwt.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/dwt.go",
+     "sha256": "e6f3f75591ff3943e83740a84185b0e8664bb656bfbd6e5e06ff7c0d52c7e3e7",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/dwt.go"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/geometry.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/geometry.go",
+     "sha256": "c96f650e9cdf0104e2e5637f143e72421b5ba50e8d631cf7a140de993e4c79e9",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/geometry.go"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/mq.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/mq.go",
+     "sha256": "56b634702e88142a20a389dfcb9353031382cf2f4efff17c26fad12f0164f14b",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/mq.go"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/packet.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/packet.go",
+     "sha256": "b7e5836123f4f7ca551f0ad177a7aefc43c2dcb069a05e58543b96a32840f104",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/packet.go"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/tagtree.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/tagtree.go",
+     "sha256": "ba304e98655351715acbec204fcd92f61c22373251ee22c3d63248176cd5b71a",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/tagtree.go"
+    }
+   ]
+  },
+  {
+   "path": "examples/codec-adapters/jpeg2000/internal/j2kcore/tier1.go",
+   "upstream": "amrshadid-go-dicom-daecea14",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from github.com/amrshadid/go-dicom",
+   "distribution": "optional-module",
+   "transformation": "Adapted source with local modifications listed in PROVENANCE.md; the file keeps an attribution header.",
+   "sources": [
+    {
+     "file": "compress/jpeg2000/tier1.go",
+     "sha256": "9b513e9c09e394432e41c0f15a3e3072851d99e78fbde70d2606152a4cf0680b",
+     "url": "https://github.com/amrshadid/go-dicom/blob/daecea14be3fbc27300aff20912ed7c8c8a0d599/compress/jpeg2000/tier1.go"
+    }
+   ]
+  },
+  {
+   "path": "imagefilter/histogram_matching.go",
+   "upstream": "itk-35b196e1-embedded",
+   "sha256_policy": "modified",
+   "attribution": "Adapted from ITK's HistogramMatchingImageFilter",
+   "distribution": "embedded",
+   "transformation": "Go port of the quantile-landmark histogram matching: the landmark table, the piecewise-linear mapping with its lower and upper segments, the thresholded histogram and Histogram::Quantile. Modified as listed in the file header: the histogram covers exactly [threshold, max] (landmarks stay monotonic), a reference histogram keeps its own threshold, the threshold is the exact float mean, non-finite samples are ignored and passed through, degenerate inputs are rejected, defaults are 1024 levels and 7 match points.",
+   "sources": [
+    {
+     "file": "Modules/Filtering/ImageIntensity/include/itkHistogramMatchingImageFilter.hxx",
+     "lines": "133-456",
+     "sha256": "b7447e8cc37bc02d7f43ff6163059137bb3e81b12a27cabf450e326c495242c9",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/ImageIntensity/include/itkHistogramMatchingImageFilter.hxx#L133-L456"
+    },
+    {
+     "file": "Modules/Numerics/Statistics/include/itkHistogram.hxx",
+     "lines": "585-636",
+     "sha256": "deee3ab6bfdcb550d41212118091eaa3973582239a6fc6a72e40501a95151ebe",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Numerics/Statistics/include/itkHistogram.hxx#L585-L636"
+    }
+   ]
+  },
+  {
+   "path": "imagefilter/n4.go",
+   "upstream": "itk-n4-35b196e1",
+   "sha256_policy": "modified",
+   "attribution": "Ported from ITK (Insight Toolkit), commit",
+   "distribution": "embedded",
+   "transformation": "Modified port to Go of N4 bias field correction: the log-domain iteration, the histogram sharpening (Parzen histogram, zero padding, Gaussian Wiener deconvolution, E[u|v] mapping) and the convergence measure of N4BiasFieldCorrectionImageFilter, the single-level cubic B-spline approximation of BSplineScatteredDataPointSetToImageFilter, and the reconstruction and lattice refinement of BSplineControlPointImageFilter. Modified as listed in the file header: estimation on a block-averaged copy with the field evaluated at the block centres, float64 arithmetic, separable refinement, fixed sample blocks fitted on at most Workers workers from the shared concurrency budget, voxels at or below zero left out of the mask.",
+   "sources": [
+    {
+     "file": "Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx",
+     "lines": "85-687",
+     "sha256": "b8401e5c3f90587657ddfe731843f00fc0b9899ea0a24e233295c9ae13013796",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx#L85-L687"
+    },
+    {
+     "file": "Modules/Filtering/ImageGrid/include/itkBSplineScatteredDataPointSetToImageFilter.hxx",
+     "lines": "401-711",
+     "sha256": "e8ba64436d0415ae88a05049bdb113003ee11e2ff6e817da524d10ee79ac282d",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/ImageGrid/include/itkBSplineScatteredDataPointSetToImageFilter.hxx#L401-L711"
+    },
+    {
+     "file": "Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx",
+     "lines": "367-530",
+     "sha256": "1230e3d72494cb1666422c7bdf901545112d56738b5376b6c50ee74713e6ac3e",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx#L367-L530"
+    }
+   ]
+  },
+  {
+   "path": "internal/htj2k/vlc_codebook.go",
+   "upstream": "go-jpeg2000-8f771261",
+   "sha256": "150aae07e3f271a9645549e9dfe19aede428537a7551ca90f6d6cdf050fcc707",
+   "distribution": "embedded",
+   "transformation": "The 2 x 1024-entry HT decoder lookup tables vlcTbl0 and vlcTbl1 inverted into the 444 + 358 normative CxtVLC codewords of ISO/IEC 15444-15 (context, rho, u_off, e_k, e_1, codeword, length) in a new Go representation; no code was taken. The encoder and decoder tables of internal/htj2k are built from these records, and OpenJPEG 2.5.4 and OpenJPH 0.32.0 decode the resulting codestreams bit-exactly (docs/JPEG2000_ENCODER.md).",
+   "sources": [
+    {
+     "file": "internal/entropy/ht_luts.go",
+     "lines": "11-281",
+     "sha256": "15beca921317a4954afd9da4af9c28ff948db454b504cd18137cbfea9a505369",
+     "url": "https://github.com/mrjoshuak/go-jpeg2000/blob/8f771261d4f6c05dbbb0bdba9c70af57aca62d95/internal/entropy/ht_luts.go#L11-L281"
+    }
+   ]
+  },
+  {
+   "path": "internal/standard/dicom.dic",
+   "upstream": "dcmtk-39fcab07-embedded",
+   "sha256": "1d87260ff5ca8627e2743bd5160b196f7c1486f1592e6afac5e2d0391f0f4505",
+   "distribution": "embedded",
+   "transformation": "Verbatim copy of the DCMTK standard data dictionary generated from DICOM PS3.6-2026e and PS3.7-2026e; dictionary/std/std_gen.go is generated from it by cmd/dicomdictgen, and std.Edition records the edition.",
+   "sources": [
+    {
+     "file": "dcmdata/data/dicom.dic",
+     "lines": "1-5455",
+     "sha256": "1d87260ff5ca8627e2743bd5160b196f7c1486f1592e6afac5e2d0391f0f4505",
+     "url": "https://github.com/DCMTK/dcmtk/blob/39fcab076dfabc5d51295141ecd46d88dc1e95d2/dcmdata/data/dicom.dic"
+    }
+   ]
+  },
+  {
+   "path": "render/resources/vr_muscles_bones_rgb.hex",
+   "upstream": "horos-2a130506",
+   "sha256": "f837f2833467b02d93fdc7a2998ce1ba996fe376a6505a06da91b0aa5953bcf9",
+   "distribution": "embedded",
+   "transformation": "256 unmodified 8-bit RGB triplets from the plist, written as hexadecimal text; decoded interleaved RGB SHA-256 6080ca9c271bb466d1994a6d5d5fd5cdb249150b0c99a0c313d871dbabcdc34e.",
+   "sources": [
+    {
+     "file": "Horos/Resources/CLUTs/VR Muscles-Bones.plist",
+     "unverified_reason": "No local Horos checkout at the pinned commit; the upstream file hash was not recorded when the table was imported."
+    }
+   ]
+  },
+  {
+   "path": "roi/grayscale_reconstruction.go",
+   "upstream": "itk-morphology-35b196e1",
+   "sha256_policy": "modified",
+   "attribution": "Ported from ITK (Insight Toolkit), commit",
+   "distribution": "embedded",
+   "transformation": "Modified port to Go: Vincent's hybrid reconstruction, flood-based regional extrema, and the h-maxima, h-minima, h-convex, h-concave and fill-hole marker constructions, over x-fastest float32 volumes with explicit 6/18/26 neighbour offsets, reconstruction by erosion through negation, one-sample axes excluded from the border, voxel budgets and context cancellation; the file keeps an attribution header listing the modifications.",
+   "sources": [
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkReconstructionImageFilter.hxx",
+     "lines": "66-334",
+     "sha256": "07e16b3a6dd353dec36d59578a1c0a87ac21ed5b04126d7f0b64e5fa1fb7072e",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkReconstructionImageFilter.hxx#L66-L334"
+    },
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkValuedRegionalExtremaImageFilter.hxx",
+     "lines": "58-201",
+     "sha256": "c1a5381e043bcd936e627d536d78b5eb99ee1df8b05f0c384adb7c97237c2579",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkValuedRegionalExtremaImageFilter.hxx#L58-L201"
+    },
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkRegionalMaximaImageFilter.hxx",
+     "lines": "64-126",
+     "sha256": "8c0593e863be0251d55f842ee13536e6457c09758d3ee48214ba698786bebd6b",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkRegionalMaximaImageFilter.hxx#L64-L126"
+    },
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkHMaximaImageFilter.hxx",
+     "lines": "52-100",
+     "sha256": "7939e1effc85436d784708120c09092d6e40c678bd8ec9dc54bcf3e87d3525ad",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkHMaximaImageFilter.hxx#L52-L100"
+    },
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkHMinimaImageFilter.hxx",
+     "lines": "52-100",
+     "sha256": "a1815416be838be5fb251fe3933995298d98685ebeada62edf69ea5fefb015bf",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkHMinimaImageFilter.hxx#L52-L100"
+    },
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkHConvexImageFilter.hxx",
+     "lines": "50-92",
+     "sha256": "81d8214168d2a892a7377342a9d786e06e254178908455d323dbb2f66c783684",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkHConvexImageFilter.hxx#L50-L92"
+    },
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkHConcaveImageFilter.hxx",
+     "lines": "50-91",
+     "sha256": "d4187231a522ab7ba8dd2e37dd67146304a21bcad874d7111883be1d957eb0e9",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkHConcaveImageFilter.hxx#L50-L91"
+    },
+    {
+     "file": "Modules/Filtering/MathematicalMorphology/include/itkGrayscaleFillholeImageFilter.hxx",
+     "lines": "51-127",
+     "sha256": "41dcffeaedb3c433f11a99e46863a8269fe264ccf2b48ed569e6e39aad195b75",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/MathematicalMorphology/include/itkGrayscaleFillholeImageFilter.hxx#L51-L127"
+    }
+   ]
+  },
+  {
+   "path": "roi/watershed.go",
+   "upstream": "itk-morphology-35b196e1",
+   "sha256_policy": "modified",
+   "attribution": "Ported from ITK (Insight Toolkit), commit",
+   "distribution": "embedded",
+   "transformation": "Modified port to Go of Beucher's and Meyer's marker flooding: the per-level FIFO map becomes one heap ordered by (level, insertion sequence) with the same pop order, 6/18/26 connectivity, an optional flood mask, unreached and line-voxel counts, 16-bit label volumes, voxel budgets and context cancellation; the file keeps an attribution header listing the modifications.",
+   "sources": [
+    {
+     "file": "Modules/Segmentation/Watersheds/include/itkMorphologicalWatershedFromMarkersImageFilter.hxx",
+     "lines": "75-419",
+     "sha256": "4d669a84e99750d85b897a97adf24174627581937c9f3fd0669a8b101b7653aa",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Segmentation/Watersheds/include/itkMorphologicalWatershedFromMarkersImageFilter.hxx#L75-L419"
+    }
+   ]
+  },
+  {
+   "path": "sr/testdata/dcmqi_tid1500.json",
+   "upstream": "dcmqi-506306a0",
+   "sha256": "397aa865603280d0c0ad75071884ed08f1210007e0f313981afd20320b557f7e",
+   "distribution": "test-data",
+   "transformation": "tid1500writer metadata written for the fixture with synthetic values; its keys and layout follow dcmqi's CT liver example and TID 1500 JSON schema, no example values are kept.",
+   "sources": [
+    {
+     "file": "doc/examples/sr-tid1500-ct-liver-example.json",
+     "sha256": "03d5c1a6123446561f584ccf7cf4987de41edd4a63f86ee0e4e7de8dd61818a2",
+     "url": "https://github.com/QIICR/dcmqi/blob/506306a0980876058a0f2060c645b74d23cdc555/doc/examples/sr-tid1500-ct-liver-example.json"
+    },
+    {
+     "file": "doc/schemas/sr-tid1500-schema.json",
+     "sha256": "33cfeda225c4fa7ddca82eecadbf926a4a46b820548516f324bec88b1ac855ea",
+     "url": "https://github.com/QIICR/dcmqi/blob/506306a0980876058a0f2060c645b74d23cdc555/doc/schemas/sr-tid1500-schema.json"
+    }
+   ]
+  },
+  {
+   "path": "testdata/upstream/dcmqi/tid1500.dcm",
+   "upstream": "dcmqi-506306a0",
+   "sha256": "00f36823a7d726b7813d2fa67b123d09e131b5b3051112c41fba91a4371f8442",
+   "distribution": "test-data",
+   "transformation": "Written by the dcmqi 1.5.7 win64 release tid1500writer from sr/testdata/dcmqi_tid1500.json and the synthetic CT and Segmentation of sr/testdata/dcmqi_tid1500_inputs.py; no upstream data copied.",
+   "sources": [
+    {
+     "file": "apps/sr/tid1500writer.cxx",
+     "sha256": "145c2ec6fa0696fac465f842fca5e5280476ccda3b417d47d51d530466837c5b",
+     "url": "https://github.com/QIICR/dcmqi/blob/506306a0980876058a0f2060c645b74d23cdc555/apps/sr/tid1500writer.cxx"
+    },
+    {
+     "file": "libsrc/TID1500Writer.cpp",
+     "sha256": "e45906ce02e79f16fb87a838d86bb4e497e37a9591f97608fa013bbcd8b9cbc2",
+     "url": "https://github.com/QIICR/dcmqi/blob/506306a0980876058a0f2060c645b74d23cdc555/libsrc/TID1500Writer.cpp"
+    }
+   ],
+   "generated_by": "sr/testdata/dcmqi_tid1500_inputs.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/atof_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "93de98bc832b1aa7b2df519f4f41f4418e604ca733178b90a1c2309ef72e5dd1",
+   "distribution": "test-data",
+   "transformation": "Rows of vp[] (commented-out rows omitted; every #if branch kept and labelled) and the literal inputs and results of the locale checks.",
+   "sources": [
+    {
+     "file": "ofstd/tests/tatof.cc",
+     "lines": "52-155",
+     "sha256": "7a2082a941e7223e72cc9c5331385aebb5fdb029b0d3ccf9beb0d8a6998b5e28",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/ofstd/tests/tatof.cc#L52-L155"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/chval_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "f1b39b61187f290a32d45c9491f05ed0b3b7aadd6326c7d27ad55dd4cea96383",
+   "distribution": "test-data",
+   "transformation": "The literal arguments and GOOD/BAD verdict of every active CHECK_GOOD/CHECK_BAD row, with the line number; commented-out rows are omitted. String bytes are stored as the code points of the same numbers (ISO 8859-1). The generated UT string is described by its construction parameters.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tchval.cc",
+     "lines": "41-291",
+     "sha256": "e1982b8b616c77e8319182d0f7a010cf516424483fd7ccbf6f00d228642a25d9",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tchval.cc#L41-L291"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/cielab_reference_colors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "47d9ae2cd6c9265b48be864e60647f6ff594de38a18337b451983ba8ce20626d",
+   "distribution": "test-data",
+   "transformation": "Rows of referenceColors converted to JSON.",
+   "sources": [
+    {
+     "file": "dcmiod/tests/tcielabutil.cc",
+     "lines": "40-81",
+     "sha256": "a6332c1b6065e7ed83fee45c4248218388aec149f0bf4f1c143cce9bd8cbde28",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmiod/tests/tcielabutil.cc#L40-L81"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/frmsiz_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "45c383c268784c1dcf6955bb385a6874a023efdcd1b75a0b7f334ff05e076474",
+   "distribution": "test-data",
+   "transformation": "Attribute values set by the test and the expected results of its OFCHECK assertions, replayed in source order.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tfrmsiz.cc",
+     "lines": "32-135",
+     "sha256": "063cbea2d6bf83b7799a4c6d94f827abc4ada3cd687cecf4ab8edb5d883d5fec",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tfrmsiz.cc#L32-L135"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/ftoa_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "28848801124f10fa5834299ff4fe3e8c1c31e9aaf1417db654b0726f575f7a68",
+   "distribution": "test-data",
+   "transformation": "Rows of the first #if branch of values[] converted to JSON; the infinity and NaN expressions become the strings inf, -inf and nan.",
+   "sources": [
+    {
+     "file": "ofstd/tests/tftoa.cc",
+     "lines": "64-254",
+     "sha256": "58e25fd1a19b188a76b63b2d04cbdc4e408a867dda58a71d45a8a7f285aef532",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/ofstd/tests/tftoa.cc#L64-L254"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/genuid_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "158d158c2c09a7ed38daff20c642c9b1f4cb1d66de837527f5702dc2335644dd",
+   "distribution": "test-data",
+   "transformation": "The loop count and the UID buffer size of the test.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tgenuid.cc",
+     "lines": "29-54",
+     "sha256": "fe520efbd6089754f4e2a5c0b0af45c47dfdbfaf73bbd1fdfea7df23153dc773",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tgenuid.cc#L29-L54"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/lut/camera.lut",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "897aea010d8af2d1f65a760c0e770af62a7176e7d8c3510b40c701a35cb92560",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Characteristic curve (DDL to luminance/optical density) used by DCMTK's GSDF tests.",
+   "sources": [
+    {
+     "file": "dcmimgle/data/camera.lut",
+     "lines": "1-26",
+     "sha256": "897aea010d8af2d1f65a760c0e770af62a7176e7d8c3510b40c701a35cb92560",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmimgle/data/camera.lut#L1-L26"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/lut/monitor.lut",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "62e9f42587eb03228b7a5b0bed242d6748cde7a94cd793b3722abf7d3adb9ebf",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Characteristic curve (DDL to luminance/optical density) used by DCMTK's GSDF tests.",
+   "sources": [
+    {
+     "file": "dcmimgle/data/monitor.lut",
+     "lines": "1-270",
+     "sha256": "62e9f42587eb03228b7a5b0bed242d6748cde7a94cd793b3722abf7d3adb9ebf",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmimgle/data/monitor.lut#L1-L270"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/lut/printer.lut",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "b52d98f07d75b4bcb49f18d7968be1ef8065f80f6216b810e9c64807357b41de",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Characteristic curve (DDL to luminance/optical density) used by DCMTK's GSDF tests.",
+   "sources": [
+    {
+     "file": "dcmimgle/data/printer.lut",
+     "lines": "1-38",
+     "sha256": "b52d98f07d75b4bcb49f18d7968be1ef8065f80f6216b810e9c64807357b41de",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmimgle/data/printer.lut#L1-L38"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/lut/scanner.lut",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "f8d3327878e9f141ce796890095c67fc8cb4423a99a1f789f782b71b381d3127",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Characteristic curve (DDL to luminance/optical density) used by DCMTK's GSDF tests.",
+   "sources": [
+    {
+     "file": "dcmimgle/data/scanner.lut",
+     "lines": "1-34",
+     "sha256": "f8d3327878e9f141ce796890095c67fc8cb4423a99a1f789f782b71b381d3127",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmimgle/data/scanner.lut#L1-L34"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/match_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "cf7ec9897b41d78fe4e1a23dd24972c371ee54bf0e0e68cab032e2b76f42146f",
+   "distribution": "test-data",
+   "transformation": "Literal inputs and expected results of the OFCHECK assertions in source order.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tmatch.cc",
+     "lines": "74-164",
+     "sha256": "19afd72a639b8c8536da96b847580edb84048746389e3aa86e5980ed2683ee8b",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tmatch.cc#L74-L164"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/ofdatim_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "333b91a72d510a5d184d6d69203efdfb44f46ba5865a8967ebe68f1ce8d854ab",
+   "distribution": "test-data",
+   "transformation": "Literal arguments and verdicts of the setter assertions and the time zones checked right after them, in source order; assertions on object state (comparisons, getters and formatted output of earlier values) are not imported.",
+   "sources": [
+    {
+     "file": "ofstd/tests/tofdatim.cc",
+     "lines": "33-259",
+     "sha256": "de44a41b4d5d88a5215de87a886c66239ef4c9d51e633c48bc8f261e03c4faf8",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/ofstd/tests/tofdatim.cc#L33-L259"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/oficonv_gb18030.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "d71f1a8cc55654e21636d2808501dfd3abd6cee410d715ddc76a4ceb661129f8",
+   "distribution": "test-data",
+   "transformation": "Every 'unsigned char name[] = {...}' initializer converted to lowercase hex; comments and C code are not copied.",
+   "sources": [
+    {
+     "file": "oficonv/tests/tables_gb18030.h",
+     "lines": "46-531",
+     "sha256": "daa529cba55b0162628c0075bc75a4eaa7c3f2d941256197e53640b54d9b08a6",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/oficonv/tests/tables_gb18030.h#L46-L531"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/oficonv_gb2312.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "78b14497ad7caf3da5782c449bfa538d3439bd9b2a79a11a7038c118332dfa70",
+   "distribution": "test-data",
+   "transformation": "Every 'unsigned char name[] = {...}' initializer converted to lowercase hex; comments and C code are not copied.",
+   "sources": [
+    {
+     "file": "oficonv/tests/tables_gb2312.h",
+     "lines": "31-2265",
+     "sha256": "72bdf4f01092695b4c0d67709c859473fae29e898b820e979bcf8ac0770ad0b4",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/oficonv/tests/tables_gb2312.h#L31-L2265"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/srcodvl_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "bd53bbcf36e9721fbd9ae676d7283a9ccade677631b8606b21f98005da39d0e4",
+   "distribution": "test-data",
+   "transformation": "Literal arguments and expected results of the OFCHECK assertions in source order.",
+   "sources": [
+    {
+     "file": "dcmsr/tests/tsrcodvl.cc",
+     "lines": "35-179",
+     "sha256": "200c7ad3ef62a9d5ae91f0b86994177bcc7b9363e5b0bec818ef05f9fdea9b6f",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmsr/tests/tsrcodvl.cc#L35-L179"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/tparser_wrong_explicit_vr.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "139040b28f6956b7847eabc88686ed87eb19c9709454346a721f0b648484ef5c",
+   "distribution": "test-data",
+   "transformation": "The two byte arrays built by the WRONG_EXPLICIT_VR_COMMON macros, expanded with the dctmacro.h TAG_AND_LENGTH (tag, VR, reserved 0000, 32-bit length) and TAG_AND_LENGTH_SHORT (tag, VR, 16-bit length) layouts in little endian; expectations from testExplicitVRinDataset.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tparser.cc",
+     "lines": "332-368",
+     "sha256": "431f73065ff089540c21c71e8238ec6cc271ef68ac36df040b099a209c89f2ec",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tparser.cc#L332-L368"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/vrdatim_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "31d238bdd5548660ad043e316e645ceb5a239a8cfe15b3051f925da092be7d94",
+   "distribution": "test-data",
+   "transformation": "Literal inputs and expected results of the OFCHECK assertions in source order; the printed element dumps are reduced to their bracketed value.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tvrdatim.cc",
+     "lines": "46-151",
+     "sha256": "342c3517a16be21f1482b922f7cc772d5f17e4778d4cfa026b03aadd770e8d44",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tvrdatim.cc#L46-L151"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/vrds_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "d3a7c58b8a9cca83c5006081dd0721e133705df1bfdfdb9c9fe66224303c3680",
+   "distribution": "test-data",
+   "transformation": "Literal inputs and expected results of the OFCHECK assertions, in source order. Values passed with an explicit length keep their embedded NUL byte.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tvrds.cc",
+     "lines": "31-167",
+     "sha256": "8abc72baac0ee797c2900b859065c6af180987dc3f9f33448a93b67cb772005a",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tvrds.cc#L31-L167"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/vrpn_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "5421f2282578b4e7e58870e398c1a27d1961f04dd8cd849911e83cb9b5772e7e",
+   "distribution": "test-data",
+   "transformation": "Literal inputs and expected results of the OFCHECK assertions in source order; the repeated final block of the upstream test is kept as written.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tvrpn.cc",
+     "lines": "29-85",
+     "sha256": "64a403d9a1e48f878fbe9c33dc8d31895058450257dba015b7c8d6a78d53fc30",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tvrpn.cc#L29-L85"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/vrui_vectors.json",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "9dd30ab53d9e5624000de030579be691cdf392a5be2682f0389e7a330c96f82e",
+   "distribution": "test-data",
+   "transformation": "Literal inputs and expected results of the OFCHECK assertions in source order; values passed with an explicit length keep their NUL bytes.",
+   "sources": [
+    {
+     "file": "dcmdata/tests/tvrui.cc",
+     "lines": "30-93",
+     "sha256": "4f133393da62ec9eb7a0085b9c43d3d2d86316d0a26404759bc3275bcb78a514",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmdata/tests/tvrui.cc#L30-L93"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist1.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "11c9cf8b884c779c026d190cfe8cae5d2546eb1cd9d86c68f4346898b1967b29",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist1.dump",
+     "lines": "1-29",
+     "sha256": "11c9cf8b884c779c026d190cfe8cae5d2546eb1cd9d86c68f4346898b1967b29",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist1.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist10.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "96810a5aba31d047e0337e20420d0c66878a973205755859124efb9755f941a0",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist10.dump",
+     "lines": "1-29",
+     "sha256": "96810a5aba31d047e0337e20420d0c66878a973205755859124efb9755f941a0",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist10.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist2.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "874bc6a4bc273c6bf14415624f3195897e59ac5be6685c3f6baf9635f8fbd3d0",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist2.dump",
+     "lines": "1-30",
+     "sha256": "874bc6a4bc273c6bf14415624f3195897e59ac5be6685c3f6baf9635f8fbd3d0",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist2.dump#L1-L30"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist3.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "345a04107e454ae4fd40625afaac7dfa4910fcb734cb541a426696c161fb316d",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist3.dump",
+     "lines": "1-29",
+     "sha256": "345a04107e454ae4fd40625afaac7dfa4910fcb734cb541a426696c161fb316d",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist3.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist4.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "1e3cd7a28b25d67dd60aafa2d8d346d3581c58eadc802a7dee1bb746512d0e3f",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist4.dump",
+     "lines": "1-29",
+     "sha256": "1e3cd7a28b25d67dd60aafa2d8d346d3581c58eadc802a7dee1bb746512d0e3f",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist4.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist5.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "9b621d2220a28f542c163d9965256165cdfb59b4aaf16de07bc76df5a819516a",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist5.dump",
+     "lines": "1-29",
+     "sha256": "9b621d2220a28f542c163d9965256165cdfb59b4aaf16de07bc76df5a819516a",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist5.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist6.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "2a5589293b92277683eb28ce1d76e862671319088e7a927c2439d77fc43a48c4",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist6.dump",
+     "lines": "1-29",
+     "sha256": "2a5589293b92277683eb28ce1d76e862671319088e7a927c2439d77fc43a48c4",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist6.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist7.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "003cad674aab088a273638fe4be5ec59956e0f2d6335370092a3c4861bb6b43b",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist7.dump",
+     "lines": "1-29",
+     "sha256": "003cad674aab088a273638fe4be5ec59956e0f2d6335370092a3c4861bb6b43b",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist7.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist8.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "b82d21b73df6cf3505a4e12987933b58cd29adc998b3baafb3dcefc2ed86ad20",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist8.dump",
+     "lines": "1-29",
+     "sha256": "b82d21b73df6cf3505a4e12987933b58cd29adc998b3baafb3dcefc2ed86ad20",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist8.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistdb/wklist9.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "b2251c019f0d9a6549f96b4f7ec55e66ad28ca3d7a24c8cacb6156838e5624a6",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistdb/OFFIS/wklist9.dump",
+     "lines": "1-29",
+     "sha256": "b2251c019f0d9a6549f96b4f7ec55e66ad28ca3d7a24c8cacb6156838e5624a6",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistdb/OFFIS/wklist9.dump#L1-L29"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/README",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "c04800de343099c7a97771b6bf8d7efbe685d59dcacf77d7f77f38471fd54a1d",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/README",
+     "lines": "1-16",
+     "sha256": "c04800de343099c7a97771b6bf8d7efbe685d59dcacf77d7f77f38471fd54a1d",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/README#L1-L16"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry0.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "f5b8e366f87dbe15d8399cab675f201c95843a2d198b7cd977eb8d2a40ea92d1",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry0.dump",
+     "lines": "1-11",
+     "sha256": "f5b8e366f87dbe15d8399cab675f201c95843a2d198b7cd977eb8d2a40ea92d1",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry0.dump#L1-L11"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry1.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "71ecc273df9c7f2667a92aac7336aa63b4b71c3a8996b2bf9afd58eea58e5b76",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry1.dump",
+     "lines": "1-19",
+     "sha256": "71ecc273df9c7f2667a92aac7336aa63b4b71c3a8996b2bf9afd58eea58e5b76",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry1.dump#L1-L19"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry10.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "108dc4650248bc1202e04baf95236f6a5a8a50bc6d8c6110168234e620c6cd4c",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry10.dump",
+     "lines": "1-18",
+     "sha256": "108dc4650248bc1202e04baf95236f6a5a8a50bc6d8c6110168234e620c6cd4c",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry10.dump#L1-L18"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry11.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "397e0cb516c1f21da7fabf88c5ba35f4649c17e6fde0d52936a758b44b772513",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry11.dump",
+     "lines": "1-31",
+     "sha256": "397e0cb516c1f21da7fabf88c5ba35f4649c17e6fde0d52936a758b44b772513",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry11.dump#L1-L31"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry12.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "08543e9d0c83d2a097ff51abdd25741224772816a0bde0a4f11efe237c8c5e4d",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry12.dump",
+     "lines": "1-12",
+     "sha256": "08543e9d0c83d2a097ff51abdd25741224772816a0bde0a4f11efe237c8c5e4d",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry12.dump#L1-L12"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry2.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "b3d305a2eb63c7206fd55dcc8bd68f5addd95f8d4b88b72e18e17365df3002ed",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry2.dump",
+     "lines": "1-31",
+     "sha256": "b3d305a2eb63c7206fd55dcc8bd68f5addd95f8d4b88b72e18e17365df3002ed",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry2.dump#L1-L31"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry3.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "5ed0aedd4771d337b56f2c21b0251ff2b611b5fd8691fc8d3ce27ed1781b606a",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry3.dump",
+     "lines": "1-8",
+     "sha256": "5ed0aedd4771d337b56f2c21b0251ff2b611b5fd8691fc8d3ce27ed1781b606a",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry3.dump#L1-L8"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry4.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "e19f2a6697acbd9c8e6fdd84738a82791969232d55a85257308e9b955246dbcb",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry4.dump",
+     "lines": "1-9",
+     "sha256": "e19f2a6697acbd9c8e6fdd84738a82791969232d55a85257308e9b955246dbcb",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry4.dump#L1-L9"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry5.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "efc521aec1a5e5d631dba9a46268fe5af8b7065bf6f38ecbc413d8f0dd9ac318",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry5.dump",
+     "lines": "1-13",
+     "sha256": "efc521aec1a5e5d631dba9a46268fe5af8b7065bf6f38ecbc413d8f0dd9ac318",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry5.dump#L1-L13"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry6.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "b6bf7a09a338a3fe0882775272c42725fb0b65927e97825d991b21f8ddbca359",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry6.dump",
+     "lines": "1-10",
+     "sha256": "b6bf7a09a338a3fe0882775272c42725fb0b65927e97825d991b21f8ddbca359",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry6.dump#L1-L10"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry7.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "ab0fa90ac3fcfd137047408e6f1e4c45b0fa78c74a5b5a88ce746a6ac14e0305",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry7.dump",
+     "lines": "1-31",
+     "sha256": "ab0fa90ac3fcfd137047408e6f1e4c45b0fa78c74a5b5a88ce746a6ac14e0305",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry7.dump#L1-L31"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry8.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "88474fe65e2cff8e6bc53383119a9ae95c0cbcd410a35a8c2505cd26bb9cb3fd",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry8.dump",
+     "lines": "1-11",
+     "sha256": "88474fe65e2cff8e6bc53383119a9ae95c0cbcd410a35a8c2505cd26bb9cb3fd",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry8.dump#L1-L11"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/dcmtk/wlistqry/wlistqry9.dump",
+   "upstream": "dcmtk-8d68392d",
+   "sha256": "ab06e7a5b0400692f12586714791f0011cd41e7e35bb2f4172d49aa59c9fb1a5",
+   "distribution": "test-data",
+   "transformation": "Verbatim copy of an upstream data file. Fictitious worklist data from DCMTK's example database; no real patient data.",
+   "sources": [
+    {
+     "file": "dcmwlm/data/wlistqry/wlistqry9.dump",
+     "lines": "1-17",
+     "sha256": "ab06e7a5b0400692f12586714791f0011cd41e7e35bb2f4172d49aa59c9fb1a5",
+     "url": "https://github.com/DCMTK/dcmtk/blob/8d68392db66cd69e13dc878dc9889681062ad479/dcmwlm/data/wlistqry/wlistqry9.dump#L1-L17"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/black_list_reader.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "29925c0d2e1375b3f237ca7aaa7295eab8a4bc1b711e12e3b7abc256f6f72eef",
+   "distribution": "test-data",
+   "transformation": "Names from every set(BLACK_LIST_READER ...) block, the enclosing if() condition ('always' at top level) and the nearest preceding or trailing comment.",
+   "sources": [
+    {
+     "file": "Testing/Source/Data/CMakeLists.txt",
+     "lines": "46-119",
+     "sha256": "52645fadc9d8d543418286c093e6526859dde52aee83392e11ec09713bd47129",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/Data/CMakeLists.txt#L46-L119"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/md5_data_broken_images.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "5e987260ff62f985b01c9a47f08fa3442c4e46e81103bdb5a0a8030493a7437e",
+   "distribution": "test-data",
+   "transformation": "Active rows of the C table converted to JSON; commented-out rows and the sentinel are omitted. The '/* gdcm C R F B S */' comment preceding a row is kept as gdcm_dimensions.",
+   "sources": [
+    {
+     "file": "Testing/Source/Data/gdcmMD5DataBrokenImages.cxx",
+     "lines": "23-120",
+     "sha256": "5bbcf80fc479d00e94df92eaf272c56753d7c2a91eff0fc8e1845e72cf825a7d",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/Data/gdcmMD5DataBrokenImages.cxx#L23-L120"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/md5_data_images.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "a93c6360e59b0313ca5faf35f180487412fa6583ac3bf0dd36a49b26500038bb",
+   "distribution": "test-data",
+   "transformation": "Active rows of the C table converted to JSON; commented-out rows and the sentinel are omitted. The '/* gdcm C R F B S */' comment preceding a row is kept as gdcm_dimensions.",
+   "sources": [
+    {
+     "file": "Testing/Source/Data/gdcmMD5DataImages.cxx",
+     "lines": "24-719",
+     "sha256": "20fa354c7b961c54196668c08fbaa4d85eef22c0f2dbdad1417bf00f86a2f51c",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/Data/gdcmMD5DataImages.cxx#L24-L719"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/media_storage.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "857564099014d42098bc698dbacf21d851a0711d5d75acf666d36dd012a8f734",
+   "distribution": "test-data",
+   "transformation": "Active rows of the C table converted to JSON; commented-out rows and the sentinel are omitted.",
+   "sources": [
+    {
+     "file": "Testing/Source/Data/gdcmMediaStorageDataFiles.cxx",
+     "lines": "20-268",
+     "sha256": "fce430018552bc05188c3d6c2801445f642bff998ee67f58e0297bf86183746e",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/Data/gdcmMediaStorageDataFiles.cxx#L20-L268"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/overlay3.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "bfc6c4b8b17b4fb9a1fbcff93130db1d72d423efb0de1843f81e4ae1876e3d56",
+   "distribution": "test-data",
+   "transformation": "Active rows of overlay3array converted to JSON with the corpus section comment; commented-out rows and the sentinel are omitted.",
+   "sources": [
+    {
+     "file": "Testing/Source/MediaStorageAndFileFormat/Cxx/TestOverlay3.cxx",
+     "lines": "30-51",
+     "sha256": "560e4679695cf0ea7d8290c163ce46af9eace861eed8af803681e5fe47b89109",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/MediaStorageAndFileFormat/Cxx/TestOverlay3.cxx#L30-L51"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/selected_private_group_offsets.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "7ca3fda1d5feaf46d5e103a3ead0b608e82582463eb5f75d28415d6da8c2a068",
+   "distribution": "test-data",
+   "transformation": "Active rows of the C table converted to JSON; commented-out rows and the sentinel are omitted.",
+   "sources": [
+    {
+     "file": "Testing/Source/Data/gdcmSelectedPrivateGroupOffsetDataFiles.cxx",
+     "lines": "28-254",
+     "sha256": "5453f53ec723e66e60d9c9776acf9526591a47349c398bea1e509dda796aad3c",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/Data/gdcmSelectedPrivateGroupOffsetDataFiles.cxx#L28-L254"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/selected_tags_offsets.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "da1b3c3450673c2a82a8c8edd194d18a4ee988c3fdd27da24edd25a6a8f02b6b",
+   "distribution": "test-data",
+   "transformation": "Active rows of the C table converted to JSON; commented-out rows and the sentinel are omitted.",
+   "sources": [
+    {
+     "file": "Testing/Source/Data/gdcmSelectedTagsOffsetDataFiles.cxx",
+     "lines": "28-256",
+     "sha256": "c0f491907b4fb34b85d960d996691751a5239d95298e0b6e4663da7e8857d8f3",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/Data/gdcmSelectedTagsOffsetDataFiles.cxx#L28-L256"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/gdcm/stream_offsets.json",
+   "upstream": "gdcm-2cd05d13",
+   "sha256": "3fab98ded84c3fc7ac2d398cabac6b7f00aa8378b2b51aa293b9b1361881cb3e",
+   "distribution": "test-data",
+   "transformation": "Active rows of the C table converted to JSON; commented-out rows and the sentinel are omitted.",
+   "sources": [
+    {
+     "file": "Testing/Source/Data/gdcmStreamOffsetDataFiles.cxx",
+     "lines": "25-254",
+     "sha256": "2a9d833f4585d7a7a79702f4170f64b8b9d23b5f78ca9220e699211d0f660af3",
+     "url": "https://github.com/malaterre/GDCM/blob/2cd05d13222b175e791b5ae3c08feeabcc1ed1f0/Testing/Source/Data/gdcmStreamOffsetDataFiles.cxx#L25-L254"
+    }
+   ],
+   "generated_by": "scripts/import-upstream-data.py"
+  },
+  {
+   "path": "testdata/upstream/itk/n4/logbias.f32",
+   "upstream": "itk-35b196e1",
+   "sha256": "1d9f5148f4c58e1ed5a809c4ab33d6ccb0eaf280be304dab5e604dceee836324",
+   "distribution": "test-data",
+   "transformation": "Computed by ITK's N4BiasFieldCorrectionImageFilter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: the log bias field of phantom.f32 within mask.u8, without shrinking, three fitting levels of at most 50 iterations and ITK's other defaults, reconstructed on the input grid by BSplineControlPointImageFilter; little-endian float32, x fastest.",
+   "sources": [
+    {
+     "file": "Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx",
+     "sha256": "b8401e5c3f90587657ddfe731843f00fc0b9899ea0a24e233295c9ae13013796",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx"
+    },
+    {
+     "file": "Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx",
+     "sha256": "1230e3d72494cb1666422c7bdf901545112d56738b5376b6c50ee74713e6ac3e",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_n4/n4gen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/n4/mask.u8",
+   "upstream": "itk-35b196e1",
+   "sha256": "92bbd55d4434892f65ebf9f1f93161739ad67728faba086b7603cfc4fd3ec015",
+   "distribution": "test-data",
+   "transformation": "Synthetic input, no upstream data: the positive voxels of phantom.f32, one byte per voxel, the mask ITK's N4 ran with.",
+   "sources": [
+    {
+     "file": "Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx",
+     "sha256": "b8401e5c3f90587657ddfe731843f00fc0b9899ea0a24e233295c9ae13013796",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx"
+    },
+    {
+     "file": "Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx",
+     "sha256": "1230e3d72494cb1666422c7bdf901545112d56738b5376b6c50ee74713e6ac3e",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_n4/n4gen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/n4/phantom.f32",
+   "upstream": "itk-35b196e1",
+   "sha256": "0e8f29c142f4a5e43bcfa9d57f89b1e7f6d93e822b4496af46ccc774455144f2",
+   "distribution": "test-data",
+   "transformation": "Synthetic input, no upstream data: the 32 × 32 × 16 head phantom of imagefilter's N4 tests under a smooth multiplicative field with Gaussian noise, little-endian float32, x fastest, the volume ITK's N4 ran on.",
+   "sources": [
+    {
+     "file": "Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx",
+     "sha256": "b8401e5c3f90587657ddfe731843f00fc0b9899ea0a24e233295c9ae13013796",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/BiasCorrection/include/itkN4BiasFieldCorrectionImageFilter.hxx"
+    },
+    {
+     "file": "Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx",
+     "sha256": "1230e3d72494cb1666422c7bdf901545112d56738b5376b6c50ee74713e6ac3e",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/Filtering/ImageGrid/include/itkBSplineControlPointImageFilter.hxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_n4/n4gen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/series_direction.json",
+   "upstream": "itk-35b196e1",
+   "sha256": "515917084b3f8d83360f14f7503265fb041d826902c8d73ffc7225570c943dda",
+   "distribution": "test-data",
+   "transformation": "Modified: the synthetic SeriesSpec cases of itkGDCMSeriesDirectionGTest.cxx re-expressed as data (row and column cosines, first Image Position, step, slice count, expected slice spacing), oblique cosines evaluated in float64 as ITK composes them; the assertions are adapted in render/itk_series_direction_test.go.",
+   "sources": [
+    {
+     "file": "Modules/IO/GDCM/test/itkGDCMSeriesDirectionGTest.cxx",
+     "lines": "111-832",
+     "sha256": "88ca9ed08f1ea4e1fc0bbc7b8473f6c66009936c087bc74bbb396196c5593bd2",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/GDCM/test/itkGDCMSeriesDirectionGTest.cxx#L111-L832"
+    }
+   ]
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/affine.mat",
+   "upstream": "itk-35b196e1",
+   "sha256": "e62189048cc863ea0c4473b471f241cd58454842423b0a51a7daf1376f51692f",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/affine.tfm",
+   "upstream": "itk-35b196e1",
+   "sha256": "a8cc81c99d4a531e439d65ea811ba730e9680c4700f1bc1643e1c33665a728a3",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/affine_float.mat",
+   "upstream": "itk-35b196e1",
+   "sha256": "3c121e3f3d88f38e78b4b5aa7161835008bedeb45019bd532243fd7434c1aac9",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/composite.tfm",
+   "upstream": "itk-35b196e1",
+   "sha256": "158a6fdea5031f31a22d18d2b83db3b8b26d9efa34031f5a045a217d1519a4ab",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/euler.mat",
+   "upstream": "itk-35b196e1",
+   "sha256": "3bcb53c6c8047d908d06be5ea6eadc618701e73bafdc27e75123acc6d8fc4860",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/euler.tfm",
+   "upstream": "itk-35b196e1",
+   "sha256": "7f8cb1ff59f9c2f70afe57dbf8e9d64b538ca7ab6595126a951762e6ff211c23",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/euler_zyx.tfm",
+   "upstream": "itk-35b196e1",
+   "sha256": "4c648feb51e73a5059cdb3745a3427c08f339d66fe0d3d7bded8cdcaba439bf7",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/points.txt",
+   "upstream": "itk-35b196e1",
+   "sha256": "6a451dcc28eadbab6d7e5108c53ec9b31badd2b72570674a4885139165edaa24",
+   "distribution": "test-data",
+   "transformation": "Computed by ITK at the pinned commit, no upstream data copied: TransformPoint of three points through each synthetic transform of the .tfm and .mat files beside it.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/similarity.tfm",
+   "upstream": "itk-35b196e1",
+   "sha256": "3b5f93c343d10a580f517181b4ef830f99150b3c460f0dd88de97708eef0f79d",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/itk/transforms/versor.tfm",
+   "upstream": "itk-35b196e1",
+   "sha256": "b129f5b1d407473587bd6ca9a5f2ca5d1c2f6ab3cedff7db8724c95fef122132",
+   "distribution": "test-data",
+   "transformation": "Written by ITK's TransformFileWriter at the pinned commit (built locally with MinGW-w64 GCC), no upstream data copied: a synthetic transform with arbitrary parameters; text files normalized to LF line ends.",
+   "sources": [
+    {
+     "file": "Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx",
+     "sha256": "97e8b9a7025c0e38fa7c3d83ba89d6cf5a7a542910124228844d6c0f4b94de66",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformInsightLegacy/src/itkTxtTransformIO.cxx"
+    },
+    {
+     "file": "Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx",
+     "sha256": "b6f79e2a57d58503a3d73536f56f778ba0e3bcde7ab51b0508974d17d5a09ba5",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx"
+    },
+    {
+     "file": "Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx",
+     "sha256": "2acfdcd3308115c5f144412005397855797e02bf806bfbcd9b52f5e45ba80ac6",
+     "url": "https://github.com/InsightSoftwareConsortium/ITK/blob/35b196e13c366e0386389a71c936a0436c568cea/Modules/ThirdParty/VNL/src/vxl/core/vnl/vnl_matlab_write.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/itk_transform_files/itkgen.cxx"
+  },
+  {
+   "path": "testdata/upstream/skimage/thresholds.json",
+   "upstream": "skimage-ee0a7a3e",
+   "sha256": "8e6d12c3000e95972df107b31e1a2b1b1ff5d38debb9ec31a5b5b0d6eb6e9426",
+   "distribution": "test-data",
+   "transformation": "Computed by scikit-image 0.26.0 on synthetic integer histograms, no upstream data copied: threshold_otsu, threshold_li, threshold_yen, threshold_isodata, threshold_triangle, threshold_mean, threshold_minimum and threshold_multiotsu (3 and 4 classes) of Gaussian-mixture and exponential-tail images.",
+   "sources": [
+    {
+     "file": "src/skimage/filters/thresholding.py",
+     "sha256": "283687dc40edbadc7d4b37d985fc4e9487e85e472caa3c0e0203c29e4fb619b4",
+     "url": "https://github.com/scikit-image/scikit-image/blob/ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8/src/skimage/filters/thresholding.py"
+    },
+    {
+     "file": "src/skimage/exposure/exposure.py",
+     "sha256": "ec68097777af0f4c4fef7903eebe0f4f96f8e24707057f972525843008f67a11",
+     "url": "https://github.com/scikit-image/scikit-image/blob/ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8/src/skimage/exposure/exposure.py"
+    },
+    {
+     "file": "src/skimage/filters/_multiotsu.pyx",
+     "unverified_reason": "Cython source compiled into the scikit-image 0.26.0 wheel; git blob 64ce85f1852b73d69f51dd1448087abf32cbe515 at the tag",
+     "url": "https://github.com/scikit-image/scikit-image/blob/ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8/src/skimage/filters/_multiotsu.pyx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/skimage_threshold_fixtures.py"
+  },
+  {
+   "path": "testdata/upstream/vtk/mesh.json",
+   "upstream": "vtk-f49a1dba",
+   "sha256": "9ab4a6d973db616b68f13c530cfe59e472598dd171b1cac14a0829b5de07dc6b",
+   "distribution": "test-data",
+   "transformation": "Computed by VTK 9.6.2 on synthetic phantoms, no upstream data copied: vtkSurfaceNets3D (smoothing off) and vtkFlyingEdges3D surfaces of integer-defined phantoms, with vtkMassProperties area and volume.",
+   "sources": [
+    {
+     "file": "Filters/Core/vtkSurfaceNets3D.cxx",
+     "sha256": "7024aa6ef5ce490a8382baefc476a1bc09fda4ef4cbfde884a65ed157cd07376",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Filters/Core/vtkSurfaceNets3D.cxx"
+    },
+    {
+     "file": "Filters/Core/vtkFlyingEdges3D.cxx",
+     "sha256": "1c001210c80a3863867819b1a1151520405748b687aaef38bf7fd60f6001719a",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Filters/Core/vtkFlyingEdges3D.cxx"
+    },
+    {
+     "file": "Filters/Core/vtkMassProperties.cxx",
+     "sha256": "aeecb3f8ac6d9d839385fdb8d11ebbc6700e3fe1b7222e6e49515a5def368de7",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Filters/Core/vtkMassProperties.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/vtk_fixtures.py"
+  },
+  {
+   "path": "testdata/upstream/vtk/meshpost.json",
+   "upstream": "vtk-f49a1dba",
+   "sha256": "8cfccafa3f09063949dd67cf8ebebb55e4c682dfc90a1ec91877847eb14e9e6b",
+   "distribution": "test-data",
+   "transformation": "Computed by VTK 9.6.2 on synthetic phantoms, no upstream data copied: vtkWindowedSincPolyDataFilter (20 iterations, Nuttall and Hamming windows, pass bands 0.1 and 0.01) of the SurfaceNets sphere phantom, vtkQuadricDecimation (target reduction 0.9) of the FlyingEdges sphere with vtkImplicitPolyDataDistance, and MaximumError cell counts of a 70x70 vtkSphereSource.",
+   "sources": [
+    {
+     "file": "Filters/Core/vtkWindowedSincPolyDataFilter.cxx",
+     "sha256": "37f8c169e972f8c4d1ec25be0414e4f89b9c2c513e7ca766d76dc89954fa8a68",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Filters/Core/vtkWindowedSincPolyDataFilter.cxx"
+    },
+    {
+     "file": "Filters/Core/vtkQuadricDecimation.cxx",
+     "sha256": "d81b6572b8d8c535f5c607097912f89c170f3d9651c8054331e2216b0ce56abc",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Filters/Core/vtkQuadricDecimation.cxx"
+    },
+    {
+     "file": "Filters/Core/vtkImplicitPolyDataDistance.cxx",
+     "sha256": "c8d5ce5d58068b7c7a6a8cb2d94c9285f57d3fe85913e7588b16a933009e008f",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Filters/Core/vtkImplicitPolyDataDistance.cxx"
+    },
+    {
+     "file": "Filters/Sources/vtkSphereSource.cxx",
+     "sha256": "1352e3eeb172c4e0af041fde7522ce5fd58770bb4624637f101af1d7df2f5d7e",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Filters/Sources/vtkSphereSource.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/vtk_fixtures.py"
+  },
+  {
+   "path": "testdata/upstream/vtk/prefilter.json",
+   "upstream": "vtk-f49a1dba",
+   "sha256": "17c3aa2d68c0bfe286800c01ab51cb53742004ce900e49798947c060ee47d8a3",
+   "distribution": "test-data",
+   "transformation": "Computed by VTK 9.6.2 on synthetic phantoms, no upstream data copied: vtkImageGaussianSmooth (3D, sigma 1 and 2 mm on 0.8x0.6x1.5 mm voxels, radius factor 3) and vtkImageMedian3D (3x3x3) of the reslice.json volume.",
+   "sources": [
+    {
+     "file": "Imaging/General/vtkImageGaussianSmooth.cxx",
+     "sha256": "b56133bb268fc01588e8a0c7119c8f03a2a873153d46a3cb256b1df93532a2d4",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/General/vtkImageGaussianSmooth.cxx"
+    },
+    {
+     "file": "Imaging/General/vtkImageMedian3D.cxx",
+     "sha256": "c2a99788886d78f0e44e1ffb630342f7b41b71786dc30976f38a6b458ba5e6f6",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/General/vtkImageMedian3D.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/vtk_fixtures.py"
+  },
+  {
+   "path": "testdata/upstream/vtk/resample.json",
+   "upstream": "vtk-f49a1dba",
+   "sha256": "9c15f5ebbfc6c2a275a40d92a99307a9714fd470b2e5022a205229fda10d282c",
+   "distribution": "test-data",
+   "transformation": "Computed by VTK 9.6.2 on synthetic phantoms, no upstream data copied: vtkImageReslice scale-and-translation resampling (nearest, linear, cubic; clamp border) of synthetic volumes with dimensions of 2, 3 and 4.",
+   "sources": [
+    {
+     "file": "Imaging/Core/vtkImageReslice.cxx",
+     "sha256": "9ef01d21b2cf700fc73c3c4a6f62048f1982e9fc8d447c2b8fa59687be487912",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/Core/vtkImageReslice.cxx"
+    },
+    {
+     "file": "Imaging/Core/vtkImageInterpolator.cxx",
+     "sha256": "479027f15ff7d73c56249b6ba45c79678382f07ec364116fee7fa082d36a9937",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/Core/vtkImageInterpolator.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/vtk_fixtures.py"
+  },
+  {
+   "path": "testdata/upstream/vtk/reslice.json",
+   "upstream": "vtk-f49a1dba",
+   "sha256": "ed7b77fbb12e2d11f7e90ca0b0f41a8a74275a3cdf011ccd58556a4073a92fb2",
+   "distribution": "test-data",
+   "transformation": "Computed by VTK 9.6.2 on synthetic phantoms, no upstream data copied: vtkImageInterpolator nearest, linear and cubic samples of a synthetic 16x14x12 volume.",
+   "sources": [
+    {
+     "file": "Imaging/Core/vtkImageInterpolator.cxx",
+     "sha256": "479027f15ff7d73c56249b6ba45c79678382f07ec364116fee7fa082d36a9937",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/Core/vtkImageInterpolator.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/vtk_fixtures.py"
+  },
+  {
+   "path": "testdata/upstream/vtk/slab.json",
+   "upstream": "vtk-f49a1dba",
+   "sha256": "a1740545efeed06ea9462b9f5b7386a38755aaae2a66ff7266c4c5d4ae2d2954",
+   "distribution": "test-data",
+   "transformation": "Computed by VTK 9.6.2 on synthetic phantoms, no upstream data copied: vtkImageReslice axial slabs (max, min, mean, sum; trapezoid integration and half slice-spacing samples) of the reslice.json volume.",
+   "sources": [
+    {
+     "file": "Imaging/Core/vtkImageReslice.cxx",
+     "sha256": "9ef01d21b2cf700fc73c3c4a6f62048f1982e9fc8d447c2b8fa59687be487912",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/Core/vtkImageReslice.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/vtk_fixtures.py"
+  },
+  {
+   "path": "testdata/upstream/vtk/stencil.json",
+   "upstream": "vtk-f49a1dba",
+   "sha256": "d0fb3427394c67ed587acece4c700db062bbc386bec0b0019c638d1c1f462c4d",
+   "distribution": "test-data",
+   "transformation": "Computed by VTK 9.6.2 on synthetic phantoms, no upstream data copied: vtkLassoStencilSource polygon and vtkImageEllipsoidSource ellipse masks on a 32x24 grid.",
+   "sources": [
+    {
+     "file": "Imaging/Stencil/vtkLassoStencilSource.cxx",
+     "sha256": "9f2f610c4ccdede81f0dc87ee19aebf92f889d28e2cad7d09433ab74c708a04c",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/Stencil/vtkLassoStencilSource.cxx"
+    },
+    {
+     "file": "Imaging/Sources/vtkImageEllipsoidSource.cxx",
+     "sha256": "5a0d7c00bfcd12143330c66cc5a8addbc1f86650ed5d0e241f2f41dbd0d5e6eb",
+     "url": "https://github.com/Kitware/VTK/blob/f49a1dbafa60b58ef22f6292ec58370453162192/Imaging/Sources/vtkImageEllipsoidSource.cxx"
+    }
+   ],
+   "generated_by": "dicom-go-validation/scripts/vtk_fixtures.py"
+  },
+  {
+   "path": "internal/brotli/dictionary.bin",
+   "upstream": "brotli-ed738e84",
+   "sha256": "20e42eb1b511c21806d4d227d07e5dd06877d8ce7b3a817f378f313653f35c70",
+   "distribution": "embedded",
+   "transformation": "The 122784-byte Brotli static dictionary (RFC 7932 Appendix A) stored as raw bytes and embedded by internal/brotli for JPEG XL brob boxes and jbrd tail data. Its SHA-256 is the one RFC 7932 states for the dictionary; the bytes are the kBrotliDictionaryData array of c/common/dictionary.c (v1.1.0 snapshot, also the comparison baseline recorded by the same author's Isis DICOM Viewer provenance). The decoder in internal/brotli is written from RFC 7932 and copies no Brotli code.",
+   "sources": [
+    {
+     "file": "c/common/dictionary.c",
+     "sha256": "03e47c2060c511144045e1cedc0174a8ae076941aaa8060ac3a65bcb33ab392b",
+     "url": "https://github.com/google/brotli/blob/ed738e842d2fbdf2d6459e39267a633c4a9b2f5d/c/common/dictionary.c"
+    }
+   ]
+  }
+ ]
+}
