@@ -14,7 +14,7 @@ import (
 
 const (
 	// DefaultQuality is the explicit default used by applications that opt in
-	// to lossy JPEG Baseline encoding.
+	// to lossy JPEG Baseline or Extended encoding.
 	DefaultQuality = 90
 	MinQuality     = 1
 	MaxQuality     = 100
@@ -22,37 +22,84 @@ const (
 	jpegLossyMethod = "ISO_10918_1"
 )
 
-var ErrInvalidQuality = errors.New("dicom: JPEG Baseline quality must be between 1 and 100")
+var ErrInvalidQuality = errors.New("dicom: JPEG quality must be between 1 and 100")
 
 // Encoder encodes canonical native 8-bit frames as JPEG Baseline Process 1.
 // Encoder is immutable after construction and safe for concurrent use.
 type Encoder struct {
-	quality int
+	quality         int
+	subsampling     Subsampling
+	optimizeHuffman bool
 }
+
+// Subsampling selects the chroma sampling factors of a color JPEG frame.
+// Monochrome always uses one component sampled at 1x1.
+type Subsampling uint8
+
+const (
+	// Subsampling420 preserves the previous encoder's color sampling.
+	Subsampling420 Subsampling = iota
+	Subsampling422
+	Subsampling444
+)
+
+// EncoderOptions configures Baseline Process 1. Quality is explicit (1..100).
+// The zero Subsampling is 4:2:0. OptimizeHuffman opts into the local encoder
+// with frame-specific Huffman tables; 4:2:2 and 4:4:4 always use that encoder
+// regardless of the flag. The legacy 4:2:0/monochrome encoder remains the
+// default, with standard Huffman tables and no coefficient-frame scratch.
+// All color modes return YBR_FULL_422: PS3.5
+// Table 8.2.1-1 permits that value for lossy YCbCr JPEG, not YBR_FULL. Actual
+// sampling is conveyed by SOF0; see PS3.3 C.7.6.3.1.2, YBR_FULL_422 note 3.
+// 4:2:2 and 4:4:4 retain more chroma samples and may produce larger frames
+// than 4:2:0 at the same quality. Optimizing Huffman tables adds CPU work and
+// coefficient scratch (128 bytes per padded 8x8 block); smaller output is not
+// guaranteed for every input. The quality scale matches image/jpeg but FDCT
+// rounding may differ, so optimized frames need not decode identically.
+type EncoderOptions struct {
+	Quality         int
+	Subsampling     Subsampling
+	OptimizeHuffman bool
+}
+
+var ErrInvalidSubsampling = errors.New("dicom: JPEG subsampling must be 4:2:0, 4:2:2 or 4:4:4")
 
 var _ pixeldata.FrameEncoder = (*Encoder)(nil)
 
 // NewEncoder returns a JPEG Baseline encoder with an explicit quality.
 func NewEncoder(quality int) (*Encoder, error) {
-	if quality < MinQuality || quality > MaxQuality {
+	return NewEncoderWithOptions(EncoderOptions{Quality: quality})
+}
+
+// NewEncoderWithOptions returns an immutable encoder with explicit sampling.
+func NewEncoderWithOptions(options EncoderOptions) (*Encoder, error) {
+	if options.Quality < MinQuality || options.Quality > MaxQuality {
 		return nil, ErrInvalidQuality
 	}
-	return &Encoder{quality: quality}, nil
+	if options.Subsampling > Subsampling444 {
+		return nil, ErrInvalidSubsampling
+	}
+	return &Encoder{quality: options.Quality, subsampling: options.Subsampling, optimizeHuffman: options.OptimizeHuffman || options.Subsampling != Subsampling420}, nil
 }
 
 // RegisterEncoder registers a JPEG Baseline encoder with explicit quality.
 func RegisterEncoder(registry pixeldata.EncoderRegistry, quality int) error {
+	return RegisterEncoderWithOptions(registry, EncoderOptions{Quality: quality})
+}
+
+// RegisterEncoderWithOptions registers explicit quality and sampling.
+func RegisterEncoderWithOptions(registry pixeldata.EncoderRegistry, options EncoderOptions) error {
 	if registry == nil {
 		return pixeldata.ErrEncoderRegistryNil
 	}
-	encoder, err := NewEncoder(quality)
+	encoder, err := NewEncoderWithOptions(options)
 	if err != nil {
 		return err
 	}
 	return registry.RegisterEncoder(UID, encoder)
 }
 
-// Quality reports the configured standard-library JPEG quality.
+// Quality reports the configured JPEG quality.
 func (e *Encoder) Quality() int {
 	if e == nil {
 		return 0
@@ -60,8 +107,26 @@ func (e *Encoder) Quality() int {
 	return e.quality
 }
 
+// Subsampling reports the configured color sampling (monochrome ignores it).
+func (e *Encoder) Subsampling() Subsampling {
+	if e == nil {
+		return Subsampling420
+	}
+	return e.subsampling
+}
+
+// OptimizesHuffman reports whether the local optimized encoder is selected.
+// Selecting 4:2:2 or 4:4:4 always enables it, also for monochrome frames.
+func (e *Encoder) OptimizesHuffman() bool {
+	return e != nil && e.optimizeHuffman
+}
+
 // Capabilities describes the canonical native frames accepted by Encoder.
-func (*Encoder) Capabilities() pixeldata.EncoderCapabilities {
+func (e *Encoder) Capabilities() pixeldata.EncoderCapabilities {
+	backend := "go-image-jpeg"
+	if e.OptimizesHuffman() {
+		backend = "pure-go"
+	}
 	return pixeldata.EncoderCapabilities{
 		TransferSyntaxUID:                UID,
 		BitsAllocated:                    []uint16{8},
@@ -73,7 +138,7 @@ func (*Encoder) Capabilities() pixeldata.EncoderCapabilities {
 		Lossless:                         false,
 		LossyMethod:                      jpegLossyMethod,
 		SupportsMultiFrame:               true,
-		Backend:                          "go-image-jpeg",
+		Backend:                          backend,
 	}
 }
 
@@ -88,6 +153,9 @@ func (e *Encoder) EncodeFrame(ctx context.Context, frame []byte, metadata pixeld
 	if e == nil || e.quality < MinQuality || e.quality > MaxQuality {
 		return pixeldata.EncodedFrame{}, ErrInvalidQuality
 	}
+	if e.subsampling > Subsampling444 {
+		return pixeldata.EncodedFrame{}, ErrInvalidSubsampling
+	}
 	frameLength, err := validateJPEGEncoderInput(metadata)
 	if err != nil {
 		return pixeldata.EncodedFrame{}, err
@@ -96,6 +164,9 @@ func (e *Encoder) EncodeFrame(ctx context.Context, frame []byte, metadata pixeld
 		return pixeldata.EncodedFrame{}, fmt.Errorf("%w: native frame length", pixeldata.ErrPixelDataSizeMismatch)
 	}
 
+	if e.optimizeHuffman {
+		return e.encodeBaseline(ctx, frame, metadata)
+	}
 	img, output, err := jpegImage(frame, metadata)
 	if err != nil {
 		return pixeldata.EncodedFrame{}, err
@@ -106,9 +177,6 @@ func (e *Encoder) EncodeFrame(ctx context.Context, frame []byte, metadata pixeld
 	}
 	if err := ctx.Err(); err != nil {
 		return pixeldata.EncodedFrame{}, err
-	}
-	if encoded.Len() == 0 {
-		return pixeldata.EncodedFrame{}, fmt.Errorf("%w: empty frame", pixeldata.ErrEncoderOutputInvalid)
 	}
 	output.Data = encoded.Bytes()
 	return output, nil

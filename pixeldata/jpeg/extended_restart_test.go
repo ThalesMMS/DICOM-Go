@@ -61,9 +61,65 @@ func TestRegisteredJPEGCodecsKeepBaselineAndExtendedModesSeparate(t *testing.T) 
 	if _, err := registry.DecodeFrames(transfer.JPEGBaseline.UID, baselinePixel, baselineObject); err != nil {
 		t.Fatalf("Baseline decoding SOF0 error = %v", err)
 	}
-	if _, err := registry.DecodeFrames(transfer.JPEGExtended.UID, baselinePixel, baselineObject); !errors.Is(err, ErrInvalidFragment) {
-		t.Fatalf("Extended decoding SOF0 error = %v, want ErrInvalidFragment", err)
+	// Baseline is a subset of Process 2 & 4: SOF0 decodes under .51 with an
+	// informative diagnostic.
+	frames, err := registry.DecodeFrames(transfer.JPEGExtended.UID, baselinePixel, baselineObject)
+	if err != nil {
+		t.Fatalf("Extended decoding SOF0 error = %v", err)
 	}
+	if len(frames.Diagnostics) != 1 || frames.Diagnostics[0] != pixeldata.DiagnosticJPEGBaselineUnderExtended {
+		t.Fatalf("diagnostics = %v", frames.Diagnostics)
+	}
+}
+
+func withSOF(t *testing.T, stream []byte, code byte) []byte {
+	t.Helper()
+	out := append([]byte(nil), stream...)
+	i := bytes.Index(out, []byte{0xff, 0xc0})
+	if i < 0 {
+		t.Fatal("no SOF0")
+	}
+	out[i+1] = code
+	return out
+}
+
+func TestJPEGProcessBySyntaxTable(t *testing.T) {
+	sof0 := encodeGrayJPEG(t, 2, 1, []byte{0, 255})
+	streams := map[string][]byte{
+		"SOF0": sof0,
+		"SOF1": makeJPEGExtendedSOF1(t, sof0),
+		"SOF2": withSOF(t, sof0, 0xc2),
+		"SOF3": withSOF(t, sof0, 0xc3),
+	}
+	registry, err := builtinLikeRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		uid  string
+		ok   map[string]bool
+		name string
+	}{
+		{transfer.JPEGBaseline.UID, map[string]bool{"SOF0": true}, ".50"},
+		{transfer.JPEGExtended.UID, map[string]bool{"SOF0": true, "SOF1": true}, ".51"},
+	}
+	for _, c := range cases {
+		for name, stream := range streams {
+			obj, pixel := jpegObjectWithFragments(t, 1, 2, stream)
+			_, err := registry.DecodeFrames(c.uid, pixel, obj)
+			if c.ok[name] && err != nil {
+				t.Errorf("%s %s: %v", c.name, name, err)
+			}
+			if !c.ok[name] && err == nil {
+				t.Errorf("%s %s: accepted", c.name, name)
+			}
+		}
+	}
+}
+
+func builtinLikeRegistry() (*pixeldata.MemoryRegistry, error) {
+	registry := pixeldata.NewMemoryRegistry()
+	return registry, Register(registry)
 }
 
 func TestJPEGExtendedProcess4RejectsDuplicateAndOutOfOrderMarkers(t *testing.T) {
@@ -86,10 +142,11 @@ func TestJPEGExtendedProcess4RejectsDuplicateAndOutOfOrderMarkers(t *testing.T) 
 		stream        []byte
 		rows, columns uint16
 	}{
-		{name: "duplicate DQT", stream: insertJPEGBytes(base, bytes.Index(base, dqt)+len(dqt), dqt), rows: 8, columns: 8},
 		{name: "duplicate SOF1", stream: insertJPEGBytes(base, bytes.Index(base, sos), sof), rows: 8, columns: 8},
 		{name: "duplicate SOS", stream: insertJPEGBytes(base, eoi, sos), rows: 8, columns: 8},
-		{name: "DQT after SOS", stream: insertJPEGBytes(base, eoi, dqt), rows: 8, columns: 8},
+		{name: "DQT after final scan", stream: insertJPEGBytes(base, eoi, dqt), rows: 8, columns: 8},
+		{name: "DHT after final scan", stream: insertJPEGBytes(base, eoi, jpegMarkerBytes(t, base, 0xc4)), rows: 8, columns: 8},
+		{name: "DRI after final scan", stream: insertJPEGBytes(base, eoi, dri), rows: 8, columns: 8},
 		{name: "duplicate DRI", stream: insertJPEGBytes(restart, bytes.Index(restart, dri)+len(dri), dri), rows: 8, columns: 16},
 	}
 	for _, test := range tests {
@@ -99,6 +156,44 @@ func TestJPEGExtendedProcess4RejectsDuplicateAndOutOfOrderMarkers(t *testing.T) 
 				t.Fatal("Decode() error = nil")
 			}
 		})
+	}
+}
+
+func TestJPEGExtendedProcess4TablesBetweenScans(t *testing.T) {
+	// Repeat an independently encoded gray scan for each RGB component.
+	// Each scan redefines the same table IDs and uses its own DRI/RST0.
+	base := color12Fixture(t, process4RestartFixtureBase64)
+	dqt := jpegMarkerBytes(t, base, 0xdb)
+	dc := jpegMarkerBytes(t, base, 0xc4)
+	ac := jpegMarkerBytes(t, base[bytes.Index(base, dc)+len(dc):], 0xc4)
+	dri := jpegMarkerBytes(t, base, 0xdd)
+	sos := jpegMarkerBytes(t, base, 0xda)
+	entropy := base[bytes.Index(base, sos)+len(sos) : bytes.Index(base, []byte{0xff, 0xd9})]
+	stream := []byte{0xff, 0xd8, 0xff, 0xc1, 0, 17, 12, 0, 8, 0, 16, 3, 'R', 0x11, 0, 'G', 0x11, 0, 'B', 0x11, 0}
+	for _, id := range []byte{'R', 'G', 'B'} {
+		stream = append(stream, dqt...)
+		stream = append(stream, dc...)
+		stream = append(stream, ac...)
+		stream = append(stream, dri...)
+		sos[5] = id
+		stream = append(stream, sos...)
+		stream = append(stream, entropy...)
+	}
+	stream = append(stream, 0xff, 0xd9)
+	obj, pixel := colorJPEGObject(t, stream, 8, 16, 16, 12, "RGB")
+	frames, err := New().Decode(pixel, obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := range 8 {
+		for x := range 16 {
+			for c := range 3 {
+				got := int(binary.LittleEndian.Uint16(frames.Data[0][((y*16+x)*3+c)*2:]))
+				if delta := got - (x*256 + y*16); delta < -1 || delta > 1 {
+					t.Fatalf("sample (%d,%d,%d) = %d", x, y, c, got)
+				}
+			}
+		}
 	}
 }
 

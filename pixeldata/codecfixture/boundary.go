@@ -69,9 +69,6 @@ func BoundaryCases() []Case {
 				fragments = append(fragments, rleFragment(planes...))
 			}
 			c.Elements = replaceElement(c.Elements, core.Element{Header: core.ElementHeader{Tag: core.NewTag(0x7fe0, 0x0010), VR: core.VROB, Length: core.UndefinedLength}, Value: core.FragmentSequence{Fragments: fragments}})
-			if bits == 32 {
-				c.ExpectedError, c.ExpectedFrames = ErrorUnsupportedMetadata, nil
-			}
 			cases = append(cases, c)
 		}
 	}
@@ -112,8 +109,10 @@ func colorBoundaryCases() []Case {
 			c.Name = fmt.Sprintf("rle-color-%s-planar-%t", photo, planar)
 			c.Syntax, c.RegisterCodecs = transfer.RLELossless, RegisterBuiltinCodecs
 			c.Elements = replaceElement(c.Elements, fragmentElement(rleFragment(planes...)))
-			if planar || photo != "RGB" {
-				c.ExpectedError, c.ExpectedFrames = ErrorUnsupportedMetadata, nil
+			// RLE segments are color-by-plane; decoded frames are interleaved
+			// whatever Planar Configuration says.
+			if planar {
+				c.DecodedLayout = c.ReferenceLayout
 			}
 			cases = append(cases, c)
 		}

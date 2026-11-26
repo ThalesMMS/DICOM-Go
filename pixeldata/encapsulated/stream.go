@@ -196,25 +196,13 @@ func (s *Stream) Item(length uint32, basic bool, value io.Reader) error {
 	if err != nil {
 		return err
 	}
-	end, eoiLength := false, 0
-	for i, b := range data {
-		if i%(32<<10) == 0 {
-			if err := s.ctx.Err(); err != nil {
-				return err
-			}
-		}
-		if end {
-			if i != len(data)-1 || i != eoiLength || b != 0 {
-				return fmt.Errorf("%w: frame ends inside Item", ErrLayout)
-			}
-			continue
-		}
-		end, err = s.scanner.feed(b)
-		if err != nil {
-			return err
-		}
-		if end {
-			eoiLength = i + 1
+	eoiLength, end, err := scanMarkerChunk(s.ctx, &s.scanner, data)
+	if err != nil {
+		return err
+	}
+	if end && eoiLength != len(data) {
+		if eoiLength != len(data)-1 || !validFramePad(s.format, data[eoiLength], int(s.frameBytes)) {
+			return fmt.Errorf("%w: frame ends inside Item", ErrLayout)
 		}
 	}
 	if len(s.offsets) != 0 && s.delivered+1 < len(s.offsets) {

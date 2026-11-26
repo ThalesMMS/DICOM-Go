@@ -1,12 +1,15 @@
 package jpegls
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"image"
 	"strings"
 
+	"github.com/ThalesMMS/dicom-go/internal/decoderecovery"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
 	"github.com/ThalesMMS/dicom-go/pixeldata/encapsulated"
@@ -27,6 +30,9 @@ type frameHeader struct {
 	near         int
 	ilv          int
 	preset       presetCodingParameters
+	// explicitThresholds reports an LSE segment that sets T1, T2 or T3.
+	explicitThresholds bool
+	hpTransform        int
 }
 
 type presetCodingParameters struct {
@@ -85,16 +91,7 @@ func (c *Codec) DecodeContext(ctx context.Context, pixel pixeldata.PixelData, ob
 	if err != nil {
 		return pixeldata.Frames{}, err
 	}
-	if _, err := validateEncoderInput(metadata); err != nil {
-		return pixeldata.Frames{}, err
-	}
-	if c.nearLossless && metadata.PixelRepresentation != 0 {
-		return pixeldata.Frames{}, fmt.Errorf("%w: signed JPEG-LS Near-Lossless is outside the qualified profile", pixeldata.ErrUnsupportedPixelRepresentation)
-	}
-	if c.nearLossless && strings.EqualFold(strings.TrimSpace(metadata.PhotometricInterpretation), "PALETTE COLOR") {
-		return pixeldata.Frames{}, fmt.Errorf("%w: palette color requires the JPEG-LS Lossless transfer syntax", pixeldata.ErrUnsupportedPhotometricInterpretation)
-	}
-	if err := validateDecodeRequestAllocation(metadata); err != nil {
+	if err := c.validateDecodeMetadata(metadata); err != nil {
 		return pixeldata.Frames{}, err
 	}
 	codestreams, err := encapsulated.FromFragments(ctx, pixel.Sequence, obj, metadata.NumberOfFrames, encapsulated.JPEGLS, encapsulated.Limits{})
@@ -105,18 +102,57 @@ func (c *Codec) DecodeContext(ctx context.Context, pixel pixeldata.PixelData, ob
 		return pixeldata.Frames{}, err
 	}
 	frames := make([][]byte, codestreams.Len())
+	recovery := decoderecovery.From(ctx)
+	var result pixeldata.Frames
+	if codestreams.Recovery().BasicOffsetTableIgnored {
+		result.AddDiagnostic(pixeldata.DiagnosticBasicOffsetTableIgnored)
+	}
 	for i := range frames {
 		codestream, err := codestreams.Frame(ctx, i)
 		if err != nil {
 			return pixeldata.Frames{}, err
 		}
-		decoded, err := decodeFrameModeContext(ctx, codestream.Data, metadata, c.nearLossless)
+		decoded, err := c.decodeNativeFrame(ctx, codestream.Data, metadata, nil, recovery, &result)
 		if err != nil {
 			return pixeldata.Frames{}, fmt.Errorf("decode JPEG-LS frame %d: %w", i, err)
 		}
 		frames[i] = decoded
 	}
-	return pixeldata.Frames{Rows: int(metadata.Rows), Columns: int(metadata.Columns), Data: frames}, nil
+	result.Rows, result.Columns, result.Data = int(metadata.Rows), int(metadata.Columns), frames
+	return result, nil
+}
+
+func (c *Codec) validateDecodeMetadata(metadata pixeldata.Metadata) error {
+	if _, err := validateEncoderInput(metadata); err != nil {
+		return err
+	}
+	if c.nearLossless && strings.EqualFold(strings.TrimSpace(metadata.PhotometricInterpretation), "PALETTE COLOR") {
+		return fmt.Errorf("%w: palette color requires the JPEG-LS Lossless transfer syntax", pixeldata.ErrUnsupportedPhotometricInterpretation)
+	}
+	return validateDecodeRequestAllocation(metadata)
+}
+
+func (c *Codec) decodeNativeFrame(ctx context.Context, stream []byte, metadata pixeldata.Metadata, dst []byte, recovery decoderecovery.Options, result *pixeldata.Frames) ([]byte, error) {
+	pad, padded := encapsulated.TrailingPad(stream)
+	if padded {
+		stream = stream[:len(stream)-1]
+	}
+	pixels, jai, hp, err := decodeFrameRecoveries(ctx, stream, metadata, c.nearLossless, recovery.JPEGLSJAIThresholds, recovery.JPEGLSHPColorTransforms, dst)
+	if err != nil {
+		return pixels, err
+	}
+	// PS3.5 A.4 does not fix the value of the Item pad byte.
+	if padded && pad != 0 {
+		result.AddDiagnostic(pixeldata.DiagnosticNonZeroFramePad)
+	}
+	if jai {
+		result.AddDiagnostic(pixeldata.DiagnosticJPEGLSJAIThresholds)
+	}
+	if hp != 0 {
+		result.AddDiagnostic(hpDiagnostic(hp))
+		result.AddDiagnostic(pixeldata.DiagnosticJPEGLSHPBackendPureGo)
+	}
+	return pixels, nil
 }
 
 func decodeFrame(stream []byte, metadata pixeldata.Metadata) ([]byte, error) {
@@ -128,53 +164,112 @@ func decodeFrameContext(ctx context.Context, stream []byte, metadata pixeldata.M
 }
 
 func decodeFrameModeContext(ctx context.Context, stream []byte, metadata pixeldata.Metadata, nearLossless bool) ([]byte, error) {
-	header, scans, err := splitScans(stream)
+	decoded, _, err := decodeFrameRecoveryContext(ctx, stream, metadata, nearLossless, false)
+	return decoded, err
+}
+
+// decodeFrameRecoveryContext decodes a frame; with jaiThresholds, a frame of
+// more than 12 bits without LSE thresholds uses the JAI encoder's
+// thresholds, and jai reports it.
+func decodeFrameRecoveryContext(ctx context.Context, stream []byte, metadata pixeldata.Metadata, nearLossless, jaiThresholds bool) (decoded []byte, jai bool, err error) {
+	decoded, jai, _, err = decodeFrameRecoveries(ctx, stream, metadata, nearLossless, jaiThresholds, false, nil)
+	return
+}
+
+func decodeFrameRecoveries(ctx context.Context, stream []byte, metadata pixeldata.Metadata, nearLossless, jaiThresholds, allowHP bool, dst []byte) (decoded []byte, jai bool, hp int, err error) {
+	header, scans, err := splitScansWithHP(stream, allowHP)
 	if err != nil {
+		return nil, false, 0, err
+	}
+	if header.hpTransform != 0 {
+		if nearLossless {
+			return nil, false, 0, fmt.Errorf("%w: HP color transforms require the Lossless syntax", ErrInvalidCodestream)
+		}
+		if err := validateHPMetadata(header, metadata); err != nil {
+			return nil, false, 0, err
+		}
+	}
+	if jaiThresholds && header.precision > 12 && !header.explicitThresholds {
+		preset, err := withJAIThresholds(header.preset, header.precision)
+		if err != nil {
+			return nil, false, 0, err
+		}
+		header.preset, jai = preset, true
+	}
+	decoded, err = decodeSplitFrame(ctx, header, scans, metadata, nearLossless, dst)
+	if err == nil && header.hpTransform != 0 {
+		err = inverseHP(ctx, decoded, header.precision, header.hpTransform)
+	}
+	return decoded, jai && err == nil, header.hpTransform, err
+}
+
+// withJAIThresholds sets the thresholds JAI ImageIO computes for a frame of
+// precision bits: the T.87 defaults with FACTOR = (MAXVAL + 128) / 256 for
+// MAXVAL = 2^precision - 1, without the standard's min(MAXVAL, 4095).
+func withJAIThresholds(preset presetCodingParameters, precision int) (presetCodingParameters, error) {
+	factor := ((1 << precision) - 1 + 128) / 256
+	near := preset.near
+	preset.t1 = factor*(basicT1-2) + 2 + 3*near
+	preset.t2 = factor*(basicT2-3) + 3 + 5*near
+	preset.t3 = factor*(basicT3-4) + 4 + 7*near
+	if preset.t1 < near+1 || preset.t1 > preset.t2 || preset.t2 > preset.t3 || preset.t3 > preset.maxval {
+		return presetCodingParameters{}, fmt.Errorf("%w: JAI thresholds do not fit MAXVAL %d", ErrInvalidCodestream, preset.maxval)
+	}
+	return preset, nil
+}
+
+func decodeSplitFrame(ctx context.Context, header frameHeader, scans []scanData, metadata pixeldata.Metadata, nearLossless bool, dst []byte) ([]byte, error) {
+	if err := validateSplitFrame(header, metadata, nearLossless); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	native := dst
+	if native == nil {
+		native = make([]byte, metadata.FrameSize())
+	}
+	bounds := image.Rect(0, 0, header.columns, header.rows)
+	for _, scan := range scans {
+		component := 0
+		for index, id := range header.componentIDs {
+			if id == scan.componentIDs[0] {
+				component = index
+				break
+			}
+		}
+		if err := decodeNativeScan(ctx, scan.entropy, header, header.preset, native, bounds, component, int(metadata.BitsAllocated/8)); err != nil {
+			// A caller destination may contain partial rows or components.
+			return dst, err
+		}
+	}
+	return native, nil
+}
+
+func validateSplitFrame(header frameHeader, metadata pixeldata.Metadata, nearLossless bool) error {
 	if header.near != 0 && !nearLossless {
-		return nil, fmt.Errorf("%w: NEAR=%d", ErrInvalidCodestream, header.near)
+		return fmt.Errorf("%w: NEAR=%d", ErrInvalidCodestream, header.near)
 	}
 	if header.rows != int(metadata.Rows) || header.columns != int(metadata.Columns) {
-		return nil, fmt.Errorf("%w: JPEG-LS size %dx%d metadata %dx%d", pixeldata.ErrPixelDataSizeMismatch, header.columns, header.rows, metadata.Columns, metadata.Rows)
+		return fmt.Errorf("%w: JPEG-LS size %dx%d metadata %dx%d", pixeldata.ErrPixelDataSizeMismatch, header.columns, header.rows, metadata.Columns, metadata.Rows)
 	}
 	if header.components != int(metadata.SamplesPerPixel) {
-		return nil, fmt.Errorf("%w: JPEG-LS components=%d SamplesPerPixel=%d", pixeldata.ErrPixelDataSizeMismatch, header.components, metadata.SamplesPerPixel)
+		return fmt.Errorf("%w: JPEG-LS components=%d SamplesPerPixel=%d", pixeldata.ErrPixelDataSizeMismatch, header.components, metadata.SamplesPerPixel)
 	}
 	if header.precision != int(metadata.BitsStored) && header.precision != int(metadata.BitsAllocated) {
-		return nil, fmt.Errorf("%w: JPEG-LS precision=%d BitsStored=%d BitsAllocated=%d", pixeldata.ErrPixelDataSizeMismatch, header.precision, metadata.BitsStored, metadata.BitsAllocated)
+		return fmt.Errorf("%w: JPEG-LS precision=%d BitsStored=%d BitsAllocated=%d", pixeldata.ErrPixelDataSizeMismatch, header.precision, metadata.BitsStored, metadata.BitsAllocated)
 	}
 	if (header.ilv != 0 || nearLossless) && header.precision != int(metadata.BitsStored) {
-		return nil, fmt.Errorf("%w: JPEG-LS precision must match BitsStored for this profile", pixeldata.ErrPixelDataSizeMismatch)
+		return fmt.Errorf("%w: JPEG-LS precision must match BitsStored for this profile", pixeldata.ErrPixelDataSizeMismatch)
 	}
 	if err := validateDecodeAllocation(header, metadata); err != nil {
-		return nil, err
+		return err
 	}
 	maxval := (1 << header.precision) - 1
-	preset := header.preset
-	if (header.ilv != 0 || nearLossless) && preset.maxval != maxval {
-		return nil, fmt.Errorf("%w: custom MAXVAL is outside this qualified profile", ErrInvalidCodestream)
+	if (header.ilv != 0 || nearLossless) && header.preset.maxval != maxval {
+		return fmt.Errorf("%w: custom MAXVAL is outside this qualified profile", ErrInvalidCodestream)
 	}
-	planes := make([][]int, header.components)
-	componentIndex := make(map[byte]int, len(header.componentIDs))
-	for index, id := range header.componentIDs {
-		componentIndex[id] = index
-	}
-	for _, scan := range scans {
-		if header.ilv != 0 {
-			planes, err = decodeInterleavedScan(ctx, scan.entropy, header.columns, header.rows, len(scan.componentIDs), header.ilv, preset)
-			if err != nil {
-				return nil, err
-			}
-			break // The qualified interleaved profile has one complete scan in SOF order.
-		}
-		plane, err := decodeScanContext(ctx, scan.entropy, header.columns, header.rows, preset)
-		if err != nil {
-			return nil, err
-		}
-		planes[componentIndex[scan.componentIDs[0]]] = plane
-	}
-	return samplesToNativeContext(ctx, planes, metadata, preset.maxval)
+	return nil
 }
 
 func parseFrameHeader(stream []byte) (frameHeader, error) {
@@ -183,6 +278,14 @@ func parseFrameHeader(stream []byte) (frameHeader, error) {
 }
 
 func splitScans(stream []byte) (frameHeader, []scanData, error) {
+	return splitScansWithHP(stream, false)
+}
+
+func splitScansWithHP(stream []byte, allowHP bool) (frameHeader, []scanData, error) {
+	return splitScansWithHPContext(context.Background(), stream, allowHP)
+}
+
+func splitScansWithHPContext(ctx context.Context, stream []byte, allowHP bool) (frameHeader, []scanData, error) {
 	var header frameHeader
 	if len(stream) < 4 || stream[0] != 0xff || stream[1] != 0xd8 {
 		return frameHeader{}, nil, fmt.Errorf("%w: missing SOI", ErrInvalidCodestream)
@@ -191,13 +294,22 @@ func splitScans(stream []byte) (frameHeader, []scanData, error) {
 	var scans []scanData
 	seenSOF := false
 	seenLSE := false
+	seenHP := false
 	seenScan := make(map[byte]bool)
 	for i+1 < len(stream) {
+		if err := ctx.Err(); err != nil {
+			return frameHeader{}, nil, err
+		}
 		if stream[i] != 0xff {
 			return frameHeader{}, nil, fmt.Errorf("%w: expected marker", ErrInvalidCodestream)
 		}
 		for i < len(stream) && stream[i] == 0xff {
 			i++
+			if i&4095 == 0 {
+				if err := ctx.Err(); err != nil {
+					return frameHeader{}, nil, err
+				}
+			}
 		}
 		if i >= len(stream) {
 			return frameHeader{}, nil, fmt.Errorf("%w: truncated marker", ErrInvalidCodestream)
@@ -217,6 +329,11 @@ func splitScans(stream []byte) (frameHeader, []scanData, error) {
 				return frameHeader{}, nil, err
 			}
 			header.preset = preset
+			if header.hpTransform != 0 {
+				if err := validateHPHeader(header); err != nil {
+					return frameHeader{}, nil, err
+				}
+			}
 			trailing := stream[i:]
 			if len(trailing) > 1 || len(trailing) == 1 && trailing[0] != 0 {
 				return frameHeader{}, nil, fmt.Errorf("%w: trailing data after EOI", ErrInvalidCodestream)
@@ -234,6 +351,7 @@ func splitScans(stream []byte) (frameHeader, []scanData, error) {
 			if err != nil {
 				return frameHeader{}, nil, err
 			}
+			parsed.hpTransform = header.hpTransform
 			header = parsed
 			seenSOF = true
 			i = next
@@ -261,7 +379,7 @@ func splitScans(stream []byte) (frameHeader, []scanData, error) {
 			} else if header.near != near || header.ilv != ilv {
 				return frameHeader{}, nil, fmt.Errorf("%w: mixed SOS parameters", ErrInvalidCodestream)
 			}
-			entropy, end, err := readEntropy(stream, next)
+			entropy, end, err := readEntropy(ctx, stream, next)
 			if err != nil {
 				return frameHeader{}, nil, err
 			}
@@ -280,6 +398,7 @@ func splitScans(stream []byte) (frameHeader, []scanData, error) {
 				return frameHeader{}, nil, err
 			}
 			header.preset = preset
+			header.explicitThresholds = preset.t1 != 0 || preset.t2 != 0 || preset.t3 != 0
 			seenLSE = true
 			i = next
 		case 0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
@@ -288,8 +407,12 @@ func splitScans(stream []byte) (frameHeader, []scanData, error) {
 			if err != nil {
 				return frameHeader{}, nil, err
 			}
-			if marker == 0xe8 && len(seg) >= 6 && string(seg[2:6]) == "mrfx" && (len(seg) != 7 || seg[6] != 0) {
-				return frameHeader{}, nil, fmt.Errorf("%w: unsupported HP color transform", ErrInvalidCodestream)
+			if marker == 0xe8 && len(seg) >= 6 && string(seg[2:6]) == "mrfx" {
+				if len(seg) != 7 || seenHP || len(scans) != 0 || seg[6] > 3 || seg[6] != 0 && !allowHP {
+					return frameHeader{}, nil, fmt.Errorf("%w: unsupported, duplicate or misplaced HP color transform", ErrInvalidCodestream)
+				}
+				seenHP = true
+				header.hpTransform = int(seg[6])
 			}
 			i = next
 		default:
@@ -421,23 +544,25 @@ func resolveCodingParameters(preset presetCodingParameters, precision, near int)
 	return preset, nil
 }
 
-func readEntropy(stream []byte, start int) ([]byte, int, error) {
-	i := start
-	for i+1 < len(stream) {
-		if stream[i] != 0xff {
-			i++
-			continue
+func readEntropy(ctx context.Context, stream []byte, start int) ([]byte, int, error) {
+	for offset := start; offset < len(stream)-1; {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
 		}
-		if i+1 < len(stream) && stream[i+1] == 0x00 {
-			i += 2
-			continue
+		end := offset + min(4096, len(stream)-1-offset)
+		for offset < end {
+			n := bytes.IndexByte(stream[offset:end], 0xff)
+			if n < 0 {
+				break
+			}
+			marker := offset + n
+			// JPEG-LS byte stuffing leaves the next byte's high bit zero.
+			if stream[marker+1] >= 0x80 {
+				return stream[start:marker], marker, nil
+			}
+			offset = marker + 2
 		}
-		// JPEG-LS stuffed 0 bit means next byte has MSB 0, so byte < 0x80.
-		if i+1 < len(stream) && stream[i+1] < 0x80 {
-			i++
-			continue
-		}
-		return stream[start:i], i, nil
+		offset = max(offset, end)
 	}
 	return nil, 0, fmt.Errorf("%w: truncated entropy", ErrInvalidCodestream)
 }
@@ -450,7 +575,7 @@ func decodeScan(entropy []byte, width, height, maxval int) ([]int, error) {
 func decodeScanContext(ctx context.Context, entropy []byte, width, height int, preset presetCodingParameters) ([]int, error) {
 	st := newLocoStateForPreset(preset)
 	r := &bitReader{buf: entropy}
-	recon := make([]int, width*height)
+	recon := getSamples(width * height)
 	for y := 0; y < height; y++ {
 		if err := decodeLine(ctx, r, st, recon, width, y); err != nil {
 			return nil, err
@@ -469,7 +594,14 @@ func decodeLine(ctx context.Context, r *bitReader, st *locoState, recon []int, w
 				return err
 			}
 		}
-		ra, rb, rc, rd := neighbors(recon, width, x, y)
+		var ra, rb, rc, rd int
+		if x > 0 && y > 0 && x+1 < width {
+			// Interior sample: all four neighbors are real samples.
+			i := y*width + x
+			ra, rb, rc, rd = recon[i-1], recon[i-width], recon[i-width-1], recon[i-width+1]
+		} else {
+			ra, rb, rc, rd = neighbors(recon, width, x, y)
+		}
 		q1 := st.quantize(rd - rb)
 		q2 := st.quantize(rb - rc)
 		q3 := st.quantize(rc - ra)
@@ -509,26 +641,26 @@ func validateEntropyPadding(r *bitReader) error {
 	return nil
 }
 
+// errOutsideModularRange reports a decoded prediction error that the modulo
+// reduction of T.87 A.4.5 cannot produce.
+var errOutsideModularRange = fmt.Errorf("%w: prediction error outside the modulo range", ErrInvalidCodestream)
+
 func decodeRegular(r *bitReader, st *locoState, ra, rb, rc, q1, q2, q3 int) (int, error) {
-	q := 81*q1 + 9*q2 + q3
-	sign := 1
-	if q < 0 {
-		q = -q
-		sign = -1
-	}
-	px := predict(ra, rb, rc) + sign*st.c[q]
-	if px > st.maxval {
-		px = st.maxval
-	}
-	if px < 0 {
-		px = 0
-	}
-	k := st.golombK(st.a[q], st.n[q])
+	q, sign := contextIndex(q1, q2, q3)
+	cx := &st.ctx[q]
+	px := clampInt(predict(ra, rb, rc)+sign*cx.c, 0, st.maxval)
+	k := cx.k
 	mapped, err := readLimitedGolomb(r, k, st.limit, st.qbpp)
 	if err != nil {
 		return 0, err
 	}
 	errval := st.unmapRegular(mapped, q, k)
+	// A forged code can carry an error no encoder produces; accumulating it
+	// would let A, and with it k and the length of the next code, grow
+	// without bound.
+	if !st.inModularRange(errval) {
+		return 0, errOutsideModularRange
+	}
 	st.updateRegular(q, errval)
 	if sign < 0 {
 		errval = -errval
@@ -614,17 +746,17 @@ func decodeRunInterruptionType(r *bitReader, st *locoState, ra, rb, glimitIndex,
 		px = ra
 	}
 	q := 365 + riType
-	temp := st.a[q]
+	temp := st.ctx[q].a
 	if riType == 1 {
-		temp = st.a[q] + st.n[q]>>1
+		temp = st.ctx[q].a + st.ctx[q].n>>1
 	}
-	k := st.golombK(temp, st.n[q])
+	k := st.golombK(temp, st.ctx[q].n)
 	glimit := st.limit - runJ[glimitIndex] - 1
 	mapped, err := readLimitedGolomb(r, k, glimit, st.qbpp)
 	if err != nil {
 		return 0, err
 	}
-	posBias := k == 0 && 2*st.nn[riType] < st.n[q]
+	posBias := k == 0 && 2*st.nn[riType] < st.ctx[q].n
 	t := mapped + riType
 	var errval int
 	if posBias {
@@ -639,22 +771,25 @@ func decodeRunInterruptionType(r *bitReader, st *locoState, ra, rb, glimitIndex,
 		errval = -(t + 1) / 2
 	}
 	mapFlag := 0
-	if (k == 0 && errval > 0 && 2*st.nn[riType] < st.n[q]) || (errval < 0 && 2*st.nn[riType] >= st.n[q]) || (errval < 0 && k != 0) {
+	if (k == 0 && errval > 0 && 2*st.nn[riType] < st.ctx[q].n) || (errval < 0 && 2*st.nn[riType] >= st.ctx[q].n) || (errval < 0 && k != 0) {
 		mapFlag = 1
 	}
 	if 2*absInt(errval)-riType-mapFlag != mapped {
 		return 0, fmt.Errorf("%w: run interruption mapping", ErrInvalidCodestream)
 	}
+	if !st.inModularRange(errval) {
+		return 0, errOutsideModularRange
+	}
 	if errval < 0 {
 		st.nn[riType]++
 	}
-	st.a[q] += (mapped + 1 - riType) >> 1
-	if st.n[q] == st.reset {
-		st.a[q] >>= 1
-		st.n[q] >>= 1
+	st.ctx[q].a += (mapped + 1 - riType) >> 1
+	if st.ctx[q].n == st.reset {
+		st.ctx[q].a >>= 1
+		st.ctx[q].n >>= 1
 		st.nn[riType] >>= 1
 	}
-	st.n[q]++
+	st.ctx[q].n++
 	// Adapt Nn using the mapped, sign-normalized error (T.87 A.7.2).
 	if riType == 0 && ra > rb {
 		errval = -errval

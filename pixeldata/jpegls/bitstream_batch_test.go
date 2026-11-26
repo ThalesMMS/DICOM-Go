@@ -7,7 +7,7 @@ import (
 )
 
 // The bit-at-a-time reference retains the former readBits semantics, including
-// state after stuffed bytes, an invalid marker and truncated input.
+// the position after stuffed bytes, an invalid marker and truncated input.
 func referenceReadBits(reader *bitReader, n int) (uint32, error) {
 	var value uint32
 	for i := 0; i < n; i++ {
@@ -18,6 +18,23 @@ func referenceReadBits(reader *bitReader, n int) (uint32, error) {
 		value = (value << 1) | bit
 	}
 	return value, nil
+}
+
+// consumedBits is the number of entropy bits a reader has consumed: the
+// bits of the bytes it loaded (7 for a byte after 0xFF, 8 otherwise) less
+// those still pending.
+func consumedBits(r *bitReader) int {
+	loaded := 0
+	afterFF := false
+	for _, b := range r.buf[:r.pos] {
+		if afterFF {
+			loaded += 7
+		} else {
+			loaded += 8
+		}
+		afterFF = !afterFF && b == 0xff
+	}
+	return loaded - r.count
 }
 
 func checkBatchedReadBits(t testing.TB, raw []byte, widths []byte) {
@@ -31,8 +48,10 @@ func checkBatchedReadBits(t testing.TB, raw []byte, widths []byte) {
 		if got != want || (gotErr == nil) != (wantErr == nil) || errors.Is(gotErr, io.ErrUnexpectedEOF) != errors.Is(wantErr, io.ErrUnexpectedEOF) || errors.Is(gotErr, ErrInvalidCodestream) != errors.Is(wantErr, ErrInvalidCodestream) {
 			t.Fatalf("readBits(%d): result/error differs", n)
 		}
-		if actual.pos != reference.pos || actual.count != reference.count || actual.val != reference.val || actual.lastWasFF != reference.lastWasFF {
-			t.Fatalf("readBits(%d): reader state differs", n)
+		// The readers may have loaded different amounts ahead; what must
+		// agree is how many entropy bits have been consumed.
+		if consumedBits(&actual) != consumedBits(&reference) {
+			t.Fatalf("readBits(%d): consumed %d bits, reference %d", n, consumedBits(&actual), consumedBits(&reference))
 		}
 	}
 }

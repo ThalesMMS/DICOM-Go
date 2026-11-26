@@ -232,8 +232,8 @@ func TestDecodeFramesJPEGBaselineRejectsUnsupportedMetadata(t *testing.T) {
 		},
 		{
 			name:          "pixel representation",
-			samplesPixel:  1,
-			photometric:   "MONOCHROME2",
+			samplesPixel:  3,
+			photometric:   "RGB",
 			opts:          jpegMetadataOptions{pixelRepresentation: 1},
 			want:          pixeldata.ErrUnsupportedPixelRepresentation,
 			wantSubstring: "PixelRepresentation=1",

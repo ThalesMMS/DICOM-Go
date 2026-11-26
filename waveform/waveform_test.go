@@ -33,13 +33,15 @@ func TestIsStorageSOPClassProfiles(t *testing.T) {
 		uidElectrooculogram,
 		uidSleepEEG,
 		uidBodyPosition,
+		uidBasicVoiceAudio,
+		uidGeneralAudio,
 	}
 	for _, uid := range supported {
 		if !IsStorageSOPClass(uid) {
 			t.Errorf("IsStorageSOPClass(%q) = false", uid)
 		}
 	}
-	for _, uid := range []string{uidBasicVoiceAudio, uidGeneralAudio, uidUltrasoundWaveform, "1.2.3"} {
+	for _, uid := range []string{uidUltrasoundWaveform, "1.2.3"} {
 		if IsStorageSOPClass(uid) {
 			t.Errorf("IsStorageSOPClass(%q) = true", uid)
 		}
@@ -867,7 +869,7 @@ func TestConcurrentIndexBuildSharesOneScan(t *testing.T) {
 }
 
 func TestUnsupportedRawFallbacks(t *testing.T) {
-	audioFile := testFile(uidGeneralAudio, binary.LittleEndian, nil, testGroup{
+	audioFile := testFile(uidGeneralAudio, binary.LittleEndian, []core.Element{stringElement(core.NewTag(0x0008, 0x0060), core.VRCS, "AU")}, testGroup{
 		frequency:      8_000,
 		bits:           8,
 		interpretation: "MB",

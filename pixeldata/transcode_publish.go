@@ -5,13 +5,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"time"
 
 	"github.com/ThalesMMS/dicom-go/object"
 )
 
 type transcodePathTxn struct {
+	rawInput        *rawTranscodeInput
+	temporary       *transcodeTemporaryBudget
 	sourcePath      string
 	source          *os.File
 	sourceInfo      os.FileInfo
@@ -20,9 +25,16 @@ type transcodePathTxn struct {
 	parentInfo      os.FileInfo
 	destinationName string
 	previous        transcodeFileSnapshot
+	durability      TranscodeDurability
+	beforePublish   func(context.Context) error
+	fileSynced      bool
+	directorySynced bool
+	timings         TranscodeTimings
 }
 
 type stagedTranscodeFile struct {
+	temporary  *transcodeTemporaryBudget
+	charged    int64
 	name       string
 	file       *os.File
 	open       bool
@@ -102,7 +114,13 @@ func (txn *transcodePathTxn) close() {
 	}
 }
 
-func stageTranscodeFile(ctx context.Context, txn *transcodePathTxn, output *object.File, limits TranscodeLimits) (_ *stagedTranscodeFile, err error) {
+func stageTranscodeFile(ctx context.Context, txn *transcodePathTxn, output *object.File, limits TranscodeLimits) (*stagedTranscodeFile, error) {
+	return stageTranscodeWith(ctx, txn, limits, func(w io.Writer) error { return object.WriteFile(w, output) })
+}
+
+// stageTranscodeWith writes a private temporary file beside the destination
+// with write, bounded by MaxOutputBytes, and syncs it.
+func stageTranscodeWith(ctx context.Context, txn *transcodePathTxn, limits TranscodeLimits, write func(io.Writer) error) (_ *stagedTranscodeFile, err error) {
 	name, err := newTranscodeTempName()
 	if err != nil {
 		return nil, &TranscodeError{Stage: "temporary", Err: ErrTranscodeTransaction}
@@ -111,7 +129,7 @@ func stageTranscodeFile(ctx context.Context, txn *transcodePathTxn, output *obje
 	if err != nil {
 		return nil, &TranscodeError{Stage: "temporary", Err: ErrTranscodeTransaction}
 	}
-	staged := &stagedTranscodeFile{name: name, file: temp, open: true, entryOwned: true}
+	staged := &stagedTranscodeFile{name: name, file: temp, open: true, entryOwned: true, temporary: txn.temporary}
 	succeeded := false
 	defer func() {
 		if !succeeded {
@@ -121,10 +139,21 @@ func stageTranscodeFile(ctx context.Context, txn *transcodePathTxn, output *obje
 	if err := temp.Chmod(0o600); err != nil {
 		return nil, &TranscodeError{Stage: "temporary", Err: ErrTranscodeTransaction}
 	}
-	writer := &transcodeBoundedWriter{ctx: ctx, writer: temp, remaining: limits.MaxOutputBytes}
-	writeErr := object.WriteFile(writer, output)
-	if writeErr == nil {
-		writeErr = temp.Sync()
+	var outputWriter io.Writer = temp
+	if txn.temporary != nil {
+		outputWriter = transcodeTemporaryWriter{staged: staged}
+	}
+	writer := &transcodeBoundedWriter{ctx: ctx, writer: outputWriter, remaining: limits.MaxOutputBytes}
+	start := time.Now()
+	writeErr := write(writer)
+	txn.timings.OutputWriteTime += time.Since(start)
+	if writeErr == nil && txn.durability == TranscodeDurable {
+		if writeErr = ctx.Err(); writeErr == nil {
+			start = time.Now()
+			writeErr = syncTranscodeStagedFile(temp)
+			txn.timings.FileSyncTime += time.Since(start)
+			txn.fileSynced = writeErr == nil
+		}
 	}
 	if writeErr == nil {
 		_, writeErr = temp.Seek(0, 0)
@@ -201,6 +230,11 @@ func publishStagedTranscode(ctx context.Context, txn *transcodePathTxn, staged *
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if txn.beforePublish != nil {
+		if err := txn.beforePublish(ctx); err != nil {
+			return false, err
+		}
+	}
 	if err := replaceTranscodedFileAt(txn.parent, staged.file, staged.name, txn.destinationName, txn.previous); err != nil {
 		if errors.Is(err, ErrTranscodeDestinationUnsafe) {
 			return false, ErrTranscodeDestinationUnsafe
@@ -209,10 +243,31 @@ func publishStagedTranscode(ctx context.Context, txn *transcodePathTxn, staged *
 	}
 	staged.open = false
 	staged.entryOwned = false
-	if err := syncTranscodeDirectory(txn.parent); err != nil {
-		return true, &TranscodeError{Stage: "durability", Err: ErrTranscodeTransaction}
+	if txn.durability == TranscodeDurable {
+		start := time.Now()
+		err := syncTranscodeDestinationDirectory(txn.parent)
+		txn.timings.DirectorySyncTime += time.Since(start)
+		if err != nil {
+			return true, &TranscodeError{Stage: "durability", Err: ErrTranscodeTransaction}
+		}
+		// Windows' publication helper has no directory Sync operation.
+		txn.directorySynced = runtime.GOOS != "windows"
 	}
 	return true, nil
+}
+
+// Kept as a narrow injection seam for deterministic sync-failure tests.
+var syncTranscodeStagedFile = (*os.File).Sync
+
+var syncTranscodeDestinationDirectory = syncTranscodeDirectory
+
+func applyTranscodePublicationReport(report *TranscodeReport, txn *transcodePathTxn) {
+	report.Durability = txn.durability
+	report.FileSynced = txn.fileSynced
+	report.DirectorySynced = txn.directorySynced
+	report.Timings.OutputWriteTime = txn.timings.OutputWriteTime
+	report.Timings.FileSyncTime = txn.timings.FileSyncTime
+	report.Timings.DirectorySyncTime = txn.timings.DirectorySyncTime
 }
 
 func (staged *stagedTranscodeFile) cleanup(parent *os.File) {
@@ -228,7 +283,10 @@ func (staged *stagedTranscodeFile) cleanup(parent *os.File) {
 		staged.open = false
 	}
 	if staged.entryOwned && ownedInfo != nil && sameTranscodeEntryIdentityAt(parent, staged.name, ownedInfo) {
-		_ = removeTranscodeFileAt(parent, staged.name)
+		if removeTranscodeFileAt(parent, staged.name) == nil && staged.temporary != nil {
+			staged.temporary.used -= staged.charged
+			staged.charged = 0
+		}
 	}
 	staged.entryOwned = false
 }
@@ -320,7 +378,7 @@ func (f *transcodeContextFile) Seek(offset int64, whence int) (int64, error) {
 
 type transcodeBoundedWriter struct {
 	ctx       context.Context
-	writer    *os.File
+	writer    io.Writer
 	remaining int64
 }
 

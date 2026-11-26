@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -117,13 +118,12 @@ func TestTranscodeNearLosslessIdentityAndHistory(t *testing.T) {
 
 type failSecondNearEncoder struct {
 	pixeldata.FrameEncoder
-	calls int
+	calls atomic.Int64
 	cause error
 }
 
 func (e *failSecondNearEncoder) EncodeFrame(ctx context.Context, data []byte, m pixeldata.Metadata) (pixeldata.EncodedFrame, error) {
-	e.calls++
-	if e.calls == 2 {
+	if e.calls.Add(1) == 2 {
 		return pixeldata.EncodedFrame{}, e.cause
 	}
 	return e.FrameEncoder.EncodeFrame(ctx, data, m)
@@ -152,7 +152,7 @@ func TestTranscodeNearLosslessFailureDoesNotPublish(t *testing.T) {
 			if _, err := pixeldata.TranscodePath(context.Background(), sourcePath, dest, transfer.JPEGLSNearLossless, opts); !errors.Is(err, cause) {
 				t.Fatalf("late failure lost: %v", err)
 			}
-			if failing.calls != 2 {
+			if failing.calls.Load() != 2 {
 				t.Fatal("did not exercise later frame")
 			}
 			after, err := os.ReadFile(sourcePath)

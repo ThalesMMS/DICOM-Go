@@ -54,22 +54,37 @@ func TranscodeFile(ctx context.Context, file *object.File, target transfer.Synta
 	if err != nil {
 		return nil, TranscodeReport{}, err
 	}
-	target, err = canonicalTargetTransferSyntax(target)
+	output, err := transcodeOutputFile(ctx, file, dataset, report, target, limits)
 	if err != nil {
 		return nil, TranscodeReport{}, err
 	}
+	return output, report, nil
+}
+
+// transcodeOutputFile wraps a transcoded data set in a detached Part 10 file:
+// File Meta with the target Transfer Syntax and, after a lossy encode, the
+// data set's new SOP Instance UID.
+func transcodeOutputFile(ctx context.Context, file *object.File, dataset *object.Object, report TranscodeReport, target transfer.Syntax, limits TranscodeLimits) (*object.File, error) {
+	target, err := canonicalTargetTransferSyntax(target)
+	if err != nil {
+		return nil, err
+	}
 	meta := fileMetaWithTransferSyntax(file.Meta, target)
-	if report.Lossy {
+	// A caller-selected identity or SOP Class also changes the File Meta.
+	if report.Lossy || report.IdentityChanged {
 		if sopUID, ok := dataset.GetString(tagSOPInstanceUID); ok {
 			meta.Put(core.Element{Header: core.ElementHeader{Tag: tagMediaStorageSOPInstanceUID, VR: core.VRUI}, Value: core.StringValue{sopUID}})
 		}
 	}
+	if report.IdentityChanged && elementText(dataset, tagOutputSOPClass) != "" {
+		meta.Put(core.Element{Header: core.ElementHeader{Tag: core.NewTag(0x0002, 0x0002), VR: core.VRUI}, Value: core.StringValue{elementText(dataset, tagOutputSOPClass)}})
+	}
 	usage, err := measureTranscodeObject(ctx, dataset, limits)
 	if err != nil {
-		return nil, TranscodeReport{}, err
+		return nil, err
 	}
 	if int64(len(file.Preamble)) > limits.MaxOutputBytes-usage.bytes {
-		return nil, TranscodeReport{}, transcodeLimitError("output_bytes")
+		return nil, transcodeLimitError("output_bytes")
 	}
 	usage.bytes += int64(len(file.Preamble))
 	metaLimits := limits
@@ -77,15 +92,15 @@ func TranscodeFile(ctx context.Context, file *object.File, target transfer.Synta
 	metaLimits.MaxElements = limits.MaxElements - usage.elements
 	meta, err = cloneDetachedObject(ctx, meta, metaLimits)
 	if err != nil {
-		return nil, TranscodeReport{}, err
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, TranscodeReport{}, err
+		return nil, err
 	}
 	return &object.File{
 		Preamble:       core.CloneBytes(file.Preamble),
 		Meta:           meta,
 		Dataset:        dataset,
 		TransferSyntax: target,
-	}, report, nil
+	}, nil
 }

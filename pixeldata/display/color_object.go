@@ -69,21 +69,27 @@ func ColorMetadataFromObject(obj *object.Object) ColorMetadata {
 
 // PaletteFromObject reads the red/green/blue palette color LUTs. It returns
 // (nil, nil) when the dataset has no palette LUTs, and an explicit error for
-// malformed descriptors or LUT data.
-func PaletteFromObject(obj *object.Object) (*PaletteColorLUT, error) {
+// malformed descriptors or LUT data. opts (at most one is used) selects the
+// LUT encodings read; the palette data encodings are those of LUT Data.
+// Segmented palette data (PS3.3 C.7.9.2) may expand at most one segment per
+// data word plus one per entry; indirect segments that would re-walk more
+// (empty) segments than that are refused with ErrInvalidLUTData.
+func PaletteFromObject(obj *object.Object, opts ...LUTOptions) (*PaletteColorLUT, error) {
 	if obj == nil {
 		return nil, nil
 	}
 
-	red, err := paletteLUT(obj, tagRedPaletteDesc, tagRedPaletteData, tagSegRedPalette)
+	options := lutOptions(opts)
+	signed := pixelsSigned(obj)
+	red, err := paletteLUT(obj, tagRedPaletteDesc, tagRedPaletteData, tagSegRedPalette, signed, options)
 	if err != nil {
 		return nil, err
 	}
-	green, err := paletteLUT(obj, tagGreenPaletteDesc, tagGreenPaletteData, tagSegGreenPalette)
+	green, err := paletteLUT(obj, tagGreenPaletteDesc, tagGreenPaletteData, tagSegGreenPalette, signed, options)
 	if err != nil {
 		return nil, err
 	}
-	blue, err := paletteLUT(obj, tagBluePaletteDesc, tagBluePaletteData, tagSegBluePalette)
+	blue, err := paletteLUT(obj, tagBluePaletteDesc, tagBluePaletteData, tagSegBluePalette, signed, options)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +101,7 @@ func PaletteFromObject(obj *object.Object) (*PaletteColorLUT, error) {
 
 // paletteLUT reads one palette color LUT (descriptor + data). It returns
 // (nil, nil) when the descriptor and data are absent.
-func paletteLUT(obj *object.Object, descTag, dataTag, segmentedDataTag core.Tag) (*LUT, error) {
+func paletteLUT(obj *object.Object, descTag, dataTag, segmentedDataTag core.Tag, signedInput bool, opts LUTOptions) (*LUT, error) {
 	elem, ok := obj.Get(descTag)
 	if !ok {
 		if _, hasData := obj.GetRaw(dataTag); hasData {
@@ -114,55 +120,35 @@ func paletteLUT(obj *object.Object, descTag, dataTag, segmentedDataTag core.Tag)
 	numberOfEntries := int(order.Uint16(descRaw[0:2]))
 	bitsPerEntry := int(order.Uint16(descRaw[4:6]))
 	firstMapped := int(order.Uint16(descRaw[2:4]))
-	if elem.VR() == core.VRSS {
+	if elem.VR() == core.VRSS || signedInput {
 		firstMapped = int(int16(order.Uint16(descRaw[2:4])))
 	}
 
-	entries, err := paletteEntriesFromObject(obj, dataTag, segmentedDataTag, bitsPerEntry, numberOfEntries, order)
-	if err != nil {
-		return nil, err
-	}
-	return NewLUT([]int{numberOfEntries, firstMapped, bitsPerEntry}, entries)
-}
-
-func paletteEntriesFromObject(obj *object.Object, dataTag, segmentedDataTag core.Tag, bits, numberOfEntries int, order binary.ByteOrder) ([]uint16, error) {
 	if dataRaw, ok := obj.GetRaw(dataTag); ok && len(dataRaw) > 0 {
-		return paletteEntries(dataRaw, bits, numberOfEntries, order), nil
+		return lutFromData(dataRaw, order, numberOfEntries, firstMapped, bitsPerEntry, opts)
 	}
 	segmentedRaw, ok := obj.GetRaw(segmentedDataTag)
 	if !ok || len(segmentedRaw) == 0 {
 		return nil, ErrInvalidLUTData
 	}
-	return segmentedPaletteEntries(segmentedRaw, numberOfEntries, order)
-}
-
-// paletteEntries decodes palette LUT data. 8-bit entries are one byte each
-// according to the descriptor; odd entry counts may include a single padding
-// byte to make the DICOM value length even. 16-bit entries use dataset words.
-func paletteEntries(data []byte, bits, numberOfEntries int, order binary.ByteOrder) []uint16 {
-	if order == nil {
-		order = binary.LittleEndian
+	entries, err := segmentedPaletteEntries(segmentedRaw, numberOfEntries, order)
+	if err != nil {
+		return nil, err
 	}
 	count := numberOfEntries
 	if count == 0 {
 		count = 1 << 16
 	}
-	if bits == 8 {
-		entryCount := len(data)
-		if count%2 == 1 && len(data) == count+1 {
-			entryCount = count
-		}
-		out := make([]uint16, entryCount)
-		for i, b := range data[:entryCount] {
-			out[i] = uint16(b)
-		}
-		return out
+	if len(entries) != count {
+		return nil, fmt.Errorf("%w: segmented palette expands to %d entries, want %d", ErrInvalidLUTData, len(entries), count)
 	}
-	out := make([]uint16, len(data)/2)
-	for i := range out {
-		out[i] = order.Uint16(data[i*2 : i*2+2])
+	// Segmented data is always in words; its entries are checked against the
+	// depth like word-encoded LUT Data.
+	entries, bitsPerEntry, adjustments, err := wordLUTDepth(entries, bitsPerEntry, nil, opts, false)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	return &LUT{FirstMapped: firstMapped, BitsPerEntry: bitsPerEntry, Entries: entries, Adjustments: adjustments}, nil
 }
 
 func segmentedPaletteEntries(data []byte, numberOfEntries int, order binary.ByteOrder) ([]uint16, error) {
@@ -181,7 +167,12 @@ func segmentedPaletteEntries(data []byte, numberOfEntries int, order binary.Byte
 		words[i] = order.Uint16(data[i*2 : i*2+2])
 	}
 
-	expander := segmentedPaletteExpander{words: words, count: count}
+	// Every segment read directly spans at least two words, and every copied
+	// segment that adds entries adds at least one of count, so a conformant
+	// table expands at most len(words)/2+count segments. The budget leaves
+	// len(words)/2 more for empty copied segments and refuses indirect
+	// segments that would re-walk empty segments quadratically often.
+	expander := segmentedPaletteExpander{words: words, count: count, budget: len(words) + count}
 	entries := make([]uint16, 0, count)
 	for i := 0; i < len(words); {
 		next, err := expander.expandSegment(i, &entries, true)
@@ -193,14 +184,45 @@ func segmentedPaletteEntries(data []byte, numberOfEntries int, order binary.Byte
 	return entries, nil
 }
 
+// segmentedPaletteSegmentEnd validates the wire extent of one segment and
+// returns the index immediately after it.
+func segmentedPaletteSegmentEnd(words []uint16, index int) (int, error) {
+	if index < 0 || index+1 >= len(words) {
+		return 0, ErrInvalidLUTData
+	}
+	end := index + 2
+	switch opcode := words[index]; opcode {
+	case 0:
+		end += int(words[index+1])
+	case 1:
+		end++
+	case 2:
+		end += 2
+	default:
+		return 0, fmt.Errorf("%w: segmented palette opcode %d", ErrInvalidLUTData, opcode)
+	}
+	if end > len(words) {
+		return 0, ErrInvalidLUTData
+	}
+	return end, nil
+}
+
 type segmentedPaletteExpander struct {
 	words []uint16
 	count int
+	// budget is the number of segments still allowed to be expanded.
+	budget int
+	// segmentStarts stores one bit per wire word and is allocated for indirect palettes.
+	segmentStarts []byte
 }
 
-func (e segmentedPaletteExpander) expandSegment(index int, entries *[]uint16, allowIndirect bool) (int, error) {
-	if index < 0 || index+1 >= len(e.words) {
-		return 0, ErrInvalidLUTData
+func (e *segmentedPaletteExpander) expandSegment(index int, entries *[]uint16, allowIndirect bool) (int, error) {
+	next, err := segmentedPaletteSegmentEnd(e.words, index)
+	if err != nil {
+		return 0, err
+	}
+	if e.budget--; e.budget < 0 {
+		return 0, fmt.Errorf("%w: segmented palette expands more segments than its %d words and %d entries allow", ErrInvalidLUTData, len(e.words), e.count)
 	}
 	opcode := e.words[index]
 	length := int(e.words[index+1])
@@ -208,53 +230,58 @@ func (e segmentedPaletteExpander) expandSegment(index int, entries *[]uint16, al
 
 	switch opcode {
 	case 0:
-		if len(*entries)+length > e.count || dataIndex+length > len(e.words) {
+		if len(*entries)+length > e.count {
 			return 0, ErrInvalidLUTData
 		}
-		*entries = append(*entries, e.words[dataIndex:dataIndex+length]...)
-		return dataIndex + length, nil
+		*entries = append(*entries, e.words[dataIndex:next]...)
 	case 1:
-		if len(*entries)+length > e.count || dataIndex >= len(e.words) {
+		if len(*entries)+length > e.count {
 			return 0, ErrInvalidLUTData
 		}
-		end := e.words[dataIndex]
 		if length == 0 {
-			return dataIndex + 1, nil
+			return next, nil
 		}
 		if len(*entries) == 0 {
 			return 0, ErrInvalidLUTData
 		}
-		start := (*entries)[len(*entries)-1]
+		start, end := (*entries)[len(*entries)-1], e.words[dataIndex]
 		for step := 1; step <= length; step++ {
 			*entries = append(*entries, interpolateSegmentValue(start, end, step, length))
 		}
-		return dataIndex + 1, nil
 	case 2:
 		if !allowIndirect {
 			return 0, fmt.Errorf("%w: indirect segment cannot copy another indirect segment", ErrUnsupportedSegmentedPalette)
 		}
-		if dataIndex+1 >= len(e.words) {
-			return 0, ErrInvalidLUTData
-		}
 		offset := uint32(e.words[dataIndex]) | uint32(e.words[dataIndex+1])<<16
-		if offset%2 != 0 {
+		copyIndex := int(offset / 2)
+		if offset%2 != 0 || copyIndex >= len(e.words) {
 			return 0, ErrInvalidLUTData
 		}
-		copyIndex := int(offset / 2)
-		if copyIndex < 0 || copyIndex >= len(e.words) {
-			return 0, ErrInvalidLUTData
+		if e.segmentStarts == nil {
+			// An indirect segment can refer forward. Index the top-level
+			// starts once so data words cannot be mistaken for opcodes.
+			e.segmentStarts = make([]byte, (len(e.words)+7)/8)
+			for i := 0; i < len(e.words); {
+				e.segmentStarts[i/8] |= 1 << (i % 8)
+				end, err := segmentedPaletteSegmentEnd(e.words, i)
+				if err != nil {
+					return 0, err
+				}
+				i = end
+			}
+		}
+		if e.segmentStarts[copyIndex/8]&(1<<(copyIndex%8)) == 0 {
+			return 0, fmt.Errorf("%w: indirect offset %d is not a segment start", ErrInvalidLUTData, offset)
 		}
 		for n := 0; n < length; n++ {
-			next, err := e.expandSegment(copyIndex, entries, false)
+			end, err := e.expandSegment(copyIndex, entries, false)
 			if err != nil {
 				return 0, err
 			}
-			copyIndex = next
+			copyIndex = end
 		}
-		return dataIndex + 2, nil
-	default:
-		return 0, fmt.Errorf("%w: segmented palette opcode %d", ErrInvalidLUTData, opcode)
 	}
+	return next, nil
 }
 
 func interpolateSegmentValue(start, end uint16, step, length int) uint16 {

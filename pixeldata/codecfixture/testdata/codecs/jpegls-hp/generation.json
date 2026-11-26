@@ -1,0 +1,366 @@
+{
+  "schemaVersion": 1,
+  "profile": "Nonstandard legacy JPEG-LS HP1/HP2/HP3; opt-in only; Lossless .80; unsigned RGB8/RGB16; NEAR=0; ILV=1/2; full-range MAXVAL",
+  "generated": "2026-10-11",
+  "environment": {
+    "os": "windows",
+    "architecture": "amd64",
+    "go": "1.26.4",
+    "gdcm": "3.2.5"
+  },
+  "provenance": {
+    "source": "Project-authored synthetic RGB extremes, half-range boundaries and deterministic LCG texture, seed 1459",
+    "generator": "generate.cpp",
+    "synthetic": true,
+    "noPHI": true,
+    "license": "Apache-2.0",
+    "permission": "Project-owned synthetic data and generator; redistributable under dicom-go LICENSE",
+    "deIdentification": "Not applicable: all samples generated from arithmetic; no patient data imported",
+    "vendorImplementationCopied": false
+  },
+  "tools": [
+    {
+      "name": "GDCM public CharLS C API",
+      "distribution": "GDCM 3.2.5",
+      "library": "libgdcmcharls.dll",
+      "sha256": "02ead5ff4e06a1c5fdb2a56aa44bdeacdf816e1698eb28f98fcb42fb46c7c01f",
+      "use": "Independent encode and exact decode; public API only",
+      "source": "https://github.com/malaterre/GDCM/tree/v3.2.5"
+    },
+    {
+      "name": "gdcmconv",
+      "version": "3.2.5",
+      "sha256": "24dbf4ddb4f04ab6e855cf2456048e2979fa381003cc6ae0b5f10ca29ca42097",
+      "use": "Independent DICOM --raw conversion and exact native RGB comparison"
+    },
+    {
+      "name": "CharLS",
+      "version": "2.4.2",
+      "library": "charls-2-x64.dll",
+      "sha256": "ad16f7c55267f06563e663d3eb256b8b18310e662a774d063bdeb8d40549781e",
+      "source": "https://github.com/team-charls/charls/archive/refs/tags/2.4.2.zip",
+      "sourceSha256": "b35042ef3e48bba20226ef8ce36ae0ad61d21ef48681c892e913137bf51c42f6",
+      "license": "BSD-3-Clause",
+      "licenseSha256": "e293ccc327ee42f4e723e73aac39b23ffc40655cc6f8baec5c046f2e7d093695",
+      "use": "Checksum-pinned optional native adapter decode and exact RGB comparison"
+    }
+  ],
+  "assets": [
+    {
+      "path": "generate.cpp",
+      "bytes": 3054,
+      "sha256": "f204f036098f0148a40e46a157cad6fe7c4f6704f394b25d054fe28b8d8b1017"
+    },
+    {
+      "path": "rgb16-33x17-hp1-ilv1.jls",
+      "bytes": 3667,
+      "sha256": "a8fd19eb19745ea8f7266053cd664e93a44452870ead51da13941f8fb8b671d1"
+    },
+    {
+      "path": "rgb16-33x17-hp1-ilv2.jls",
+      "bytes": 3663,
+      "sha256": "5318dbfab112e8cd7c940dbee9bb669ded97ac0749a299a615ff8be2b8481ddd"
+    },
+    {
+      "path": "rgb16-33x17-hp2-ilv1.jls",
+      "bytes": 3665,
+      "sha256": "634fac6d8110f284b32c8617a9e720e72995eee01383baa2bed2743d2071edaa"
+    },
+    {
+      "path": "rgb16-33x17-hp2-ilv2.jls",
+      "bytes": 3670,
+      "sha256": "00e2c545bd7c4bb055b642712790db070dded4c14bc9ad5104392de4fc36c716"
+    },
+    {
+      "path": "rgb16-33x17-hp3-ilv1.jls",
+      "bytes": 3674,
+      "sha256": "1a11387aff449d23ca46172a2daa6b6e4bb965d0906eb450d6230e366c3fc628"
+    },
+    {
+      "path": "rgb16-33x17-hp3-ilv2.jls",
+      "bytes": 3665,
+      "sha256": "92d58c56041d7a024629744f456e52a39e8b86938972039b7e2e98adf7c5ca53"
+    },
+    {
+      "path": "rgb16-33x17.raw",
+      "bytes": 3366,
+      "sha256": "9ffec5e37a431f8e13acadeaea0a638b3bcce60e0b4f25478b928f2a04beada4"
+    },
+    {
+      "path": "rgb8-33x17-hp1-ilv1.jls",
+      "bytes": 2123,
+      "sha256": "1972708860ffb8757fb4bc9aa8ed9d959886dc6480566f0bd12840c7f4655d46"
+    },
+    {
+      "path": "rgb8-33x17-hp1-ilv2.jls",
+      "bytes": 2121,
+      "sha256": "f1fb4fdb0ea0437602674f3f299674a094b618095b87186cd11bd2043944bfdb"
+    },
+    {
+      "path": "rgb8-33x17-hp2-ilv1.jls",
+      "bytes": 2110,
+      "sha256": "4f4cf18dbed5a13b65a467cdb323577ff720c4b03c62163eda992ee5e22f9f6e"
+    },
+    {
+      "path": "rgb8-33x17-hp2-ilv2.jls",
+      "bytes": 2119,
+      "sha256": "a516847c95800f2d35e02adb268655f9f6ff38ebad3d2fdec54e14cd6d583cb2"
+    },
+    {
+      "path": "rgb8-33x17-hp3-ilv1.jls",
+      "bytes": 2125,
+      "sha256": "87064b6f8e4d37edbe2427822ad700b8fa502b96fbe1c5ff82e5c36f4cf46a0c"
+    },
+    {
+      "path": "rgb8-33x17-hp3-ilv2.jls",
+      "bytes": 2122,
+      "sha256": "78d475b8482ba5b597f061bcfd0e9338431c3e6d799cd7fb0194af2981dbdf95"
+    },
+    {
+      "path": "rgb8-33x17.raw",
+      "bytes": 1683,
+      "sha256": "a428fca92e5878cc9e77ba21e264e1c4419776372f837e8b9741108e9c934cec"
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "rgb8-33x17-hp1-ilv1.jls",
+      "referencePath": "rgb8-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 8,
+      "bitsStored": 8,
+      "highBit": 7,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 1,
+      "interleave": 1,
+      "maxValue": 255,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb8-33x17-hp1-ilv2.jls",
+      "referencePath": "rgb8-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 8,
+      "bitsStored": 8,
+      "highBit": 7,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 1,
+      "interleave": 2,
+      "maxValue": 255,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb8-33x17-hp2-ilv1.jls",
+      "referencePath": "rgb8-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 8,
+      "bitsStored": 8,
+      "highBit": 7,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 2,
+      "interleave": 1,
+      "maxValue": 255,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb8-33x17-hp2-ilv2.jls",
+      "referencePath": "rgb8-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 8,
+      "bitsStored": 8,
+      "highBit": 7,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 2,
+      "interleave": 2,
+      "maxValue": 255,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb8-33x17-hp3-ilv1.jls",
+      "referencePath": "rgb8-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 8,
+      "bitsStored": 8,
+      "highBit": 7,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 3,
+      "interleave": 1,
+      "maxValue": 255,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb8-33x17-hp3-ilv2.jls",
+      "referencePath": "rgb8-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 8,
+      "bitsStored": 8,
+      "highBit": 7,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 3,
+      "interleave": 2,
+      "maxValue": 255,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb16-33x17-hp1-ilv1.jls",
+      "referencePath": "rgb16-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 16,
+      "bitsStored": 16,
+      "highBit": 15,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 1,
+      "interleave": 1,
+      "maxValue": 65535,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb16-33x17-hp1-ilv2.jls",
+      "referencePath": "rgb16-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 16,
+      "bitsStored": 16,
+      "highBit": 15,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 1,
+      "interleave": 2,
+      "maxValue": 65535,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb16-33x17-hp2-ilv1.jls",
+      "referencePath": "rgb16-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 16,
+      "bitsStored": 16,
+      "highBit": 15,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 2,
+      "interleave": 1,
+      "maxValue": 65535,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb16-33x17-hp2-ilv2.jls",
+      "referencePath": "rgb16-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 16,
+      "bitsStored": 16,
+      "highBit": 15,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 2,
+      "interleave": 2,
+      "maxValue": 65535,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb16-33x17-hp3-ilv1.jls",
+      "referencePath": "rgb16-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 16,
+      "bitsStored": 16,
+      "highBit": 15,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 3,
+      "interleave": 1,
+      "maxValue": 65535,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    },
+    {
+      "path": "rgb16-33x17-hp3-ilv2.jls",
+      "referencePath": "rgb16-33x17.raw",
+      "rows": 17,
+      "columns": 33,
+      "components": 3,
+      "bitsAllocated": 16,
+      "bitsStored": 16,
+      "highBit": 15,
+      "signed": false,
+      "photometricInterpretation": "RGB",
+      "planarConfiguration": 0,
+      "near": 0,
+      "hp": 3,
+      "interleave": 2,
+      "maxValue": 65535,
+      "comparison": "exact-reconstruction",
+      "expectation": "strict-refusal; opt-in-decode-success"
+    }
+  ],
+  "qualification": {
+    "comparison": "Every reconstructed sample equals source RGB",
+    "streams": 12,
+    "samplesPerStream": 1683,
+    "sampleLayout": "RGB sample-interleaved; little endian",
+    "regeneration": "All 14 binary assets regenerated independently into a separate candidate directory and SHA256 matched",
+    "pureGo": "PASS TestHPColorTransformsIndependentFixtures",
+    "gdcm": "PASS TestHPColorTransformsGDCM",
+    "charls242": "PASS TestCharLSHPColorTransforms",
+    "limit": "Synthetic 33x17, full-range unsigned RGB8/RGB16 HP1/2/3 ILV1/2 on Windows/amd64; no clinical or other-platform qualification"
+  }
+}

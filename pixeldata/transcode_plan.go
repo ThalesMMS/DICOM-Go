@@ -108,7 +108,11 @@ func cloneNativeTranscode(ctx context.Context, input validatedTranscodeInput, li
 		return nil, TranscodeReport{}, err
 	}
 	if input.plan.source.ByteOrder != input.plan.target.ByteOrder && input.plan.source.ByteOrder != nil && input.plan.target.ByteOrder != nil {
-		clone = object.FromElements(transcodeElementsToLittleEndian(clone.Elements()), nil)
+		elements, err := transcodeElementsToLittleEndian(clone.Elements(), input.plan.source.ByteOrder)
+		if err != nil {
+			return nil, TranscodeReport{}, err
+		}
+		clone = object.FromElements(elements, nil)
 	}
 	clone.SetValueByteOrder(input.plan.target.ByteOrder)
 	report := TranscodeReport{PixelDataPreserved: true, EncodedBytes: input.pixelBytes}

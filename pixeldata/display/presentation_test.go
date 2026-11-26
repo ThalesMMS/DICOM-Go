@@ -83,7 +83,8 @@ func TestOverlaysFromObjectUsesObjectValueByteOrder(t *testing.T) {
 		dicomtest.Uint16Element(core.NewTag(group, tagOverlayColumns), core.VRUS, binary.BigEndian, 258),
 		dicomtest.Uint16Element(core.NewTag(group, tagOverlayBitsAlloc), core.VRUS, binary.BigEndian, 1),
 		dicomtest.Uint16Element(core.NewTag(group, tagOverlayOrigin), core.VRSS, binary.BigEndian, 2, 3),
-		dicomtest.NewOBElement(core.NewTag(group, tagOverlayData), []byte{0x80}),
+		// Overlay Data must hold the whole 512x258-bit plane.
+		dicomtest.NewOBElement(core.NewTag(group, tagOverlayData), append([]byte{0x80}, make([]byte, 512*258/8-1)...)),
 	)
 
 	overlays, err := OverlaysFromObject(obj)
@@ -254,7 +255,7 @@ func TestPresentationFromObjectBitmapShutterMasksWithReferencedOverlay(t *testin
 	})
 	pres.Apply(img)
 
-	if got, want := img.Pix[:4], []uint8{10, 0, 0, 40}; !bytes.Equal(got, want) {
+	if got, want := img.Pix[:4], []uint8{0, 20, 30, 0}; !bytes.Equal(got, want) {
 		t.Fatalf("Presentation.Apply() pixels = %v, want %v", got, want)
 	}
 }

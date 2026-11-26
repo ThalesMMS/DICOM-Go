@@ -211,11 +211,13 @@ func TestInterleaveMetadataCancellationAndConcurrency(t *testing.T) {
 
 func FuzzDecodeInterleave(f *testing.F) {
 	for _, ilv := range []int{1, 2} {
-		stream, err := os.ReadFile(filepath.Join("..", "codecfixture", "testdata", "codecfull", "jpegls", fmt.Sprintf("rgb8-9x1-ilv%d.jls", ilv)))
-		if err != nil {
-			f.Fatal(err)
+		for _, profile := range []string{"rgb8-9x1", "rgb8-129x33", "rgb8-129x33-preset", "rgb12-129x33"} {
+			stream, err := os.ReadFile(filepath.Join("..", "codecfixture", "testdata", "codecfull", "jpegls", fmt.Sprintf("%s-ilv%d.jls", profile, ilv)))
+			if err != nil {
+				f.Fatal(err)
+			}
+			f.Add(stream)
 		}
-		f.Add(stream)
 	}
 	f.Fuzz(func(t *testing.T, stream []byte) {
 		if len(stream) > 1<<16 {

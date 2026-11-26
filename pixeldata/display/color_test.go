@@ -155,12 +155,12 @@ func TestRenderColorErrors(t *testing.T) {
 	}{
 		{
 			name:    "unsupported photometric",
-			frame:   ColorFrame{Rows: 1, Columns: 1, Pixels: []byte{0, 0, 0}, Photometric: "YBR_PARTIAL_420", SamplesPerPixel: 3, Format: PixelFormat{BitsAllocated: 8}},
+			frame:   ColorFrame{Rows: 1, Columns: 1, Pixels: []byte{0, 0, 0}, Photometric: "YBR_ICT", SamplesPerPixel: 3, Format: PixelFormat{BitsAllocated: 8}},
 			wantErr: ErrUnsupportedColorPhotometric,
 		},
 		{
-			name:    "16-bit RGB unsupported",
-			frame:   ColorFrame{Rows: 1, Columns: 1, Pixels: make([]byte, 6), Photometric: "RGB", SamplesPerPixel: 3, Format: PixelFormat{BitsAllocated: 16}},
+			name:    "32-bit RGB unsupported",
+			frame:   ColorFrame{Rows: 1, Columns: 1, Pixels: make([]byte, 12), Photometric: "RGB", SamplesPerPixel: 3, Format: PixelFormat{BitsAllocated: 32}},
 			wantErr: ErrUnsupportedColorLayout,
 		},
 		{
@@ -296,6 +296,54 @@ func TestPaletteFromObjectSegmentedPaletteIndirect(t *testing.T) {
 	}
 	if got, want := palette.Red.Entries, []uint16{1, 2, 3, 1, 2, 3}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("red entries = %v, want %v", got, want)
+	}
+}
+
+func TestPaletteFromObjectSegmentedPaletteIndirectBoundaries(t *testing.T) {
+	for _, syntax := range []transfer.Syntax{transfer.ExplicitVRLittleEndian, transfer.ExplicitVRBigEndian} {
+		t.Run(syntax.UID, func(t *testing.T) {
+			// The first two components can be misread as a discrete
+			// opcode and length. Both valid offsets point to {91, 103}.
+			want := []uint16{0, 2, 126, 234, 91, 103, 91, 103}
+			for _, tc := range []struct {
+				name     string
+				words    []uint16
+				rejected bool
+			}{
+				{"backward", []uint16{0, 4, 0, 2, 126, 234, 0, 2, 91, 103, 2, 1, 12, 0}, false},
+				{"forward", []uint16{0, 4, 0, 2, 126, 234, 2, 1, 20, 0, 0, 2, 91, 103}, false},
+				{"payload", []uint16{0, 4, 0, 2, 126, 234, 0, 2, 91, 103, 2, 1, 4, 0}, true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					order := syntax.ByteOrder
+					data := dicomtest.EncodeElements(syntax,
+						dicomtest.Uint16Element(tagRedPaletteDesc, core.VRUS, order, 8, 0, 8),
+						dicomtest.NewOBElement(tagRedPaletteData, make([]byte, 8)),
+						dicomtest.Uint16Element(tagGreenPaletteDesc, core.VRUS, order, 8, 0, 8),
+						dicomtest.NewOBElement(tagGreenPaletteData, make([]byte, 8)),
+						dicomtest.Uint16Element(tagBluePaletteDesc, core.VRUS, order, 8, 0, 8),
+						dicomtest.Uint16Element(tagSegBluePalette, core.VROW, order, tc.words...),
+					)
+					obj, err := object.ReadDataSet(bytes.NewReader(data), syntax)
+					if err != nil {
+						t.Fatal(err)
+					}
+					palette, err := PaletteFromObject(obj)
+					if tc.rejected {
+						if palette != nil || !errors.Is(err, ErrInvalidLUTData) {
+							t.Fatalf("PaletteFromObject() = (%v, %v), want (nil, ErrInvalidLUTData)", palette, err)
+						}
+						return
+					}
+					if err != nil || palette == nil {
+						t.Fatalf("PaletteFromObject() = (%v, %v), want palette", palette, err)
+					}
+					if got := palette.Blue.Entries; !reflect.DeepEqual(got, want) {
+						t.Fatalf("blue entries = %v, want %v", got, want)
+					}
+				})
+			}
+		})
 	}
 }
 

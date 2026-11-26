@@ -7,6 +7,8 @@ import (
 	"io"
 	"math"
 	"time"
+
+	"github.com/ThalesMMS/dicom-go/internal/gridindex"
 )
 
 type rawPoint struct {
@@ -147,7 +149,7 @@ func (r *Recording) ValueAt(
 	if adjusted < 0 {
 		return Sample{}, fmt.Errorf("waveform: cursor time precedes channel start")
 	}
-	sampleIndex := int64(math.Round(float64(adjusted) / float64(time.Second) * group.info.SamplingFrequencyHz))
+	sampleIndex := int64(gridindex.Nearest(float64(adjusted) / float64(time.Second) * group.info.SamplingFrequencyHz))
 	if sampleIndex < 0 || sampleIndex >= group.info.SampleCount {
 		return Sample{}, fmt.Errorf("waveform: cursor time is outside group duration")
 	}

@@ -51,16 +51,18 @@ var supportedStorageSOPClasses = map[string]struct{}{
 	uidElectrooculogram:         {},
 	uidSleepEEG:                 {},
 	uidBodyPosition:             {},
+	uidBasicVoiceAudio:          {},
+	uidGeneralAudio:             {},
 }
 
 var unsupportedWaveformSOPClasses = map[string]string{
 	uidWaveformTrial:      "retired trial waveform storage is not decoded",
-	uidBasicVoiceAudio:    "G.711 audio waveform storage requires an audio decoder",
-	uidGeneralAudio:       "audio waveform storage requires an audio decoder",
 	uidUltrasoundWaveform: "ultrasound waveform storage is not in the calibrated physiologic waveform profile",
 }
 
 var supportedStorageUIDs = []string{
+	uidBasicVoiceAudio,
+	uidGeneralAudio,
 	uidTwelveLeadECG,
 	uidGeneralECG,
 	uidAmbulatoryECG,
@@ -126,8 +128,8 @@ var (
 	tagWaveformData                 = core.NewTag(0x5400, 0x1010)
 )
 
-// IsStorageSOPClass reports whether uid is one of the calibrated physiologic
-// waveform storage classes supported by this package.
+// IsStorageSOPClass reports whether uid is a supported physiologic or audio
+// waveform storage class. Audio playback uses the separate PCM range API.
 func IsStorageSOPClass(uid string) bool {
 	_, ok := supportedStorageSOPClasses[strings.TrimSpace(strings.TrimRight(uid, "\x00"))]
 	return ok
@@ -176,7 +178,15 @@ func open(file *object.File, opts Options) (_ *Recording, err error) {
 
 	items, ok := file.Dataset.GetSequence(tagWaveformSequence)
 	if !ok || len(items) == 0 {
+		if IsAudioStorageSOPClass(sopClassUID) {
+			return nil, audioProfileError(file.Dataset, sopClassUID, "missing Waveform Sequence")
+		}
 		return nil, fmt.Errorf("waveform: supported SOP class has no Waveform Sequence")
+	}
+	if IsAudioStorageSOPClass(sopClassUID) {
+		if err := validateAudioProfile(file.Dataset, sopClassUID, items); err != nil {
+			return nil, err
+		}
 	}
 	if len(items) > normalized.maxGroups {
 		return nil, fmt.Errorf(
@@ -200,7 +210,14 @@ func open(file *object.File, opts Options) (_ *Recording, err error) {
 	for i, item := range items {
 		parsed, parseErr := parseGroup(sopClassUID, i, item, normalized)
 		if parseErr != nil {
+			if IsAudioStorageSOPClass(sopClassUID) {
+				return nil, audioProfileError(file.Dataset, sopClassUID, parseErr.Error())
+			}
 			return nil, fmt.Errorf("waveform: parse multiplex group %d: %w", i+1, parseErr)
+		}
+		if IsAudioStorageSOPClass(sopClassUID) && !parsed.info.Supported {
+			_ = parsed.source.Close()
+			return nil, audioProfileError(file.Dataset, sopClassUID, parsed.info.FallbackReason)
 		}
 		recording.groups = append(recording.groups, parsed)
 	}
@@ -342,6 +359,8 @@ func validateSOPSampleInterpretation(sopClassUID, interpretation string) error {
 		uidElectrooculogram:         {"SS": {}, "SL": {}},
 		uidSleepEEG:                 {"SS": {}, "SL": {}},
 		uidBodyPosition:             {"UB": {}, "SS": {}},
+		uidBasicVoiceAudio:          {"UB": {}, "MB": {}, "AB": {}},
+		uidGeneralAudio:             {"SB": {}, "SS": {}},
 	}
 	profile := allowed[sopClassUID]
 	if _, ok := profile[interpretation]; ok {
@@ -940,6 +959,7 @@ type sampleDecoder struct {
 	width  int
 	bits   int
 	signed bool
+	law    string
 }
 
 func newSampleDecoder(order binary.ByteOrder, bits int, interpretation string) (sampleDecoder, error) {
@@ -965,14 +985,18 @@ func newSampleDecoder(order binary.ByteOrder, bits int, interpretation string) (
 	case "UV":
 		wantBits = 64
 	case "MB", "AB":
-		return sampleDecoder{}, fmt.Errorf("%s audio sample interpretation is raw fallback only", interpretation)
+		wantBits = 8
 	default:
 		return sampleDecoder{}, fmt.Errorf("sample interpretation %q is not a supported integer encoding", interpretation)
 	}
 	if bits != wantBits {
 		return sampleDecoder{}, fmt.Errorf("%s requires %d bits allocated, got %d", interpretation, wantBits, bits)
 	}
-	return sampleDecoder{order: order, width: bits / 8, bits: bits, signed: signed}, nil
+	d := sampleDecoder{order: order, width: bits / 8, bits: bits, signed: signed}
+	if interpretation == "MB" || interpretation == "AB" {
+		d.law = interpretation
+	}
+	return d, nil
 }
 
 func (d sampleDecoder) read(source SampleSource, offset int64, bitsStored int) (float64, uint64, error) {
@@ -986,6 +1010,12 @@ func (d sampleDecoder) read(source SampleSource, offset int64, bitsStored int) (
 func (d sampleDecoder) decodeBytes(raw []byte, bitsStored int) (float64, uint64, error) {
 	if bitsStored <= 0 || bitsStored > d.bits {
 		return 0, 0, fmt.Errorf("invalid bits stored %d for %d-bit sample", bitsStored, d.bits)
+	}
+	if d.law != "" {
+		if bitsStored != 8 {
+			return 0, 0, fmt.Errorf("companded audio requires 8 bits stored")
+		}
+		return float64(decodeDICOMLaw(raw[0], d.law)), uint64(raw[0]), nil
 	}
 	var bits uint64
 	switch d.width {

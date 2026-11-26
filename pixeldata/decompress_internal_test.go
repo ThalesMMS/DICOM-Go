@@ -26,7 +26,10 @@ func TestTranscodeElementsToLittleEndianPreservesNestedInput(t *testing.T) {
 	}}
 	owned := append([]core.Element(nil), original...)
 
-	got := transcodeElementsToLittleEndian(owned)
+	got, err := transcodeElementsToLittleEndian(owned, binary.BigEndian)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	gotRaw := nestedRawValue(t, got, 0, 1)
 	if !bytes.Equal(gotRaw, []byte{0x34, 0x12}) {
@@ -79,7 +82,7 @@ func BenchmarkTranscodeElementsToLittleEndian(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			elements := append([]core.Element(nil), base...)
-			benchmarkTranscodedElements = transcodeElementsToLittleEndian(elements)
+			benchmarkTranscodedElements, _ = transcodeElementsToLittleEndian(elements, binary.BigEndian)
 		}
 	})
 }
@@ -88,7 +91,7 @@ func transcodeElementsToLittleEndianLegacy(elements []core.Element) []core.Eleme
 	out := make([]core.Element, len(elements))
 	for i, element := range elements {
 		out[i] = element
-		value, changed := transcodeValueToLittleEndian(element.VR(), element.Value)
+		value, changed, _ := transcodeValueToLittleEndian(element, 0, binary.BigEndian)
 		if changed {
 			out[i].Value = value
 		}

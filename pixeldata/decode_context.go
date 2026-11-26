@@ -31,6 +31,9 @@ func decodeFramesWithRegistry(ctx context.Context, registry Registry, uid string
 		return Frames{}, err
 	}
 
+	if _, incomplete := obj.IncompletePixelData(); incomplete {
+		return Frames{}, object.ErrPartialFile
+	}
 	normalizedUID := transfer.NormalizeUID(uid)
 	if IsJPIPReferencedTransferSyntax(normalizedUID) {
 		ref, err := ExtractJPIPReference(normalizedUID, obj)
@@ -42,7 +45,8 @@ func decodeFramesWithRegistry(ctx context.Context, registry Registry, uid string
 	if transfer.IsVideoTransferSyntax(normalizedUID) {
 		return Frames{}, mediaPayloadNotRenderableError(normalizedUID, pixel)
 	}
-	if syntax, ok := transfer.DefaultRegistry.Get(normalizedUID); ok {
+	syntax, knownSyntax := transfer.DefaultRegistry.Get(normalizedUID)
+	if knownSyntax {
 		switch {
 		case syntax.Encapsulated && !pixel.Encapsulated:
 			return Frames{}, fmt.Errorf("%w: transfer syntax %q expects encapsulated pixel data", ErrIncompatiblePixelData, syntax.UID)
@@ -56,7 +60,11 @@ func decodeFramesWithRegistry(ctx context.Context, registry Registry, uid string
 		return finishDecodeFrames(ctx, frames, err)
 	}
 	if !pixel.Encapsulated {
-		frames, err := decodeNativeFrames(pixel, obj)
+		order := obj.ValueByteOrder()
+		if knownSyntax && syntax.ByteOrder != nil {
+			order = syntax.ByteOrder
+		}
+		frames, err := decodeNativeFrames(pixel, obj, order)
 		return finishDecodeFrames(ctx, frames, err)
 	}
 	if registry == nil || isNilMemoryRegistry(registry) {

@@ -281,7 +281,7 @@ func scanSegments(t *testing.T, stream []byte) [][]byte {
 	for position+1 < len(stream) && stream[position] == 0xff && stream[position+1] == 0xda {
 		header := markerSegment(t, stream, position)
 		entropyStart := position + len(header)
-		_, end, err := readEntropy(stream, entropyStart)
+		_, end, err := readEntropy(context.Background(), stream, entropyStart)
 		if err != nil {
 			t.Fatal(err)
 		}

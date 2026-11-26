@@ -1,5 +1,7 @@
 // Package video validates and extracts encapsulated DICOM MPEG-2, AVC/H.264,
-// and HEVC/H.265 media streams without decoding them.
+// and HEVC/H.265 media streams without decoding them, and remuxes H.264 and
+// HEVC elementary streams into fragmented MP4 (MuxFragmentedMP4,
+// ExportFragmentedMP4).
 package video
 
 import (

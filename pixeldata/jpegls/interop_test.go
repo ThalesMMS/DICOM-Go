@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/internal/dcmtkoracle"
 	"github.com/ThalesMMS/dicom-go/internal/dicomtest"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
@@ -19,6 +20,8 @@ import (
 // TestIndependentDecoderAcceptsGeneratedCodestreams qualifies encoder output
 // against CharLS or DCMTK. When DICOM_GO_JPEGLS_INDEPENDENT=1 the test fails
 // closed if neither independent decoder is available; it does not Skip.
+// DCMTK dcmdjpls is used when DICOMGO_DCMTK_INTEGRATION=1 and it is
+// installed, otherwise a Python jpeg_ls or charls module.
 func TestIndependentDecoderAcceptsGeneratedCodestreams(t *testing.T) {
 	if os.Getenv("DICOM_GO_JPEGLS_INDEPENDENT") != "1" {
 		t.Skip("set DICOM_GO_JPEGLS_INDEPENDENT=1 to require CharLS or DCMTK qualification")
@@ -32,6 +35,7 @@ func TestIndependentDecoderAcceptsGeneratedCodestreams(t *testing.T) {
 		name     string
 		metadata pixeldata.Metadata
 		frame    []byte
+		ilv      InterleaveMode
 	}{
 		{
 			name:     "monochrome 8-bit",
@@ -48,9 +52,31 @@ func TestIndependentDecoderAcceptsGeneratedCodestreams(t *testing.T) {
 			metadata: encoderMetadata(1, 3, 3, 8, "RGB"),
 			frame:    []byte{255, 0, 0, 0, 255, 0, 0, 0, 255},
 		},
+		{
+			name:     "RGB 8-bit line interleaved",
+			metadata: encoderMetadata(17, 23, 3, 8, "RGB"),
+			frame:    interleaveSource(17, 23, 8, 8, 3),
+			ilv:      InterleaveLine,
+		},
+		{
+			name:     "RGB 8-bit sample interleaved",
+			metadata: encoderMetadata(17, 23, 3, 8, "RGB"),
+			frame:    interleaveSource(17, 23, 8, 8, 3),
+			ilv:      InterleaveSample,
+		},
+		{
+			name:     "RGB 16-bit sample interleaved",
+			metadata: encoderMetadata(9, 31, 3, 16, "RGB"),
+			frame:    interleaveSource(9, 31, 16, 16, 5),
+			ilv:      InterleaveSample,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			encoded, err := NewEncoder().EncodeFrame(context.Background(), test.frame, test.metadata)
+			encoder, err := NewEncoderWithOptions(EncoderOptions{Interleave: test.ilv})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := encoder.EncodeFrame(context.Background(), test.frame, test.metadata)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,9 +151,10 @@ func firstDifferentByte(got, want []byte) int {
 }
 
 func lookupIndependentJPEGLSDecoder() (func(*testing.T, []byte, []byte, pixeldata.Metadata) error, error) {
-	if path, err := exec.LookPath("dcmdjpls"); err == nil {
+	if path, ok := dcmtkoracle.Lookup("dcmdjpls"); ok {
 		return func(t *testing.T, stream, want []byte, metadata pixeldata.Metadata) error {
-			return decodeWithDCMTK(t, path, stream, want, metadata)
+			t.Logf("oracle dcmdjpls: %s at %s (written against %s)", dcmtkoracle.Version(path), path, dcmtkoracle.Reference)
+			return decodeWithDCMTK(t, dcmtkoracle.Exact, path, stream, want, metadata)
 		}, nil
 	}
 	python := os.Getenv("DICOM_GO_PYTHON")
@@ -146,7 +173,7 @@ func lookupIndependentJPEGLSDecoder() (func(*testing.T, []byte, []byte, pixeldat
 			}, nil
 		}
 	}
-	return nil, fmt.Errorf("independent JPEG-LS decoder missing: install DCMTK dcmdjpls or a Python jpeg_ls/charls module; CharLS/DCMTK qualification is blocked on this host")
+	return nil, fmt.Errorf("independent JPEG-LS decoder missing: install DCMTK dcmdjpls (with DICOMGO_DCMTK_INTEGRATION=1) or a Python jpeg_ls/charls module; CharLS/DCMTK qualification is blocked on this host")
 }
 
 const pythonJpegLSScript = `
@@ -169,7 +196,9 @@ if bytes(decoded) != want:
     raise SystemExit("python charls mismatch")
 `
 
-func decodeWithDCMTK(t *testing.T, dcmdjpls string, stream, want []byte, metadata pixeldata.Metadata) error {
+// decodeWithDCMTK decodes stream with dcmdjpls (a path from dcmtkoracle) and
+// requires the samples want.
+func decodeWithDCMTK(t *testing.T, tolerance, dcmdjpls string, stream, want []byte, metadata pixeldata.Metadata) error {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "jpegls.dcm")
@@ -181,7 +210,7 @@ func decodeWithDCMTK(t *testing.T, dcmdjpls string, stream, want []byte, metadat
 	if err := os.WriteFile(src, fileBytes, 0o600); err != nil {
 		return err
 	}
-	cmd := exec.Command(dcmdjpls, src, dst)
+	cmd := dcmtkoracle.Command(context.Background(), t, tolerance, dcmdjpls, src, dst)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("dcmdjpls: %w\n%s", err, output)
 	}

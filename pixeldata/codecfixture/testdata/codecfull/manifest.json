@@ -611,7 +611,7 @@
         "max_tile_mean_absolute_error": 4,
         "rationale": "8-bit synthetic two-pixel DCT boundary: existing max-abs 32 supplemented by >=35 dB and tile mean <=4; source comparison is a regression, not independent decoder evidence"
       },
-      "sha256": "db876821562b6873a682bc08a42ea459be11368ade05e0cfa023b964991d3109",
+      "sha256": "aab9fd9b0a09f93cf525973a760af36fbec6523b9c9a3e5d1b7d6679df40936f",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -658,7 +658,7 @@
         "max_tile_mean_absolute_error": 4,
         "rationale": "8-bit synthetic two-pixel DCT boundary: existing max-abs 32 supplemented by >=35 dB and tile mean <=4; source comparison is a regression, not independent decoder evidence"
       },
-      "sha256": "74914e3633b0ee302ff7ebd2c437184fdcfb7b71509ea0ca02692cffec9b126f",
+      "sha256": "5cd88c3a4a2a509c54dfc7a8f9d4df10f2906b71c0200fdfbbb445ed834b3001",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -836,7 +836,7 @@
       },
       "qualificationLimit": "",
       "referenceSha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
-      "sha256": "99d147cf58947fa369740d91bcc880a074eacfb92b2cfb7a841d11ea717fe327",
+      "sha256": "602692cf4dfb03ff55417860045afb6a2f49820b6b8dbc4fe0900be77a2b245d",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1007,7 +1007,7 @@
         "max_tile_mean_absolute_error": 4,
         "rationale": "12-bit sequential DCT: independent integer versus floating IDCT rounding; existing max-abs 8, PSNR >=54 dB and 8x8 mean <=4 sample units"
       },
-      "sha256": "ebc400ce647ccde0e2c5201676cac24e69fb68afa01bdc3a5080816d8a182037",
+      "sha256": "efec6b77b69125758f1fc7d83cdda17f5150cfa505e0f0f63fd6dbb35a654160",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1045,7 +1045,7 @@
         "Notes": "codestream SHA-256 c9643dc57a6e631865084223af411c514d52edc30caaa3fe99eab5c9561d7e68; exact reference from djpeg -strict -rgb -pnm"
       },
       "referenceSha256": "6c3d11ac800c4dd1acb57494e98a0577e96a4f434ffdcb7191e50ac49cd8d49f",
-      "sha256": "b39e445e912a8aab70c5e46f4e3712bf385977cb1ab1cff3d2e7d5facb40a701",
+      "sha256": "d9cbf91b0bc9b5d9e7d3cbed19eb505fded5868b4987398fd6e4e599c1b09fcd",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1083,7 +1083,7 @@
         "Notes": ""
       },
       "referenceSha256": "4ff37e0c667b885e3065b9f611f34555bd9149935a84b4e4292d9b2061d52a60",
-      "sha256": "15c7998c2a609cf0ca4031e19286a2a57a93bcb5da26c2091e65f2882d316e01",
+      "sha256": "3f8d3633fadee9b348de03e79dca4f45bfe28a5fecfbcf6eb5559f7e3af7fe2c",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1121,7 +1121,7 @@
         "Notes": ""
       },
       "referenceSha256": "4ff37e0c667b885e3065b9f611f34555bd9149935a84b4e4292d9b2061d52a60",
-      "sha256": "116cc1de7aa24775f6935a85bb6d8e9b64041190af0bd9e4ee55cda317e5c809",
+      "sha256": "372f25a06eb341cefe49cec0f788bb2b3032c6c66415b8c944b9a5d2bef84181",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1159,7 +1159,7 @@
         "Notes": ""
       },
       "referenceSha256": "4ff37e0c667b885e3065b9f611f34555bd9149935a84b4e4292d9b2061d52a60",
-      "sha256": "b4a880062efe6dd8ecaeca57d1e88ae140f80a45d95919125a11c26fa7225b66",
+      "sha256": "5a5f0be16ef05fff7a77dbdc67d5e07ff4c915545c01b54496ef09647844e9af",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1197,7 +1197,7 @@
         "Notes": ""
       },
       "referenceSha256": "4ff37e0c667b885e3065b9f611f34555bd9149935a84b4e4292d9b2061d52a60",
-      "sha256": "38894f756b3277363df59dad19138b4a73b348412a43545fdd3ae7bf0db5abfd",
+      "sha256": "f0c3f7ba43dbf26900de46cd083ccf869ef48c5172fb388268fe8f4ab2ff8872",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1235,7 +1235,7 @@
         "Notes": ""
       },
       "referenceSha256": "93baf7329b15a3a67ff1c7a807f3ce85881615024728d6a894a8ad2b331f5f14",
-      "sha256": "939f069235bb26cc678aa9f0ad2b30ae75ee2508cc8fb981fca13e31559ef9fe",
+      "sha256": "4d738420b9998bbb52c7bcbe0f2d31767ce6c63a43a983cb8d24eb45016a7b57",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1273,7 +1273,7 @@
         "Notes": ""
       },
       "referenceSha256": "93baf7329b15a3a67ff1c7a807f3ce85881615024728d6a894a8ad2b331f5f14",
-      "sha256": "b1801602e0856eec3f5371602b658fad4e9bb6b7a1681f05f4128b03ad885453",
+      "sha256": "ad5c8f58dbb5157554eada3e9b77e12741ab2177cc5811537f044f1ec9a1cc5c",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1311,7 +1311,7 @@
         "Notes": ""
       },
       "referenceSha256": "93baf7329b15a3a67ff1c7a807f3ce85881615024728d6a894a8ad2b331f5f14",
-      "sha256": "4ea0fa1e8a654bf3ff47805bc74fb32012c63234eba6d04cc706ec48a625c1ea",
+      "sha256": "82f09348048523b8db12f5ee8ea42b85f32dbf9ad7396ee30bb53e43c505d2aa",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1349,7 +1349,7 @@
         "Notes": ""
       },
       "referenceSha256": "93baf7329b15a3a67ff1c7a807f3ce85881615024728d6a894a8ad2b331f5f14",
-      "sha256": "fb84447b87183113411a96d2524e636f0c0c8200faf1dfd29420d1120fdd9f7f",
+      "sha256": "90d1c3cf07028574743db2d7994b7a1fc1905323e2bfd7ab9fa445700aa6a092",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1387,7 +1387,7 @@
         "Notes": ""
       },
       "referenceSha256": "a7c134adc5a962a0b12d29a1d676d22b0b08da511242b9b4f1b87326ad722429",
-      "sha256": "bc5d04c2b9f97bb2e838796e0ce5ce8b0522001b074b3d1211edfe4ad1ca9a3c",
+      "sha256": "62a5328f413b16533401c7fb5cd25fe1db0d657bafcd2019ac9bc80df1ec074a",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1425,7 +1425,7 @@
         "Notes": ""
       },
       "referenceSha256": "a7c134adc5a962a0b12d29a1d676d22b0b08da511242b9b4f1b87326ad722429",
-      "sha256": "f2faa49ab14ba13ef72dbe32d6dedf68cadf7adf037081f6741358692f975233",
+      "sha256": "cbf2fd21b1b28b57f3461b0613daf9a22fb37252a68f3fcd2f07907d11ad2118",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1463,7 +1463,7 @@
         "Notes": ""
       },
       "referenceSha256": "a7c134adc5a962a0b12d29a1d676d22b0b08da511242b9b4f1b87326ad722429",
-      "sha256": "024117e86b7471a9bfc5cd8c1d549d88c5c588c3b2fdd73576d097778a17719b",
+      "sha256": "9dedf5cd11894f08a84fe996eeb0c104a9bb975c77978a7e738e0166b7485283",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1501,7 +1501,7 @@
         "Notes": ""
       },
       "referenceSha256": "a7c134adc5a962a0b12d29a1d676d22b0b08da511242b9b4f1b87326ad722429",
-      "sha256": "d0a8f978f415433bc877dc809851b3390637d13517b73ba62aa58e70e3608a05",
+      "sha256": "847b93f487a58e089549ea7c50e23a271a819f8c90f8cef32aceae4a5e0b5445",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1539,7 +1539,7 @@
         "Notes": ""
       },
       "referenceSha256": "030137c87a444ddfb9237c66cdb40cd9b243e025004c6f727a892562d62c6da8",
-      "sha256": "d5f5f07eda6782ffccd11435cf73d266eb9e065ab9a51ab709d5da0b6c9bbb27",
+      "sha256": "d65af49a6e66d1a076377a6f8cf519299d3624579df18e89a86c34c843d66404",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1547,8 +1547,8 @@
       "bitsAllocated": 32,
       "caseName": "rle-boundary-32-signed-false",
       "color": false,
-      "comparison": "expected-rejection",
-      "expectation": "unsupported_metadata",
+      "comparison": "exact",
+      "expectation": "decode-success",
       "family": "rle",
       "generator": "codecfixture.CorpusCases v1; testdata/codecfull/generate.go; serialized Part10 and full expected samples SHA256",
       "id": "rle-boundary-32-signed-false",
@@ -1576,8 +1576,8 @@
         "NoPHI": true,
         "Notes": ""
       },
-      "referenceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sha256": "3d2c74522ce25a6dbd007369ef1a91d7d44a242275e6eb45146c5355271351d4",
+      "referenceSha256": "030137c87a444ddfb9237c66cdb40cd9b243e025004c6f727a892562d62c6da8",
+      "sha256": "d9edc122513bbbd7c2d1819417516ffa96a9fb0e15492fc91435cc197f60672c",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1615,7 +1615,7 @@
         "Notes": ""
       },
       "referenceSha256": "030137c87a444ddfb9237c66cdb40cd9b243e025004c6f727a892562d62c6da8",
-      "sha256": "a2efb3acbf93bd0957350d565b9da86ad11d0117320460fbc5a182af7fafd95f",
+      "sha256": "0435e35e994a49e20caadd76da68e3fa941cc4e0188092deb0b8e6c59635e25d",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1623,8 +1623,8 @@
       "bitsAllocated": 32,
       "caseName": "rle-boundary-32-signed-true",
       "color": false,
-      "comparison": "expected-rejection",
-      "expectation": "unsupported_metadata",
+      "comparison": "exact",
+      "expectation": "decode-success",
       "family": "rle",
       "generator": "codecfixture.CorpusCases v1; testdata/codecfull/generate.go; serialized Part10 and full expected samples SHA256",
       "id": "rle-boundary-32-signed-true",
@@ -1652,8 +1652,8 @@
         "NoPHI": true,
         "Notes": ""
       },
-      "referenceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sha256": "784f3ce61cbb3168c8cb04889438c13d3cd082f0f4be3bb4cc2433111a6c34a2",
+      "referenceSha256": "030137c87a444ddfb9237c66cdb40cd9b243e025004c6f727a892562d62c6da8",
+      "sha256": "c043e84527c6fb24ec59613df213e6b4e63898bf811188c33d7cafb8d9bc6ba7",
       "signed": true,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1691,7 +1691,7 @@
         "Notes": ""
       },
       "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
-      "sha256": "988fe319ee7b9517324c53887f86ec73d4eeb16291bba722eb7f17a0ca514c7a",
+      "sha256": "bb1f339dbc4c642e0bbd215fc5594ee3c042cbb0db3d5fc234df578229418c5f",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1729,7 +1729,7 @@
         "Notes": ""
       },
       "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
-      "sha256": "3a9fc1d516088dba8c98dc34bc3413f2fc6c6a3247e88d62d3474ce68b3a65a4",
+      "sha256": "759dbbb975de3917eae79ecd7029d001c31f7c92c4ea4e0289bda7def5ea0af7",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1767,7 +1767,7 @@
         "Notes": ""
       },
       "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
-      "sha256": "fcc350705fee0d096a5e9dd152305e5d27e960d1fdbc46c4a38564df4ac36b86",
+      "sha256": "5a413b4ebc44b5d055aa6c30a0c7f266481d12df986970c56fff5f2d831b5dd7",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1775,8 +1775,8 @@
       "bitsAllocated": 8,
       "caseName": "rle-color-RGB-planar-true",
       "color": true,
-      "comparison": "expected-rejection",
-      "expectation": "unsupported_metadata",
+      "comparison": "exact",
+      "expectation": "decode-success",
       "family": "rle",
       "generator": "codecfixture.CorpusCases v1; testdata/codecfull/generate.go; serialized Part10 and full expected samples SHA256",
       "id": "rle-color-RGB-planar-true",
@@ -1804,8 +1804,8 @@
         "NoPHI": true,
         "Notes": ""
       },
-      "referenceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sha256": "7847edff88b0b6e65494310f5cdc8b23f342418d4e105361170339ba4cf0a0cf",
+      "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
+      "sha256": "eeca86a62e83c09430619c76c79d164d18f79698f33ea7d5354b09ce8e091914",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1843,7 +1843,7 @@
         "Notes": ""
       },
       "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
-      "sha256": "562373bcd5cb7ca9206038b90a095eccda2cc9ccaa5879ccf51f7a582420689d",
+      "sha256": "7487b7a8e479c1f81297cda6cbc755f7d8ead9a0a9d7ccc5fb4dcfa5d8a3b53d",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1851,8 +1851,8 @@
       "bitsAllocated": 8,
       "caseName": "rle-color-YBR_FULL-planar-false",
       "color": true,
-      "comparison": "expected-rejection",
-      "expectation": "unsupported_metadata",
+      "comparison": "exact",
+      "expectation": "decode-success",
       "family": "rle",
       "generator": "codecfixture.CorpusCases v1; testdata/codecfull/generate.go; serialized Part10 and full expected samples SHA256",
       "id": "rle-color-YBR_FULL-planar-false",
@@ -1880,8 +1880,8 @@
         "NoPHI": true,
         "Notes": ""
       },
-      "referenceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sha256": "bb2a2b083f53c3c3c13c315a8ca9038825f2e3777858db3c59c611717bf80db0",
+      "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
+      "sha256": "20258edd4001538fc21ba02bcfcdbc54df2576424ec02af69bd92a0417ad9b1e",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1919,7 +1919,7 @@
         "Notes": ""
       },
       "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
-      "sha256": "e7fd6ef4b8cb29d89351be5aae3898388e5b59410db495c541ae5a498d6bd052",
+      "sha256": "b70a432a9edab3bd7c52c18e436ecefc372be59ce464b3ec48f1c66facb8e955",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -1927,8 +1927,8 @@
       "bitsAllocated": 8,
       "caseName": "rle-color-YBR_FULL-planar-true",
       "color": true,
-      "comparison": "expected-rejection",
-      "expectation": "unsupported_metadata",
+      "comparison": "exact",
+      "expectation": "decode-success",
       "family": "rle",
       "generator": "codecfixture.CorpusCases v1; testdata/codecfull/generate.go; serialized Part10 and full expected samples SHA256",
       "id": "rle-color-YBR_FULL-planar-true",
@@ -1956,8 +1956,8 @@
         "NoPHI": true,
         "Notes": ""
       },
-      "referenceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sha256": "4a823f1a92749bf0006beb85c11820a0a80fe8f510bb4050aa0371e586b44474",
+      "referenceSha256": "7874fbb8a30f6494dff910598c8bad4a22c3bc11f9460e331c2343c7e4246f1a",
+      "sha256": "fff2d4ad7721eade7929f49556b5ae6ff2f1b287283289e77769e8dd7653f556",
       "signed": false,
       "test": "TestSyntheticCorpusManifest"
     },
@@ -26293,6 +26293,1422 @@
         "path": "jpegls-encode-near/jpegls-encode-near255-16b-3c-f1.source.raw",
         "sha256": "c3b6a4949debd570f304ed2a0b353e35746b308962ff1cd6028bd1637a1d0aef",
         "near": 255
+      }
+    },
+    {
+      "id": "jpeg2000-core-u8-odd-layers",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u8-odd-layers.j2k",
+      "sha256": "36b4f33b14f7c2e838ea10154e6882c26a5cec950b259608e9d19535d0279996",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 23,
+        "columns": 37,
+        "components": 1,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u8-odd-layers.openjpeg.raw",
+      "referenceSha256": "2d3469d0e24788b524f20d235866d690f7398e55aa09c69d0fdb4e96ee764b04",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 23,
+          "columns": 37,
+          "components": 1,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u8-odd-layers.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-u8-odd-layers.source.raw",
+        "sha256": "2d3469d0e24788b524f20d235866d690f7398e55aa09c69d0fdb4e96ee764b04",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-u12-tiles",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u12-tiles.j2k",
+      "sha256": "90d7b294360695cbab5b952be813d381b207125d171dd5753bdb304afa8e2b78",
+      "bitsAllocated": 16,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 47,
+        "columns": 61,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 12,
+        "highBit": 11,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u12-tiles.openjpeg.raw",
+      "referenceSha256": "f1bd7f9c990de39f2b1f16f2f1185ed8b51bd075a341b450fd2c0eab0c28a9f1",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 47,
+          "columns": 61,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 12,
+          "high_bit": 11,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u12-tiles.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-u12-tiles.source.raw",
+        "sha256": "f1bd7f9c990de39f2b1f16f2f1185ed8b51bd075a341b450fd2c0eab0c28a9f1",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-u16-extremes-rlcp",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u16-extremes-rlcp.j2k",
+      "sha256": "5f48c2d00b99fab6d57a6c69d8445d07acc239cd64659b8ceb9a3de7b0312642",
+      "bitsAllocated": 16,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 33,
+        "columns": 64,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 16,
+        "highBit": 15,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u16-extremes-rlcp.openjpeg.raw",
+      "referenceSha256": "36c8c34b7e02b73f4be9c4892568c136c64dd39af74cc9af4bf3f00c090f0bc0",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 33,
+          "columns": 64,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 16,
+          "high_bit": 15,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u16-extremes-rlcp.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-u16-extremes-rlcp.source.raw",
+        "sha256": "36c8c34b7e02b73f4be9c4892568c136c64dd39af74cc9af4bf3f00c090f0bc0",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-u16-high-values",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u16-high-values.j2k",
+      "sha256": "c1afd79981da7b5f36af2315a57e8c70d301820a44a44349b9e5070f624c379a",
+      "bitsAllocated": 16,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 48,
+        "columns": 48,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 16,
+        "highBit": 15,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u16-high-values.openjpeg.raw",
+      "referenceSha256": "8c81075d3fb1e669a49012299000284d5224ad92d03a1a658703353b1c423bd4",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 48,
+          "columns": 48,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 16,
+          "high_bit": 15,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u16-high-values.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-u16-high-values.source.raw",
+        "sha256": "8c81075d3fb1e669a49012299000284d5224ad92d03a1a658703353b1c423bd4",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-s16-extremes",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-s16-extremes.j2k",
+      "sha256": "3aec2f5904d157099d56f66989254fa46be496130942ae323b20aac779a34eea",
+      "bitsAllocated": 16,
+      "signed": true,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 40,
+        "columns": 40,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 16,
+        "highBit": 15,
+        "signed": true,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-s16-extremes.openjpeg.raw",
+      "referenceSha256": "091c477212d209be03d089dd4eb772fee05bbd568c3e741910b2ecee5dbbf583",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 40,
+          "columns": 40,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 16,
+          "high_bit": 15,
+          "signed": true,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-s16-extremes.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-s16-extremes.source.raw",
+        "sha256": "091c477212d209be03d089dd4eb772fee05bbd568c3e741910b2ecee5dbbf583",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-s12",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-s12.j2k",
+      "sha256": "efc1fecb3740dcdc32e484f728da0830c25e68dbdfb006ff2e823dd8c87ff5e1",
+      "bitsAllocated": 16,
+      "signed": true,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 31,
+        "columns": 33,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 12,
+        "highBit": 11,
+        "signed": true,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-s12.openjpeg.raw",
+      "referenceSha256": "944e2a3f16269b1c1e25a0a7a443f37089712455563387cfc696debe4580d432",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 31,
+          "columns": 33,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 12,
+          "high_bit": 11,
+          "signed": true,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-s12.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-s12.source.raw",
+        "sha256": "944e2a3f16269b1c1e25a0a7a443f37089712455563387cfc696debe4580d432",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-rgb8-rct",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-rct.j2k",
+      "sha256": "dbef052b55467b773a0a7833a62208a4823fe48ad078c82ded70102c3cb5ae8a",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 31,
+        "columns": 29,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_RCT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-rct.openjpeg.raw",
+      "referenceSha256": "31d30fb274d3f734fa0c84509773f33c6cc92c0fe53db28533a14fb1b662beda",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 31,
+          "columns": 29,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-rct.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-rct.source.raw",
+        "sha256": "31d30fb274d3f734fa0c84509773f33c6cc92c0fe53db28533a14fb1b662beda",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-rgb8-no-mct",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-no-mct.j2k",
+      "sha256": "00038f14ce2955616eb15bfbe0227d2dc0ab4cd78fe802917af91971caddf0e2",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 31,
+        "columns": 29,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "RGB",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-no-mct.openjpeg.raw",
+      "referenceSha256": "31d30fb274d3f734fa0c84509773f33c6cc92c0fe53db28533a14fb1b662beda",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 31,
+          "columns": 29,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-no-mct.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-no-mct.source.raw",
+        "sha256": "31d30fb274d3f734fa0c84509773f33c6cc92c0fe53db28533a14fb1b662beda",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-u8-irreversible",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u8-irreversible.j2k",
+      "sha256": "74a3eef40cd62d19be3fcaa63fe897fbb7b48ed7ff4be8967b0a04ee838897ab",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": true,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.91",
+        "rows": 64,
+        "columns": 64,
+        "components": 1,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u8-irreversible.openjpeg.raw",
+      "referenceSha256": "75b0c8d183e545b77a667abacd5d3be01646365841480838209d3d96771ff6c4",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 64,
+          "columns": 64,
+          "components": 1,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u8-irreversible.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "sample-metrics",
+      "samplePolicy": {
+        "max_absolute_error": 1,
+        "min_psnr": 60,
+        "max_tile_mean_absolute_error": 0.25,
+        "rationale": "Decoder-to-decoder check of one irreversible 9/7 codestream against OpenJPEG 2.5.4: both reconstruct the same real-valued samples and can differ only in the final rounding step, so the peak error is one level; measured max 1 on 11 of 4096 samples, 73.8 dB, worst 8x8 tile MAE 0.031"
+      },
+      "maxAbsoluteError": 1
+    },
+    {
+      "id": "jpeg2000-core-u16-irreversible",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u16-irreversible.j2k",
+      "sha256": "8aa49961f80ed5daf02fb3ff9d8380f9923d0b53a47893fe8949a63ee13f2623",
+      "bitsAllocated": 16,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": true,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.91",
+        "rows": 48,
+        "columns": 40,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 16,
+        "highBit": 15,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u16-irreversible.openjpeg.raw",
+      "referenceSha256": "b999809a3bca570bc72c63e63c566261fb1848a5c28023497acf159abb444d04",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 48,
+          "columns": 40,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 16,
+          "high_bit": 15,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u16-irreversible.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "sample-metrics",
+      "samplePolicy": {
+        "max_absolute_error": 1,
+        "min_psnr": 100,
+        "max_tile_mean_absolute_error": 0.25,
+        "rationale": "Decoder-to-decoder check of one irreversible 9/7 16-bit codestream against OpenJPEG 2.5.4: only final rounding can differ; measured max 1 on 13 of 1920 samples, 118 dB, worst 8x8 tile MAE 0.062"
+      },
+      "maxAbsoluteError": 1
+    },
+    {
+      "id": "jpeg2000-core-rgb8-ict",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-ict.j2k",
+      "sha256": "c1e6155a4e73f98302871cd7c666bb343e48f6210ae040fa56d76ae54b40ef76",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": true,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.91",
+        "rows": 40,
+        "columns": 48,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_ICT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-ict.openjpeg.raw",
+      "referenceSha256": "26518e23ea06c7f40bedffb08287e2f68e6ae2211438838d9428ac50d463949a",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 40,
+          "columns": 48,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-ict.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "sample-metrics",
+      "samplePolicy": {
+        "max_absolute_error": 1,
+        "min_psnr": 60,
+        "max_tile_mean_absolute_error": 0.25,
+        "rationale": "Decoder-to-decoder check of one irreversible 9/7 + ICT codestream against OpenJPEG 2.5.4 per component: only final rounding after the inverse ICT can differ; measured max 1 on at most 6 of 1920 samples per component, at least 73.2 dB, worst 8x8 tile MAE 0.016"
+      },
+      "maxAbsoluteError": 1
+    },
+    {
+      "id": "jpeg2000-core-rgb8-rpcl-precincts",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-rpcl-precincts.j2k",
+      "sha256": "1050c243e94f170f30239eb4980a09bc472242130608b8ae385db733a2dd81b3",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 47,
+        "columns": 61,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_RCT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-rpcl-precincts.openjpeg.raw",
+      "referenceSha256": "2ad43221b20ebba85cdc8eca233f10801530f433ee3b6251b239c376c7c5b6a3",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 47,
+          "columns": 61,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-rpcl-precincts.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-rpcl-precincts.source.raw",
+        "sha256": "2ad43221b20ebba85cdc8eca233f10801530f433ee3b6251b239c376c7c5b6a3",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-u12-pcrl-offsets",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u12-pcrl-offsets.j2k",
+      "sha256": "2a035a17fa2e7260ea7f1c93077fdb2c0ddccdfa468ee3d733ea3407a33e5fc8",
+      "bitsAllocated": 16,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 53,
+        "columns": 71,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 12,
+        "highBit": 11,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u12-pcrl-offsets.openjpeg.raw",
+      "referenceSha256": "b0e2788d45375f37cebe8dc398617a2840df56274a873066d9712c43870d9b79",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 53,
+          "columns": 71,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 12,
+          "high_bit": 11,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u12-pcrl-offsets.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-u12-pcrl-offsets.source.raw",
+        "sha256": "b0e2788d45375f37cebe8dc398617a2840df56274a873066d9712c43870d9b79",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-rgb8-cprl",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-cprl.j2k",
+      "sha256": "d8846cdce935924d36a2d544ff0ce1dc91c1be3cba72fd6619d0ed39f4f09cea",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 50,
+        "columns": 43,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_RCT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-cprl.openjpeg.raw",
+      "referenceSha256": "e76a9ab1859737a5fa26c714cb7a881ba69988dfe241590e6f0d2b15a4955553",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 50,
+          "columns": 43,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-cprl.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-cprl.source.raw",
+        "sha256": "e76a9ab1859737a5fa26c714cb7a881ba69988dfe241590e6f0d2b15a4955553",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-u16-block-styles",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u16-block-styles.j2k",
+      "sha256": "54d20c3ec9b89e88c1cca08ff189dd2f9a4305c0ae24555cf2711f226e64de4b",
+      "bitsAllocated": 16,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 45,
+        "columns": 52,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 16,
+        "highBit": 15,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u16-block-styles.openjpeg.raw",
+      "referenceSha256": "cd782ca1d8f4724ccbe4ed033c03856240642250150a2f999e330a773693c7fe",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 45,
+          "columns": 52,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 16,
+          "high_bit": 15,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u16-block-styles.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-u16-block-styles.source.raw",
+        "sha256": "cd782ca1d8f4724ccbe4ed033c03856240642250150a2f999e330a773693c7fe",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-s12-bypass-termall",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-s12-bypass-termall.j2k",
+      "sha256": "fca60ab8fb48e4034630a94bf0bb368b3bf750201697118937669c2df071b545",
+      "bitsAllocated": 16,
+      "signed": true,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 40,
+        "columns": 37,
+        "components": 1,
+        "bitsAllocated": 16,
+        "bitsStored": 12,
+        "highBit": 11,
+        "signed": true,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-s12-bypass-termall.openjpeg.raw",
+      "referenceSha256": "ab6bd6cf63b320c13947774e565a43d7bebfdb59e98255984d2d002b78420138",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 40,
+          "columns": 37,
+          "components": 1,
+          "bits_allocated": 16,
+          "bits_stored": 12,
+          "high_bit": 11,
+          "signed": true,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-s12-bypass-termall.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-s12-bypass-termall.source.raw",
+        "sha256": "ab6bd6cf63b320c13947774e565a43d7bebfdb59e98255984d2d002b78420138",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-u8-vsc-reset-irreversible",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u8-vsc-reset-irreversible.j2k",
+      "sha256": "010922b9ce2175bc99dc61549b5824cbd74bb5bd6ce993e0440ad7317a8988d6",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": true,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.91",
+        "rows": 48,
+        "columns": 48,
+        "components": 1,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u8-vsc-reset-irreversible.openjpeg.raw",
+      "referenceSha256": "bcb24af52fd1f69ffb075885865c68257a3beb3d6867f3fb1a32c620be97c79b",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 48,
+          "columns": 48,
+          "components": 1,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u8-vsc-reset-irreversible.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "sample-metrics",
+      "samplePolicy": {
+        "max_absolute_error": 1,
+        "min_psnr": 60,
+        "max_tile_mean_absolute_error": 0.25,
+        "rationale": "Decoder-to-decoder check of one irreversible 9/7 codestream coded with the vertically causal context and context reset against OpenJPEG 2.5.4: only final rounding can differ; measured max 1 on 5 of 2304 samples, 74.8 dB, worst 8x8 tile MAE 0.016"
+      },
+      "maxAbsoluteError": 1
+    },
+    {
+      "id": "jpeg2000-core-u8-subsampled",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-u8-subsampled.j2k",
+      "sha256": "9272f7ddd60177ff97be9ccc7e33b469ded566a2a134777ff2c72abbf75a0458",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": false,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 23,
+        "columns": 37,
+        "components": 1,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "MONOCHROME2",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; jpeg2000/core/generate.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; OpenJPEG binary hashes in generation.json"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-u8-subsampled.openjpeg.raw",
+      "referenceSha256": "2d3469d0e24788b524f20d235866d690f7398e55aa09c69d0fdb4e96ee764b04",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 23,
+          "columns": 37,
+          "components": 1,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-u8-subsampled.j2k",
+        "generator": "jpeg2000/core/generate.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-u8-subsampled.source.raw",
+        "sha256": "2d3469d0e24788b524f20d235866d690f7398e55aa09c69d0fdb4e96ee764b04",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-rgb8-poc",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-poc.j2k",
+      "sha256": "3db5cd8e11f97e5392c483ef745dd3256477389f84b9d27b477e63001bd3c399",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 47,
+        "columns": 61,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_RCT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; a lossless OpenJPEG codestream whose packets the core tier-2 reordered (POC) or whose packet headers it moved to PPM/PPT, kept only because OpenJPEG 2.5.4 decodes it to the source (TestCorePackedHeadersAndPOCAgainstOpenJPEG with DICOM_GO_J2K_REWRITE_OUT)"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-poc.openjpeg.raw",
+      "referenceSha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 47,
+          "columns": 61,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-poc.j2k",
+        "generator": "packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-poc.source.raw",
+        "sha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-rgb8-tile-poc",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-tile-poc.j2k",
+      "sha256": "be8050ae328fa81a945c704726e519a4c93318d57c4a097d5a9d5ec6b8419426",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 47,
+        "columns": 61,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_RCT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; a lossless OpenJPEG codestream whose packets the core tier-2 reordered (POC) or whose packet headers it moved to PPM/PPT, kept only because OpenJPEG 2.5.4 decodes it to the source (TestCorePackedHeadersAndPOCAgainstOpenJPEG with DICOM_GO_J2K_REWRITE_OUT)"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-tile-poc.openjpeg.raw",
+      "referenceSha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 47,
+          "columns": 61,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-tile-poc.j2k",
+        "generator": "packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-tile-poc.source.raw",
+        "sha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-rgb8-ppm-sop-eph",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-ppm-sop-eph.j2k",
+      "sha256": "e0098584e0516ae662481d0c7c2bc403ab2e33fb704f5b264bdf9601d72c6da8",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 47,
+        "columns": 61,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_RCT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; a lossless OpenJPEG codestream whose packets the core tier-2 reordered (POC) or whose packet headers it moved to PPM/PPT, kept only because OpenJPEG 2.5.4 decodes it to the source (TestCorePackedHeadersAndPOCAgainstOpenJPEG with DICOM_GO_J2K_REWRITE_OUT)"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-ppm-sop-eph.openjpeg.raw",
+      "referenceSha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 47,
+          "columns": 61,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-ppm-sop-eph.j2k",
+        "generator": "packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-ppm-sop-eph.source.raw",
+        "sha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+        "near": 0
+      }
+    },
+    {
+      "id": "jpeg2000-core-rgb8-ppt-rpcl-styles",
+      "family": "jpeg-2000-part-1",
+      "path": "jpeg2000/core/jpeg2000-core-rgb8-ppt-rpcl-styles.j2k",
+      "sha256": "fa966ac8eab2fdcb9cb3f74dbcc70637e2c8d87927685091201592847ffa4349",
+      "bitsAllocated": 8,
+      "signed": false,
+      "color": true,
+      "multiframe": false,
+      "lossy": false,
+      "modality": "OT",
+      "generator": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+      "baselineSkip": "core backend runner in examples/codec-adapters/jpeg2000",
+      "qualificationLimit": "",
+      "test": "TestCoreQualificationCorpus",
+      "input": {
+        "transferSyntax": "1.2.840.10008.1.2.4.90",
+        "rows": 47,
+        "columns": 61,
+        "components": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "signed": false,
+        "photometric": "YBR_RCT",
+        "planarConfiguration": 0,
+        "frames": 1
+      },
+      "provenance": {
+        "Source": "OpenJPEG 2.5.4 opj_compress; packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go",
+        "Synthetic": true,
+        "License": "BSD-2-Clause",
+        "Permission": "approved redistributable generated test vector; see generation.json",
+        "NoPHI": true,
+        "Notes": "Deterministic synthetic samples; a lossless OpenJPEG codestream whose packets the core tier-2 reordered (POC) or whose packet headers it moved to PPM/PPT, kept only because OpenJPEG 2.5.4 decodes it to the source (TestCorePackedHeadersAndPOCAgainstOpenJPEG with DICOM_GO_J2K_REWRITE_OUT)"
+      },
+      "referencePath": "jpeg2000/core/jpeg2000-core-rgb8-ppt-rpcl-styles.openjpeg.raw",
+      "referenceSha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+      "expectation": "decode-success",
+      "reconstruction": {
+        "layout": {
+          "rows": 47,
+          "columns": 61,
+          "components": 3,
+          "bits_allocated": 8,
+          "bits_stored": 8,
+          "high_bit": 7,
+          "signed": false,
+          "planar": false,
+          "big_endian": false
+        },
+        "frames": 1,
+        "backend": "OpenJPEG opj_decompress (independent native decoder)",
+        "version": "2.5.4",
+        "source": "jpeg2000/core/jpeg2000-core-rgb8-ppt-rpcl-styles.j2k",
+        "generator": "packets reordered or packed by examples/codec-adapters/jpeg2000 core_rewrite_test.go"
+      },
+      "comparison": "exact-reconstruction",
+      "sourceSamples": {
+        "path": "jpeg2000/core/jpeg2000-core-rgb8-ppt-rpcl-styles.source.raw",
+        "sha256": "65f76c7ecb1f3578726149472d403b0d711cdd54b0cc2a7e2cd70dd255ee949f",
+        "near": 0
       }
     }
   ],

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ThalesMMS/dicom-go/internal/dicomtest"
 	"io"
 	"os"
 	"path/filepath"
@@ -501,7 +502,13 @@ func TestEncodedStreamRejectsLayoutLimitsAndScope(t *testing.T) {
 			case "missing metadata":
 				f.Dataset.Remove(core.NewTag(0x0028, 0x0010))
 			case "native syntax":
-				f.TransferSyntax = codecfixture.NativeSmall().Syntax
+				// The object writer refuses this contradiction, so an independent
+				// encoder produces the malformed file the reader must reject.
+				var err error
+				data, err = dicomtest.Part10File(codecfixture.NativeSmall().Syntax, f.Dataset.SortedElements()...)
+				if err != nil {
+					t.Fatal(err)
+				}
 			case "missing BOT":
 				// No Item at all before Sequence Delimitation.
 				idx := bytes.Index(data, []byte{0xe0, 0x7f, 0x10, 0, 'O', 'B'})
@@ -509,7 +516,7 @@ func TestEncodedStreamRejectsLayoutLimitsAndScope(t *testing.T) {
 			case "empty EOT":
 				f.Dataset.Put(core.Element{Header: core.ElementHeader{Tag: core.NewTag(0x7fe0, 1), VR: core.VROV}, Value: core.Uint64Value{}})
 			}
-			if name != "fragmented EOT" && name != "missing BOT" {
+			if name != "fragmented EOT" && name != "missing BOT" && name != "native syntax" {
 				var out bytes.Buffer
 				if err := object.WriteFile(&out, f); err != nil {
 					t.Fatal(err)
@@ -534,5 +541,44 @@ func TestEncodedStreamRejectsLayoutLimitsAndScope(t *testing.T) {
 				t.Fatalf("invalid layout accepted: %v", err)
 			}
 		})
+	}
+}
+
+// The streaming assembler applies the same single-pad rule as the frame plan:
+// a nonzero pad byte that only makes the Item even is delivered, not refused.
+func TestEncodedStreamAcceptsNonZeroPadByte(t *testing.T) {
+	c := codecfixture.JPEGBaselineSmall()
+	pixel, err := c.PixelData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := pixel.Sequence.Fragments[0]
+	for len(raw) > 0 && raw[len(raw)-1] != 0xd9 {
+		raw = raw[:len(raw)-1]
+	}
+	if len(raw)%2 == 0 {
+		// Make the codestream odd with a JPEG fill byte before EOI.
+		raw = append(append(append([]byte(nil), raw[:len(raw)-2]...), 0xff), 0xff, 0xd9)
+	}
+	data := append(append([]byte(nil), raw...), 0x20)
+	obj := c.Object()
+	frameCount(obj, 1)
+	obj.Put(core.Element{Header: core.ElementHeader{Tag: core.TagPixelData, VR: core.VROB, Length: core.UndefinedLength, LengthSet: true},
+		Value: core.FragmentSequence{Fragments: [][]byte{data}}})
+	var out bytes.Buffer
+	if err := object.WriteFile(&out, &object.File{Dataset: obj, TransferSyntax: c.Syntax}); err != nil {
+		t.Fatal(err)
+	}
+	var frames [][]byte
+	sink := &recordingSink{fn: func(f parser.EncodedFrame) error {
+		frames = append(frames, append([]byte(nil), f.Data...))
+		return nil
+	}}
+	stream := newStream(t, context.Background(), sink, encapsulated.Limits{})
+	if _, err := object.ReadFileWithOptions(bytes.NewReader(out.Bytes()), object.ReadFileOptions{EncapsulatedSink: stream}); err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 1 || !bytes.HasPrefix(frames[0], raw) {
+		t.Fatalf("frames = %d", len(frames))
 	}
 }

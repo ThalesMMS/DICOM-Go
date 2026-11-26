@@ -71,7 +71,7 @@ func TestTranscodeDataSetRejectsRepresentationAndPixelKindMismatches(t *testing.
 func TestTranscodeDataSetRejectsNestedAndBitPackedPerFramePixelData(t *testing.T) {
 	nested := transcodeNativeObject([]byte{1, 2, 3, 4})
 	nested.Put(core.Element{
-		Header: core.ElementHeader{Tag: core.NewTag(0x0088, 0x0200), VR: core.VRSQ, Length: core.UndefinedLength, LengthSet: true},
+		Header: core.ElementHeader{Tag: core.NewTag(0x0040, 0xA730), VR: core.VRSQ, Length: core.UndefinedLength, LengthSet: true},
 		Value: core.SequenceValue{Items: []core.DataSet{{Elements: []core.Element{
 			core.NewRawElement(core.TagPixelData, core.VROB, []byte{9}),
 		}}}},

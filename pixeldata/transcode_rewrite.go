@@ -2,15 +2,14 @@ package pixeldata
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"math"
-	"math/big"
 	"strconv"
 	"strings"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/derivation"
 	"github.com/ThalesMMS/dicom-go/object"
 )
 
@@ -20,11 +19,12 @@ type encodedMetadataDelta struct {
 }
 
 type encodedRewriteInput struct {
-	source    *object.Object
-	metadata  Metadata
-	fragments [][]byte
-	delta     *encodedMetadataDelta
-	limits    TranscodeLimits
+	source     *object.Object
+	metadata   Metadata
+	fragments  [][]byte
+	collection bool
+	delta      *encodedMetadataDelta
+	limits     TranscodeLimits
 }
 
 // shallowDataSetDraft may still alias source values and must never be returned
@@ -38,7 +38,11 @@ type detachedDataSet struct {
 }
 
 func rewriteEncodedDataSet(ctx context.Context, input encodedRewriteInput) (shallowDataSetDraft, int64, error) {
-	if len(input.fragments) != input.metadata.NumberOfFrames || len(input.fragments) > input.limits.MaxFrames || len(input.fragments) > input.limits.MaxFragments {
+	expected := input.metadata.NumberOfFrames
+	if input.collection {
+		expected = 1
+	}
+	if len(input.fragments) != expected || len(input.fragments) > input.limits.MaxFrames || len(input.fragments) > input.limits.MaxFragments {
 		return shallowDataSetDraft{}, 0, transcodeLimitError("fragments")
 	}
 	lengths := make([]uint64, len(input.fragments))
@@ -56,11 +60,15 @@ func rewriteEncodedDataSet(ctx context.Context, input encodedRewriteInput) (shal
 			return shallowDataSetDraft{}, 0, transcodeLimitError("output_bytes")
 		}
 	}
-	bot, eot, eotLengths, err := frameOffsetTables(lengths)
-	if err != nil {
-		return shallowDataSetDraft{}, 0, err
+	var bot, eot, eotLengths []byte
+	if !input.collection {
+		var err error
+		bot, eot, eotLengths, err = frameOffsetTables(lengths)
+		if err != nil {
+			return shallowDataSetDraft{}, 0, err
+		}
 	}
-	elements := removeElements(input.source.Elements(), tagExtendedOffsetTable, tagExtendedOffsetTableLengths, tagEncapsulatedPixelDataValueTotalLength)
+	elements := encodedMetadataElements(input.source, input.delta)
 	elements = replaceElement(elements, core.Element{
 		Header: core.ElementHeader{Tag: core.TagPixelData, VR: core.VROB, Length: core.UndefinedLength, LengthSet: true},
 		Value:  core.FragmentSequence{OffsetTable: bot, Fragments: input.fragments},
@@ -69,17 +77,25 @@ func rewriteEncodedDataSet(ctx context.Context, input encodedRewriteInput) (shal
 		elements = replaceElement(elements, core.NewRawElement(tagExtendedOffsetTable, core.VROV, eot))
 		elements = replaceElement(elements, core.NewRawElement(tagExtendedOffsetTableLengths, core.VROV, eotLengths))
 	}
-	if input.delta != nil {
-		if strings.TrimSpace(input.delta.photometric) != "" {
-			elements = replaceElement(elements, photometricInterpretationElement(input.delta.photometric))
-		}
-		if input.delta.planar != nil {
-			elements = replaceElement(elements, uint16RawElement(tagPlanarConfiguration, *input.delta.planar))
-		}
-	}
 	draft := object.FromElements(elements, nil)
 	draft.SetValueByteOrder(binary.LittleEndian)
 	return shallowDataSetDraft{object: draft}, int64(total), nil
+}
+
+// encodedMetadataElements is source's elements for encapsulated output
+// without their Pixel Data payload: the offset tables of the source removed
+// (the writer computes new ones) and the encoder's metadata delta applied.
+func encodedMetadataElements(source *object.Object, delta *encodedMetadataDelta) []core.Element {
+	elements := removeElements(source.Elements(), tagExtendedOffsetTable, tagExtendedOffsetTableLengths, tagEncapsulatedPixelDataValueTotalLength)
+	if delta != nil {
+		if strings.TrimSpace(delta.photometric) != "" {
+			elements = replaceElement(elements, photometricInterpretationElement(delta.photometric))
+		}
+		if delta.planar != nil {
+			elements = replaceElement(elements, uint16RawElement(tagPlanarConfiguration, *delta.planar))
+		}
+	}
+	return elements
 }
 
 func detachDataSet(ctx context.Context, draft shallowDataSetDraft, limits TranscodeLimits) (detachedDataSet, error) {
@@ -90,8 +106,8 @@ func detachDataSet(ctx context.Context, draft shallowDataSetDraft, limits Transc
 	return detachedDataSet{object: result}, nil
 }
 
-func finalizeLossyDataSet(data detachedDataSet, nativeBytes, encodedBytes int64, method string) error {
-	return applyLossyTranscodeMetadata(data.object, nativeBytes, encodedBytes, method)
+func finalizeLossyDataSet(data detachedDataSet, nativeBytes, encodedBytes int64, method, root string) error {
+	return applyLossyTranscodeMetadataWithUIDRoot(data.object, nativeBytes, encodedBytes, method, root)
 }
 
 func frameOffsetTables(lengths []uint64) (bot, eot, eotLengths []byte, err error) {
@@ -132,6 +148,10 @@ func frameOffsetTables(lengths []uint64) (bot, eot, eotLengths []byte, err error
 }
 
 func applyLossyTranscodeMetadata(dataset *object.Object, nativeBytes, encodedBytes int64, method string) error {
+	return applyLossyTranscodeMetadataWithUIDRoot(dataset, nativeBytes, encodedBytes, method, "")
+}
+
+func applyLossyTranscodeMetadataWithUIDRoot(dataset *object.Object, nativeBytes, encodedBytes int64, method, root string) error {
 	if dataset == nil || nativeBytes <= 0 || encodedBytes <= 0 || strings.TrimSpace(method) == "" {
 		return fmt.Errorf("%w: invalid lossy encoder result", ErrEncoderOutputInvalid)
 	}
@@ -171,7 +191,20 @@ func applyLossyTranscodeMetadata(dataset *object.Object, nativeBytes, encodedByt
 		imageTypes[0] = "DERIVED"
 	}
 	dataset.Put(core.Element{Header: core.ElementHeader{Tag: tagImageType, VR: core.VRCS}, Value: core.StringValue(imageTypes)})
-	uid, err := newTranscodeUID()
+	// Record the step as DCMTK and GDCM do (PS3.3 C.7.6.1.1.5): Derivation
+	// Code 113040 and a Derivation Description, and a Source Image reference
+	// to the predecessor (121320) when it has SOP Class and Instance UIDs.
+	step := derivation.Derivation{
+		Description: derivation.LossyDescription(strings.TrimSpace(method), float64(nativeBytes)/float64(encodedBytes)),
+		Codes:       []derivation.Code{derivation.LossyCompression},
+	}
+	if source, err := derivation.SourceOf(dataset, &derivation.UncompressedPredecessor); err == nil {
+		step.Sources = []derivation.Source{source}
+	}
+	if err := derivation.ApplyTo(dataset, step); err != nil {
+		return fmt.Errorf("%w: derivation: %v", ErrEncoderOutputInvalid, err)
+	}
+	uid, err := newTranscodeUID(root)
 	if err != nil {
 		return &TranscodeError{Stage: "uid", Err: ErrTranscodeTransaction}
 	}
@@ -236,14 +269,6 @@ func validLossyCompressionRatio(value string) bool {
 	}
 	ratio, err := strconv.ParseFloat(trimmed, 64)
 	return err == nil && ratio > 0 && !math.IsInf(ratio, 0) && !math.IsNaN(ratio)
-}
-
-func newTranscodeUID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return "2.25." + new(big.Int).SetBytes(raw[:]).String(), nil
 }
 
 func elementStrings(dataset *object.Object, tag core.Tag) []string {

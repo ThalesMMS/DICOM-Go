@@ -177,11 +177,9 @@ func TestJPEGExtendedProcess4RejectsNonConformantDICOMMetadata(t *testing.T) {
 		highBit             uint16
 		pixelRepresentation uint16
 	}{
-		{name: "nine bits stored", bitsAllocated: 16, bitsStored: 9, highBit: 8},
-		{name: "ten bits stored", bitsAllocated: 16, bitsStored: 10, highBit: 9},
-		{name: "eleven bits stored", bitsAllocated: 16, bitsStored: 11, highBit: 10},
+		{name: "eight bits stored", bitsAllocated: 16, bitsStored: 8, highBit: 7},
+		{name: "thirteen bits stored", bitsAllocated: 16, bitsStored: 13, highBit: 12},
 		{name: "wrong high bit", bitsAllocated: 16, bitsStored: 12, highBit: 10},
-		{name: "signed", bitsAllocated: 16, bitsStored: 12, highBit: 11, pixelRepresentation: 1},
 		{name: "twelve allocated", bitsAllocated: 12, bitsStored: 12, highBit: 11},
 	}
 
@@ -309,7 +307,7 @@ func TestJPEGExtendedProcess4LibjpegTurboRestartInterop(t *testing.T) {
 	if err != nil {
 		t.Skipf("djpeg unavailable: %v", err)
 	}
-	const width, height = 16, 16
+	const width, height = 17, 13 // Partial MCUs on both output edges.
 	source := make([]uint16, width*height)
 	for i := range source {
 		source[i] = uint16((i*37 + (i/width)*211) & 0x0fff)

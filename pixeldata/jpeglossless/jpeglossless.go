@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ThalesMMS/dicom-go/internal/decoderecovery"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
 	encapframes "github.com/ThalesMMS/dicom-go/pixeldata/encapsulated"
@@ -56,6 +57,17 @@ func RegisterDefault() error {
 }
 
 func (c *Codec) Decode(pixel pixeldata.PixelData, obj *object.Object) (pixeldata.Frames, error) {
+	return c.DecodeContext(context.Background(), pixel, obj)
+}
+
+// DecodeContext decodes with cancellation and the encapsulated recoveries
+// carried by ctx (pixeldata.DecodeContextWithRecovery). Monochrome predictor-1
+// scans reconstruct directly into privately owned native bytes. FrameInto
+// uses the validated result before touching a caller destination.
+func (c *Codec) DecodeContext(ctx context.Context, pixel pixeldata.PixelData, obj *object.Object) (pixeldata.Frames, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !pixel.Encapsulated {
 		return pixeldata.Frames{}, fmt.Errorf("%w: JPEG Lossless requires encapsulated pixel data", pixeldata.ErrIncompatiblePixelData)
 	}
@@ -66,7 +78,7 @@ func (c *Codec) Decode(pixel pixeldata.PixelData, obj *object.Object) (pixeldata
 	if err := validateJPEGLosslessMetadata(metadata); err != nil {
 		return pixeldata.Frames{}, err
 	}
-	codestreams, err := encapframes.FromFragments(context.Background(), pixel.Sequence, obj, metadata.NumberOfFrames, encapframes.JPEG, encapframes.Limits{})
+	codestreams, err := encapframes.FromFragments(ctx, pixel.Sequence, obj, metadata.NumberOfFrames, encapframes.JPEG, encapframes.Limits{})
 	if err != nil {
 		if errors.Is(err, encapframes.ErrFrameCount) {
 			err = errors.Join(pixeldata.ErrPixelDataSizeMismatch, err)
@@ -80,12 +92,28 @@ func (c *Codec) Decode(pixel pixeldata.PixelData, obj *object.Object) (pixeldata
 	rows := int(metadata.Rows)
 	columns := int(metadata.Columns)
 	frames := make([][]byte, codestreams.Len())
+	recovery := decoderecovery.From(ctx)
+	allowQuirks := recovery.JPEGLosslessEncoderQuirks
+	base := encoderQuirks{predictor6Overflow: recovery.JPEGLosslessPredictor6Overflow}
+	var result pixeldata.Frames
+	if codestreams.Recovery().BasicOffsetTableIgnored {
+		result.AddDiagnostic(pixeldata.DiagnosticBasicOffsetTableIgnored)
+	}
 	for index := range frames {
-		view, err := codestreams.Frame(context.Background(), index)
+		if err := ctx.Err(); err != nil {
+			return pixeldata.Frames{}, err
+		}
+		view, err := codestreams.Frame(ctx, index)
 		if err != nil {
 			return pixeldata.Frames{}, fmt.Errorf("%w: %w", ErrInvalidStream, err)
 		}
-		image, err := decodeFrame(view.Data, c.selectionValue, metadata)
+		if view.Padded && view.PadByte != 0 {
+			result.AddDiagnostic(pixeldata.DiagnosticNonZeroFramePad)
+		}
+		image, quirks, err := decodeFrameWithRecovery(ctx, view.Data, c.selectionValue, metadata, base, allowQuirks)
+		for _, diagnostic := range quirks.diagnostics() {
+			result.AddDiagnostic(diagnostic)
+		}
 		if err != nil {
 			return pixeldata.Frames{}, fmt.Errorf("%w: frame %d: %w", ErrInvalidStream, index, err)
 		}
@@ -100,7 +128,17 @@ func (c *Codec) Decode(pixel pixeldata.PixelData, obj *object.Object) (pixeldata
 		}
 		frames[index] = image.toInterleavedBytes(metadata.BitsAllocated)
 	}
-	return pixeldata.Frames{Rows: rows, Columns: columns, Data: frames}, nil
+	if err := ctx.Err(); err != nil {
+		return pixeldata.Frames{}, err
+	}
+	if strings.ToUpper(strings.TrimSpace(metadata.PhotometricInterpretation)) == "YBR_FULL_422" {
+		// Every component was 1x1: the samples are full resolution Y Cb Cr,
+		// kept unconverted like YBR_FULL (DCMTK dcmdjpeg +cn and GDCM agree).
+		result.PhotometricInterpretation = "YBR_FULL"
+		result.AddDiagnostic(pixeldata.DiagnosticJPEGLosslessYBRFull422FullResolution)
+	}
+	result.Rows, result.Columns, result.Data = rows, columns, frames
+	return result, nil
 }
 
 func validateJPEGLosslessMetadata(metadata pixeldata.Metadata) error {
@@ -117,7 +155,12 @@ func validateJPEGLosslessMetadata(metadata pixeldata.Metadata) error {
 			return fmt.Errorf("%w: PhotometricInterpretation=%s", pixeldata.ErrUnsupportedPhotometricInterpretation, strings.TrimSpace(metadata.PhotometricInterpretation))
 		}
 	case 3:
-		if photometric != "RGB" && photometric != "YBR_FULL" {
+		// YBR_FULL_422 is not a lossless JPEG Photometric Interpretation
+		// (PS3.5 Table 8.2.1-2), but PS3.5 8.2.1 lets the codestream control
+		// decompression when its sampling disagrees with the data set. SOF3
+		// components must still be 1x1 (parseSOF3Segment), so only a full
+		// resolution codestream decodes, as YBR_FULL; real 4:2:2 is refused.
+		if photometric != "RGB" && photometric != "YBR_FULL" && photometric != "YBR_FULL_422" {
 			return fmt.Errorf("%w: PhotometricInterpretation=%s", pixeldata.ErrUnsupportedPhotometricInterpretation, strings.TrimSpace(metadata.PhotometricInterpretation))
 		}
 		if metadata.PixelRepresentation != 0 {
@@ -158,8 +201,8 @@ func validateJPEGLosslessRequest(metadata pixeldata.Metadata, fragments [][]byte
 	if !ok {
 		return fmt.Errorf("%w: joined frame size overflow", ErrInvalidStream)
 	}
-	// The current frame's int32 component planes coexist with all retained
-	// native frame outputs.
+	// Retain conservative admission for all scan types. A general scan's
+	// int32 component planes coexist with all retained native outputs.
 	if samples > ^uint64(0)/4 {
 		return fmt.Errorf("%w: decoded working-set overflow", ErrInvalidStream)
 	}
@@ -191,21 +234,54 @@ type decodedImage struct {
 	precision      int
 	planes         [][]int32
 	pointTransform []int
+	packedMono     []byte
 }
 
 func (d *decodedImage) toInterleavedBytes(bitsAllocated uint16) []byte {
+	if d.packedMono != nil {
+		return d.packedMono
+	}
 	pixels := d.width * d.height
 	components := len(d.planes)
 	bytesPerSample := int(bitsAllocated / 8)
 	out := make([]byte, pixels*components*bytesPerSample)
-	for pixelIndex := 0; pixelIndex < pixels; pixelIndex++ {
-		for component := 0; component < components; component++ {
-			sample := d.planes[component][pixelIndex] << uint(d.pointTransform[component])
-			outputIndex := pixelIndex*components + component
-			if bytesPerSample == 1 {
-				out[outputIndex] = byte(sample)
-			} else {
-				binary.LittleEndian.PutUint16(out[outputIndex*2:], uint16(sample))
+	if components == 1 {
+		plane, shift := d.planes[0], uint(d.pointTransform[0])
+		if bytesPerSample == 1 {
+			for i, sample := range plane {
+				out[i] = byte(sample << shift)
+			}
+		} else {
+			for i, sample := range plane {
+				binary.LittleEndian.PutUint16(out[i*2:], uint16(sample<<shift))
+			}
+		}
+		return out
+	}
+	if components == 3 && bytesPerSample == 1 {
+		a, b, c := d.planes[0], d.planes[1], d.planes[2]
+		sa, sb, sc := uint(d.pointTransform[0]), uint(d.pointTransform[1]), uint(d.pointTransform[2])
+		for i := 0; i < pixels; i++ {
+			pixel := out[i*3 : i*3+3]
+			pixel[0], pixel[1], pixel[2] = byte(a[i]<<sa), byte(b[i]<<sb), byte(c[i]<<sc)
+		}
+		return out
+	}
+	// Traverse each plane directly. Its transform and output stride stay fixed
+	// throughout the loop, including independently scanned color components.
+	for component, plane := range d.planes {
+		shift := uint(d.pointTransform[component])
+		if bytesPerSample == 1 {
+			outputIndex := component
+			for _, sample := range plane {
+				out[outputIndex] = byte(sample << shift)
+				outputIndex += components
+			}
+		} else {
+			outputIndex := component * 2
+			for _, sample := range plane {
+				binary.LittleEndian.PutUint16(out[outputIndex:], uint16(sample<<shift))
+				outputIndex += components * 2
 			}
 		}
 	}
@@ -233,6 +309,7 @@ type frameHeader struct {
 }
 
 type losslessDecoder struct {
+	ctx  context.Context
 	data []byte
 	pos  int
 
@@ -248,13 +325,89 @@ type losslessDecoder struct {
 	driAtScanCount   int
 	selectionValue   int
 	metadata         pixeldata.Metadata
+	packMono         bool
+	// quirks are the encoder quirks this attempt accepts; seen records the
+	// ones the frame actually exercised.
+	quirks encoderQuirks
+	seen   encoderQuirks
+}
+
+// encoderQuirks are deviations from T.81 accepted only on a retry under
+// DecodeRecovery.JPEGLosslessEncoderQuirks.
+type encoderQuirks struct {
+	ignoreSe            bool
+	lenientFillBits     bool
+	category16ExtraBits bool
+	// predictor6Overflow is not a retry: it is requested explicitly
+	// (DecodeRecovery.JPEGLosslessPredictor6Overflow) and applies to every
+	// attempt.
+	predictor6Overflow bool
+}
+
+// quirkAttempts are tried in order after a strict failure; the last one adds
+// the extra bits, which would misread a conforming stream.
+var quirkAttempts = []encoderQuirks{
+	{ignoreSe: true, lenientFillBits: true},
+	{ignoreSe: true, lenientFillBits: true, category16ExtraBits: true},
+}
+
+func (q encoderQuirks) diagnostics() []string {
+	var out []string
+	if q.ignoreSe {
+		out = append(out, pixeldata.DiagnosticJPEGLosslessSeIgnored)
+	}
+	if q.lenientFillBits {
+		out = append(out, pixeldata.DiagnosticJPEGLosslessFillBits)
+	}
+	if q.category16ExtraBits {
+		out = append(out, pixeldata.DiagnosticJPEGLosslessCategory16ExtraBits)
+	}
+	if q.predictor6Overflow {
+		out = append(out, pixeldata.DiagnosticJPEGLosslessPredictor6Overflow)
+	}
+	return out
+}
+
+// decodeFrameWithRecovery decodes strictly and, when allowed, retries with
+// the encoder quirk attempts, returning the quirks the successful attempt
+// used. The strict error is returned when every attempt fails.
+func decodeFrameWithRecovery(ctx context.Context, data []byte, selectionValue int, metadata pixeldata.Metadata, base encoderQuirks, allowQuirks bool) (*decodedImage, encoderQuirks, error) {
+	image, state, err := decodeFrameState(ctx, data, selectionValue, metadata, base, true)
+	if canceled := ctx.Err(); canceled != nil {
+		return nil, encoderQuirks{}, canceled
+	}
+	if err == nil || !allowQuirks {
+		seen := state.seen
+		if err != nil {
+			seen = encoderQuirks{}
+		}
+		return image, seen, err
+	}
+	for _, quirks := range quirkAttempts {
+		quirks.predictor6Overflow = base.predictor6Overflow
+		retried, state, retryErr := decodeFrameState(ctx, data, selectionValue, metadata, quirks, true)
+		if retryErr == nil {
+			return retried, state.seen, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, encoderQuirks{}, err
+		}
+	}
+	return nil, encoderQuirks{}, err
 }
 
 func decodeFrame(data []byte, selectionValue int, metadata pixeldata.Metadata) (*decodedImage, error) {
+	image, _, err := decodeFrameState(context.Background(), data, selectionValue, metadata, encoderQuirks{}, false)
+	return image, err
+}
+
+func decodeFrameState(ctx context.Context, data []byte, selectionValue int, metadata pixeldata.Metadata, quirks encoderQuirks, packMono bool) (*decodedImage, *losslessDecoder, error) {
 	if len(data) < 4 || data[0] != 0xff || data[1] != markerSOI {
-		return nil, fmt.Errorf("%w: missing SOI", ErrInvalidStream)
+		return nil, &losslessDecoder{}, fmt.Errorf("%w: missing SOI", ErrInvalidStream)
 	}
-	d := losslessDecoder{
+	d := &losslessDecoder{
+		ctx:            ctx,
+		quirks:         quirks,
 		data:           data,
 		pos:            2,
 		huffman:        make(map[int]*huffTable),
@@ -262,108 +415,108 @@ func decodeFrame(data []byte, selectionValue int, metadata pixeldata.Metadata) (
 		componentByID:  make(map[byte]int),
 		driAtScanCount: -1,
 		metadata:       metadata,
+		packMono:       packMono,
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, d, err
+		}
 		marker, err := d.nextMarker()
 		if err != nil {
-			return nil, err
+			return nil, d, err
 		}
 		switch marker {
 		case markerSOF3:
 			if d.seenSOF || d.seenSOS {
-				return nil, fmt.Errorf("%w: duplicate or out-of-order SOF3", ErrInvalidStream)
+				return nil, d, fmt.Errorf("%w: duplicate or out-of-order SOF3", ErrInvalidStream)
 			}
 			segment, err := d.readSegment()
 			if err != nil {
-				return nil, err
+				return nil, d, err
 			}
 			frame, err := parseSOF3Segment(segment)
 			if err != nil {
-				return nil, err
+				return nil, d, err
 			}
 			d.frame = frame
 			if frame.width != int(d.metadata.Columns) || frame.height != int(d.metadata.Rows) {
-				return nil, fmt.Errorf("%w: got %dx%d want %dx%d", ErrImageSizeMismatch, frame.width, frame.height, d.metadata.Columns, d.metadata.Rows)
+				return nil, d, fmt.Errorf("%w: got %dx%d want %dx%d", ErrImageSizeMismatch, frame.width, frame.height, d.metadata.Columns, d.metadata.Rows)
 			}
 			if frame.precision != int(d.metadata.BitsStored) || len(frame.components) != int(d.metadata.SamplesPerPixel) {
-				return nil, fmt.Errorf("%w: SOF3 precision/components disagree with metadata", ErrImageSizeMismatch)
+				return nil, d, fmt.Errorf("%w: SOF3 precision/components disagree with metadata", ErrImageSizeMismatch)
 			}
 			if err := validateJPEGLosslessFrameAllocation(frame); err != nil {
-				return nil, err
+				return nil, d, err
 			}
 			for index, component := range frame.components {
 				d.componentByID[component.id] = index
 			}
-			pixels := frame.width * frame.height
 			d.image = &decodedImage{
 				width: frame.width, height: frame.height, precision: frame.precision,
 				planes: make([][]int32, len(frame.components)), pointTransform: make([]int, len(frame.components)),
-			}
-			for index := range d.image.planes {
-				d.image.planes[index] = make([]int32, pixels)
 			}
 			d.componentScanned = make([]bool, len(frame.components))
 			d.seenSOF = true
 		case markerDHT:
 			if d.seenSOS && allComponentsScanned(d.componentScanned) {
-				return nil, fmt.Errorf("%w: DHT after complete scan", ErrInvalidStream)
+				return nil, d, fmt.Errorf("%w: DHT after complete scan", ErrInvalidStream)
 			}
 			segment, err := d.readSegment()
 			if err != nil {
-				return nil, err
+				return nil, d, err
 			}
 			if d.seenSOS {
 				parsed := make(map[int]*huffTable)
 				if err := parseDHTSegment(segment, parsed); err != nil {
-					return nil, err
+					return nil, d, err
 				}
 				for tableID, table := range parsed {
 					d.huffman[tableID] = table
 				}
 			} else if err := parseDHTSegment(segment, d.huffman); err != nil {
-				return nil, err
+				return nil, d, err
 			}
 		case markerDRI:
 			if !d.seenSOF || allComponentsScanned(d.componentScanned) || d.driAtScanCount == d.scanCount {
-				return nil, fmt.Errorf("%w: duplicate or out-of-order DRI", ErrInvalidStream)
+				return nil, d, fmt.Errorf("%w: duplicate or out-of-order DRI", ErrInvalidStream)
 			}
 			segment, err := d.readSegment()
 			if err != nil {
-				return nil, err
+				return nil, d, err
 			}
 			if len(segment) != 2 {
-				return nil, fmt.Errorf("%w: invalid DRI length", ErrInvalidStream)
+				return nil, d, fmt.Errorf("%w: invalid DRI length", ErrInvalidStream)
 			}
 			d.restartInterval = int(binary.BigEndian.Uint16(segment))
 			d.driAtScanCount = d.scanCount
 		case markerSOS:
 			if !d.seenSOF {
-				return nil, fmt.Errorf("%w: SOS before SOF3", ErrInvalidStream)
+				return nil, d, fmt.Errorf("%w: SOS before SOF3", ErrInvalidStream)
 			}
 			segment, err := d.readSegment()
 			if err != nil {
-				return nil, err
+				return nil, d, err
 			}
 			if err := d.decodeScan(segment); err != nil {
-				return nil, err
+				return nil, d, err
 			}
 			d.seenSOS = true
 			d.scanCount++
 		case markerEOI:
 			if !d.seenSOS || !allComponentsScanned(d.componentScanned) {
-				return nil, fmt.Errorf("%w: EOI before all component scans", ErrInvalidStream)
+				return nil, d, fmt.Errorf("%w: EOI before all component scans", ErrInvalidStream)
 			}
 			if trailing := len(d.data) - d.pos; trailing > 1 {
-				return nil, fmt.Errorf("%w: trailing data after EOI", ErrInvalidStream)
+				return nil, d, fmt.Errorf("%w: trailing data after EOI", ErrInvalidStream)
 			}
-			return d.image, nil
+			return d.image, d, nil
 		case 0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
 			0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xfe:
 			if _, err := d.readSegment(); err != nil {
-				return nil, err
+				return nil, d, err
 			}
 		default:
-			return nil, fmt.Errorf("%w: unsupported marker 0xff%02x", ErrInvalidStream, marker)
+			return nil, d, fmt.Errorf("%w: unsupported marker 0xff%02x", ErrInvalidStream, marker)
 		}
 	}
 }
@@ -386,9 +539,11 @@ func (d *losslessDecoder) nextMarker() (byte, error) {
 	if d.pos >= len(d.data) || d.data[d.pos] != 0xff {
 		return 0, fmt.Errorf("%w: expected marker at %d", ErrInvalidStream, d.pos)
 	}
-	for d.pos < len(d.data) && d.data[d.pos] == 0xff {
-		d.pos++
+	markerPosition, err := skipMarkerFill(d.ctx, d.data, d.pos)
+	if err != nil {
+		return 0, err
 	}
+	d.pos = markerPosition
 	if d.pos >= len(d.data) || d.data[d.pos] == 0 {
 		return 0, fmt.Errorf("%w: truncated marker", ErrInvalidStream)
 	}
@@ -432,6 +587,9 @@ func parseSOF3Segment(segment []byte) (frameHeader, error) {
 	for index := 0; index < components; index++ {
 		offset := 6 + index*3
 		id := segment[offset]
+		if sampling := segment[offset+1]; sampling != 0x11 && !seen[id] && segment[offset+2] == 0 {
+			return frameHeader{}, fmt.Errorf("%w: SOF3 component %d sampling factors %dx%d (subsampled lossless JPEG is not supported)", ErrUnsupportedScan, index, sampling>>4, sampling&0x0f)
+		}
 		if seen[id] || segment[offset+1] != 0x11 || segment[offset+2] != 0 {
 			return frameHeader{}, fmt.Errorf("%w: invalid SOF3 component parameters", ErrUnsupportedScan)
 		}
@@ -530,7 +688,9 @@ func (d *losslessDecoder) decodeScan(segment []byte) error {
 	if d.selectionValue != 0 && predictor != d.selectionValue {
 		return fmt.Errorf("%w: predictor=%d selection value=%d", ErrUnsupportedScan, predictor, d.selectionValue)
 	}
-	if segment[1+2*count+1] != 0 || segment[1+2*count+2]>>4 != 0 {
+	if segment[1+2*count+1] != 0 && d.quirks.ignoreSe {
+		d.seen.ignoreSe = true
+	} else if segment[1+2*count+1] != 0 || segment[1+2*count+2]>>4 != 0 {
 		return fmt.Errorf("%w: unsupported SOS spectral/successive parameters", ErrUnsupportedScan)
 	}
 	pointTransform := int(segment[1+2*count+2] & 0x0f)
@@ -538,44 +698,19 @@ func (d *losslessDecoder) decodeScan(segment []byte) error {
 		return fmt.Errorf("%w: point transform=%d precision=%d", ErrInvalidStream, pointTransform, d.frame.precision)
 	}
 
-	reader := &bitReader{data: d.data, pos: d.pos}
-	pixels := d.frame.width * d.frame.height
+	reader := &bitReader{data: d.data, pos: d.pos, lenientFill: d.quirks.lenientFillBits}
+	defer func() {
+		d.seen.lenientFillBits = d.seen.lenientFillBits || reader.fillQuirk
+	}()
 	codedPrecision := d.frame.precision - pointTransform
 	defaultPrediction := int32(1) << (codedPrecision - 1)
 	modulusMask := int32((uint32(1) << codedPrecision) - 1)
-	restartCount := 0
-	restartStart := 0
-	restartMarker := byte(0xd0)
-	for pixelIndex := 0; pixelIndex < pixels; pixelIndex++ {
-		x := pixelIndex % d.frame.width
-		y := pixelIndex / d.frame.width
-		for _, component := range components {
-			symbol, err := component.table.decodeSymbol(reader)
-			if err != nil {
-				return err
-			}
-			difference, err := receiveExtend(reader, int(symbol))
-			if err != nil {
-				return err
-			}
-			plane := d.image.planes[component.index]
-			prediction := predict(plane, x, y, d.frame.width, predictor, defaultPrediction)
-			if pixelIndex == restartStart {
-				prediction = defaultPrediction
-			}
-			plane[pixelIndex] = (prediction + difference) & modulusMask
+	if d.packMono && len(d.frame.components) == 1 && predictor == 1 && !d.quirks.category16ExtraBits {
+		if err := d.decodePackedSV1(reader, components[0].table, defaultPrediction, modulusMask, uint(pointTransform)); err != nil {
+			return err
 		}
-		if d.restartInterval > 0 {
-			restartCount++
-			if restartCount == d.restartInterval && pixelIndex != pixels-1 {
-				if err := reader.alignToRestart(restartMarker); err != nil {
-					return err
-				}
-				restartMarker = 0xd0 + ((restartMarker - 0xd0 + 1) & 7)
-				restartCount = 0
-				restartStart = pixelIndex + 1
-			}
-		}
+	} else if err := d.decodePlaneScan(reader, components, predictor, defaultPrediction, modulusMask); err != nil {
+		return err
 	}
 	nextMarker, err := reader.finishEntropy()
 	if err != nil {
@@ -585,6 +720,142 @@ func (d *losslessDecoder) decodeScan(segment []byte) error {
 	for _, component := range components {
 		d.componentScanned[component.index] = true
 		d.image.pointTransform[component.index] = pointTransform
+	}
+	return nil
+}
+
+func (d *losslessDecoder) decodePlaneScan(reader *bitReader, components []scanComponent, predictor int, defaultPrediction, modulusMask int32) error {
+	pixels := d.frame.width * d.frame.height
+	for _, component := range components {
+		d.image.planes[component.index] = make([]int32, pixels)
+	}
+	restartCount := 0
+	restartStart := 0
+	restartMarker := byte(0xd0)
+	pixelIndex := 0
+	if predictor == 1 && d.restartInterval == 0 && !d.quirks.category16ExtraBits {
+		if err := d.decodePredictor1(reader, components, defaultPrediction, modulusMask); err != nil {
+			return err
+		}
+	} else {
+		for y := 0; y < d.frame.height; y++ {
+			if err := d.ctx.Err(); err != nil {
+				return err
+			}
+			for x := 0; x < d.frame.width; x++ {
+				for _, component := range components {
+					var difference int32
+					var err error
+					if d.quirks.category16ExtraBits {
+						symbol, decodeErr := component.table.decodeSymbol(reader)
+						if decodeErr != nil {
+							return decodeErr
+						}
+						if symbol == 16 {
+							// The Cornell encoder treats category 16 like the others and
+							// appends 16 bits: 0x8000 or 0x7fff for +/-32768.
+							bits, err := reader.readBits(16)
+							if err != nil {
+								return err
+							}
+							difference = extendDifference(int32(bits), 16)
+							d.seen.category16ExtraBits = true
+						} else {
+							difference, err = receiveExtend(reader, int(symbol))
+						}
+					} else {
+						difference, err = component.table.decodeDifference(reader)
+					}
+					if err != nil {
+						return err
+					}
+					plane := d.image.planes[component.index]
+					prediction := predict(plane, x, y, d.frame.width, predictor, defaultPrediction)
+					if predictor == 6 && d.quirks.predictor6Overflow && x > 0 && y > 0 {
+						overflowed := predict6Overflow(plane, x, y, d.frame.width)
+						if (overflowed^prediction)&modulusMask != 0 {
+							d.seen.predictor6Overflow = true
+						}
+						prediction = overflowed
+					}
+					if pixelIndex == restartStart {
+						prediction = defaultPrediction
+					}
+					plane[pixelIndex] = (prediction + difference) & modulusMask
+				}
+				if d.restartInterval > 0 {
+					restartCount++
+					if restartCount == d.restartInterval && pixelIndex != pixels-1 {
+						if err := reader.alignToRestart(d.ctx, restartMarker); err != nil {
+							return err
+						}
+						restartMarker = 0xd0 + ((restartMarker - 0xd0 + 1) & 7)
+						restartCount = 0
+						restartStart = pixelIndex + 1
+					}
+				}
+				pixelIndex++
+			}
+		}
+	}
+	return nil
+}
+
+// Selection value 1 predicts from the left except for the first sample of
+// each row. Keep those row boundaries separate from the common sample loop;
+// scans with restarts or the Cornell extension use the general path above.
+func (d *losslessDecoder) decodePredictor1(reader *bitReader, components []scanComponent, initial, mask int32) error {
+	width, height := d.frame.width, d.frame.height
+	if len(components) == 1 {
+		component := components[0]
+		plane := d.image.planes[component.index]
+		for y := 0; y < height; y++ {
+			if err := d.ctx.Err(); err != nil {
+				return err
+			}
+			start := y * width
+			prediction := initial
+			if y != 0 {
+				prediction = plane[start-width]
+			}
+			row := plane[start : start+width]
+			for x := range row {
+				difference, err := component.table.decodeDifference(reader)
+				if err != nil {
+					return err
+				}
+				prediction = (prediction + difference) & mask
+				row[x] = prediction
+			}
+		}
+		return nil
+	}
+	var planes [3][]int32
+	var predictions [3]int32
+	for c, component := range components {
+		planes[c] = d.image.planes[component.index]
+	}
+	for y := 0; y < height; y++ {
+		if err := d.ctx.Err(); err != nil {
+			return err
+		}
+		start := y * width
+		for c := range components {
+			predictions[c] = initial
+			if y != 0 {
+				predictions[c] = planes[c][start-width]
+			}
+		}
+		for i := start; i < start+width; i++ {
+			for c, component := range components {
+				difference, err := component.table.decodeDifference(reader)
+				if err != nil {
+					return err
+				}
+				predictions[c] = (predictions[c] + difference) & mask
+				planes[c][i] = predictions[c]
+			}
+		}
 	}
 	return nil
 }
@@ -612,8 +883,18 @@ func predict(samples []int32, x, y, width, predictor int, defaultPrediction int3
 		return samples[(y-1)*width+x]
 	}
 	a := samples[y*width+x-1]
+	if predictor == 1 {
+		return a
+	}
 	b := samples[(y-1)*width+x]
+	if predictor == 2 {
+		return b
+	}
 	c := samples[(y-1)*width+x-1]
+	return predictNeighbors(a, b, c, predictor)
+}
+
+func predictNeighbors(a, b, c int32, predictor int) int32 {
 	switch predictor {
 	case 1:
 		return a
@@ -634,6 +915,16 @@ func predict(samples []int32, x, y, width, predictor int, defaultPrediction int3
 	}
 }
 
+// predict6Overflow is predictor 6 as defective encoders computed it with
+// 16-bit integers: Ra and Rc wrap to signed 16-bit values before the
+// subtraction. It differs from predict only for 16-bit samples.
+func predict6Overflow(samples []int32, x, y, width int) int32 {
+	a := int32(int16(samples[y*width+x-1]))
+	b := samples[(y-1)*width+x]
+	c := int32(int16(samples[(y-1)*width+x-1]))
+	return b + ((a - c) >> 1)
+}
+
 func receiveExtend(reader *bitReader, size int) (int32, error) {
 	if size == 0 {
 		return 0, nil
@@ -648,9 +939,13 @@ func receiveExtend(reader *bitReader, size int) (int32, error) {
 	if err != nil {
 		return 0, err
 	}
-	difference := int32(value)
-	if difference < 1<<(size-1) {
-		difference += (-1 << size) + 1
+	return extendDifference(int32(value), size), nil
+}
+
+// extendDifference is T.81 F.12 EXTEND: size bits to a signed difference.
+func extendDifference(value int32, size int) int32 {
+	if value < 1<<(size-1) {
+		value += (-1 << size) + 1
 	}
-	return difference, nil
+	return value
 }

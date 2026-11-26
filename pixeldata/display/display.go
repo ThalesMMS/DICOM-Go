@@ -19,6 +19,8 @@ import (
 	"errors"
 	"image"
 	"math"
+
+	"github.com/ThalesMMS/dicom-go/internal/storedsample"
 )
 
 var (
@@ -144,32 +146,42 @@ func RenderGray(frame Frame) (*image.Gray, error) {
 		order = binary.LittleEndian
 	}
 
-	voi := frame.VOI
-	if voi.LUT == nil && !voi.hasWindow() {
-		// Derive a default full-range window when none is supplied.
-		voi = defaultVOI(frame.Format, frame.Modality)
-	}
-	mapper := NewVOIByteMapper(voi)
-
 	out := image.NewGray(image.Rect(0, 0, frame.Columns, frame.Rows))
 	reader := newStoredPixelReader(frame.Format, order)
-	if frame.Modality.LUT != nil {
+	mapper := frameVOIMapper(frame.VOI, frame.Modality, &reader)
+	slope := frame.Modality.Slope
+	if slope == 0 {
+		slope = 1
+	}
+	intercept := frame.Modality.Intercept
+	displayByte := func(stored int64) uint8 {
+		if frame.Modality.LUT != nil {
+			return mapper.Byte(float64(frame.Modality.LUT.lookupInt64(stored)))
+		}
+		return mapper.Byte(float64(stored)*slope + intercept)
+	}
+	// Every stored value maps to one display byte: when there are no more
+	// possible stored values than pixels, map each once into a table.
+	bitsStored := frame.Format.BitsStored
+	if bitsStored <= 0 || bitsStored > bitsAllocated {
+		bitsStored = bitsAllocated
+	}
+	if values := 1 << bitsStored; values <= layout.pixels {
+		lowest := int64(0)
+		if frame.Format.Signed {
+			lowest = -int64(values / 2)
+		}
+		table := make([]uint8, values)
+		for i := range table {
+			table[i] = displayByte(lowest + int64(i))
+		}
 		for pixelIndex := 0; pixelIndex < layout.pixels; pixelIndex++ {
-			offset := pixelIndex * bytesPerSample
-			modality := float64(frame.Modality.LUT.lookupInt64(reader.value(frame.Pixels[offset:])))
-			out.Pix[pixelIndex] = mapper.Byte(modality)
+			out.Pix[pixelIndex] = table[reader.Value(frame.Pixels[pixelIndex*bytesPerSample:])-lowest]
 		}
-	} else {
-		slope := frame.Modality.Slope
-		if slope == 0 {
-			slope = 1
-		}
-		intercept := frame.Modality.Intercept
-		for pixelIndex := 0; pixelIndex < layout.pixels; pixelIndex++ {
-			offset := pixelIndex * bytesPerSample
-			modality := float64(reader.value(frame.Pixels[offset:]))*slope + intercept
-			out.Pix[pixelIndex] = mapper.Byte(modality)
-		}
+		return out, nil
+	}
+	for pixelIndex := 0; pixelIndex < layout.pixels; pixelIndex++ {
+		out.Pix[pixelIndex] = displayByte(reader.Value(frame.Pixels[pixelIndex*bytesPerSample:]))
 	}
 	return out, nil
 }
@@ -195,6 +207,108 @@ func DecodeModalityFloat32(frame Frame) ([]float32, error) {
 // remaining capacity untouched.
 func DecodeModalityFloat32Into(destination []float32, frame Frame) error {
 	return decodeModalityInto(destination, frame, 4)
+}
+
+// DecodeStoredInto writes the stored samples of a grayscale 16-bit frame,
+// masked to BitsStored and sign-extended when Signed, without the modality
+// transform: compact volumes keep them with one rescale (#1065). It fails for
+// other BitsAllocated and for samples outside T's range (unsigned 16-bit
+// samples into int16).
+func DecodeStoredInto[T int16 | uint16](destination []T, frame Frame) error {
+	if frame.Format.BitsAllocated != 16 {
+		return frameValidationError("BitsAllocated", ErrUnsupportedBitsAllocated)
+	}
+	count, err := modalitySampleCount(frame, 2)
+	if err != nil {
+		return err
+	}
+	if len(destination) < count {
+		return frameValidationError("Destination", ErrDestinationTooShort)
+	}
+	order := frame.Format.ByteOrder
+	if order == nil {
+		order = binary.LittleEndian
+	}
+	var zero T
+	minimum, maximum := int64(0), int64(math.MaxUint16)
+	if _, signed := any(zero).(int16); signed {
+		minimum, maximum = math.MinInt16, math.MaxInt16
+	}
+	reader := newStoredPixelReader(frame.Format, order)
+	for i := range destination[:count] {
+		stored := reader.Value(frame.Pixels[i*2:])
+		if stored < minimum || stored > maximum {
+			return frameValidationError("Pixels", ErrInvalidFrame)
+		}
+		destination[i] = T(stored)
+	}
+	return nil
+}
+
+// MaxModalityLevels is the largest level table DecodeModalityLevels builds:
+// what a uint16 index addresses.
+const MaxModalityLevels = 1 << 16
+
+// DecodeModalityLevels is DecodeModalityFloat32 in compact form for 8- and
+// 16-bit frames: index holds each pixel's stored value minus the smallest one,
+// and levels holds the float32 modality value of every stored value in that
+// range, computed exactly as DecodeModalityFloat32 computes it, so
+// levels[index[i]] equals its i-th value bit for bit. Render caches keep the
+// 2-byte index instead of a 4-byte plane and window a frame by mapping each
+// level once (#1612). ok is false, with no error, when the stored range spans
+// more than MaxModalityLevels values or more values than the frame has pixels;
+// callers then decode the float32 plane.
+func DecodeModalityLevels(frame Frame) (index []uint16, levels []float32, ok bool, err error) {
+	count, err := modalitySampleCount(frame, 4)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	bitsAllocated := frame.Format.BitsAllocated
+	if bitsAllocated != 8 && bitsAllocated != 16 {
+		return nil, nil, false, nil
+	}
+	bytesPerSample := bitsAllocated / 8
+	order := frame.Format.ByteOrder
+	if order == nil {
+		order = binary.LittleEndian
+	}
+	reader := newStoredPixelReader(frame.Format, order)
+	// Stored values of 8- and 16-bit samples fit 16 bits once masked and
+	// sign-extended, so the first pass keeps their bits in the index and the
+	// second only subtracts the lowest value.
+	index = make([]uint16, count)
+	lowest, highest := int64(math.MaxInt64), int64(math.MinInt64)
+	for i := range index {
+		stored := reader.Value(frame.Pixels[i*bytesPerSample:])
+		index[i] = uint16(stored)
+		lowest, highest = min(lowest, stored), max(highest, stored)
+	}
+	span := highest - lowest + 1
+	if span > MaxModalityLevels || span > int64(count) {
+		return nil, nil, false, nil
+	}
+	levels = make([]float32, span)
+	if frame.Modality.LUT != nil {
+		for k := range levels {
+			levels[k] = float32(frame.Modality.LUT.lookupInt64(lowest + int64(k)))
+		}
+	} else {
+		slope := frame.Modality.Slope
+		if slope == 0 {
+			slope = 1
+		}
+		intercept := frame.Modality.Intercept
+		for k := range levels {
+			levels[k] = float32(float64(lowest+int64(k))*slope + intercept)
+		}
+	}
+	// Subtracting in 16-bit two's complement gives stored - lowest for signed
+	// and unsigned values alike, since the span fits 16 bits.
+	offset := uint16(lowest)
+	for i := range index {
+		index[i] -= offset
+	}
+	return index, levels, true, nil
 }
 
 func decodeModality[T ~float32 | ~float64](frame Frame, outputBytesPerPixel int) ([]T, error) {
@@ -227,7 +341,7 @@ func decodeModalityInto[T ~float32 | ~float64](out []T, frame Frame, outputBytes
 	reader := newStoredPixelReader(frame.Format, order)
 	if frame.Modality.LUT != nil {
 		for i := range out {
-			stored := reader.value(frame.Pixels[i*bytesPerSample:])
+			stored := reader.Value(frame.Pixels[i*bytesPerSample:])
 			out[i] = T(frame.Modality.LUT.lookupInt64(stored))
 		}
 	} else {
@@ -237,7 +351,7 @@ func decodeModalityInto[T ~float32 | ~float64](out []T, frame Frame, outputBytes
 		}
 		intercept := frame.Modality.Intercept
 		for i := range out {
-			stored := reader.value(frame.Pixels[i*bytesPerSample:])
+			stored := reader.Value(frame.Pixels[i*bytesPerSample:])
 			out[i] = T(float64(stored)*slope + intercept)
 		}
 	}
@@ -338,90 +452,34 @@ func scaleToByte(value, minValue, span float64) uint8 {
 // and the signed/unsigned representation.
 func storedPixelValue(data []byte, format PixelFormat, order binary.ByteOrder) int64 {
 	reader := newStoredPixelReader(format, order)
-	return reader.value(data)
+	return reader.Value(data)
 }
 
-type storedPixelReader struct {
-	bitsAllocated uint16
-	shift         uint16
-	mask          uint32
-	signBit       uint32
-	signExtension uint32
-	order         binary.ByteOrder
+// newStoredPixelReader returns the shared stored-sample reader with the
+// display pipeline's historical repair of BitsStored and HighBit.
+func newStoredPixelReader(format PixelFormat, order binary.ByteOrder) storedsample.Reader {
+	return storedsample.Legacy(format.BitsAllocated, format.BitsStored, format.HighBit, format.Signed, order)
 }
 
-func newStoredPixelReader(format PixelFormat, order binary.ByteOrder) storedPixelReader {
-	bitsAllocated := uint16(format.BitsAllocated)
-	bitsStored := uint16(format.BitsStored)
-	highBit := uint16(format.HighBit)
-	if bitsStored == 0 || bitsStored > bitsAllocated {
-		bitsStored = bitsAllocated
+// frameVOIMapper uses the transformed endpoints of the stored value domain
+// when no VOI is supplied.
+func frameVOIMapper(voi VOILUT, modality ModalityLUT, reader *storedsample.Reader) VOIByteMapper {
+	if voi.LUT != nil || voi.hasWindow() {
+		return NewVOIByteMapper(voi)
 	}
-	if highBit+1 < bitsStored || highBit >= bitsAllocated {
-		highBit = bitsStored - 1
-	}
-	shift := highBit + 1 - bitsStored
-	reader := storedPixelReader{
-		bitsAllocated: bitsAllocated,
-		shift:         shift,
-		mask:          (uint32(1) << bitsStored) - 1,
-		order:         order,
-	}
-	if format.Signed {
-		reader.signBit = uint32(1) << (bitsStored - 1)
-		reader.signExtension = ^uint32(0) << bitsStored
-	}
-	return reader
-}
-
-func (r *storedPixelReader) value(data []byte) int64 {
-	var raw uint32
-	switch r.bitsAllocated {
-	case 8:
-		raw = uint32(data[0])
-	case 16:
-		raw = uint32(r.order.Uint16(data[:2]))
-	case 32:
-		raw = r.order.Uint32(data[:4])
-	}
-	raw = (raw >> r.shift) & r.mask
-	if r.signBit != 0 && raw&r.signBit != 0 {
-		raw |= r.signExtension
-	}
-	if r.signBit != 0 {
-		return int64(int32(raw))
-	}
-	return int64(raw)
-}
-
-// defaultVOI derives a full-range linear window from the pixel format and
-// modality transform, used when no Window Center/Width or VOI LUT is present.
-func defaultVOI(format PixelFormat, modality ModalityLUT) VOILUT {
-	bitsStored := format.BitsStored
-	if bitsStored <= 0 || bitsStored > format.BitsAllocated {
-		bitsStored = format.BitsAllocated
-	}
-	if bitsStored <= 0 {
-		return VOILUT{Center: 127.5, Width: 256}
-	}
-
-	var minStored, maxStored float64
-	if format.Signed {
-		half := math.Pow(2, float64(bitsStored-1))
-		minStored = -half
-		maxStored = half - 1
-	} else {
-		minStored = 0
-		maxStored = math.Pow(2, float64(bitsStored)) - 1
-	}
-
+	minStored, maxStored := reader.Range()
 	minValue := modality.Apply(int(minStored))
 	maxValue := modality.Apply(int(maxStored))
 	if minValue > maxValue {
 		minValue, maxValue = maxValue, minValue
 	}
-	return VOILUT{
-		Center: (minValue + maxValue) / 2,
-		Width:  maxValue - minValue + 1,
+	span := maxValue - minValue
+	if span > 0 && finiteWindowValue(span) {
+		// PS3.3 C.11.2.1.2.1 gives LINEAR a half-sample shift and a
+		// width minus one. Mapping the endpoints directly is equivalent
+		// to the corresponding full-range window and retains small spans.
+		return VOIByteMapper{rangeMin: minValue, rangeSpan: span}
 	}
+	// Keep the existing threshold behavior for a collapsed range.
+	return NewVOIByteMapper(VOILUT{Center: (minValue + maxValue) / 2, Width: span + 1})
 }

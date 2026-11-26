@@ -249,10 +249,10 @@ func TestEncoderCapabilitiesAndExplicitRegistration(t *testing.T) {
 	encoder := NewEncoder()
 	want := pixeldata.EncoderCapabilities{
 		TransferSyntaxUID:          UID,
-		BitsAllocated:              []uint16{8, 16},
+		BitsAllocated:              []uint16{8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120},
 		PixelRepresentations:       []uint16{0, 1},
 		SamplesPerPixel:            []uint16{1, 3},
-		PhotometricInterpretations: []string{"MONOCHROME1", "MONOCHROME2", "PALETTE COLOR", "RGB"},
+		PhotometricInterpretations: []string{"MONOCHROME1", "MONOCHROME2", "PALETTE COLOR", "RGB", "YBR_FULL"},
 		Lossless:                   true,
 		SupportsMultiFrame:         true,
 		Backend:                    "pure-go",
@@ -308,7 +308,8 @@ func TestEncoderRejectsInvalidMetadataAndFrameLengths(t *testing.T) {
 		{name: "signed RGB", metadata: withMetadata(encoderMetadata(1, 1, 3, 8, "RGB"), func(m *pixeldata.Metadata) { m.PixelRepresentation = 1 }), frame: []byte{1, 2, 3}, want: pixeldata.ErrUnsupportedEncoderMetadata},
 		{name: "samples per pixel", metadata: withMetadata(valid, func(m *pixeldata.Metadata) { m.SamplesPerPixel = 2 }), frame: []byte{1, 2}, want: pixeldata.ErrUnsupportedEncoderMetadata},
 		{name: "number of frames", metadata: withMetadata(valid, func(m *pixeldata.Metadata) { m.NumberOfFrames = 0 }), frame: []byte{1, 2}, want: pixeldata.ErrUnsupportedEncoderMetadata},
-		{name: "planar one", metadata: withMetadata(valid, func(m *pixeldata.Metadata) { m.PlanarConfigurationPresent = true; m.PlanarConfiguration = 1 }), frame: []byte{1, 2}, want: pixeldata.ErrUnsupportedEncoderMetadata},
+		{name: "planar one RGB", metadata: withMetadata(encoderMetadata(1, 1, 3, 8, "RGB"), func(m *pixeldata.Metadata) { m.PlanarConfiguration = 1 }), frame: []byte{1, 2, 3}, want: pixeldata.ErrUnsupportedEncoderMetadata},
+		{name: "allocated 48 with three samples", metadata: withMetadata(encoderMetadata(1, 1, 3, 8, "RGB"), func(m *pixeldata.Metadata) { m.BitsAllocated, m.BitsStored, m.HighBit = 48, 48, 47 }), frame: make([]byte, 18), want: pixeldata.ErrUnsupportedEncoderMetadata},
 		{name: "wrong monochrome photometric", metadata: withMetadata(valid, func(m *pixeldata.Metadata) { m.PhotometricInterpretation = "RGB" }), frame: []byte{1, 2}, want: pixeldata.ErrUnsupportedEncoderMetadata},
 		{name: "RGB without planar configuration", metadata: withMetadata(encoderMetadata(1, 1, 3, 8, "RGB"), func(m *pixeldata.Metadata) { m.PlanarConfigurationPresent = false }), frame: []byte{1, 2, 3}, want: pixeldata.ErrUnsupportedEncoderMetadata},
 		{name: "short frame", metadata: valid, frame: []byte{1}, want: pixeldata.ErrPixelDataSizeMismatch},

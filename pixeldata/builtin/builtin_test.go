@@ -23,11 +23,14 @@ func TestNewRegistryBaselineMatrix(t *testing.T) {
 	want := []string{
 		transfer.JPEGBaseline.UID,
 		transfer.JPEGExtended.UID,
+		transfer.JPEGSpectralSelection.UID,
+		transfer.JPEGFullProgression.UID,
 		transfer.RLELossless.UID,
 		transfer.JPEGLosslessNonHierarchical.UID,
 		transfer.JPEGLosslessSV1.UID,
 		transfer.JPEGLSLossless.UID,
 		transfer.JPEGLSNearLossless.UID,
+		transfer.DeflatedImageFrameCompression.UID,
 	}
 	if got := builtin.TransferSyntaxUIDs(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("TransferSyntaxUIDs() = %#v, want %#v", got, want)
@@ -86,11 +89,12 @@ func TestRegisterPreservesFamilyErrorContext(t *testing.T) {
 		failureCall int
 		want        string
 	}{
-		{name: "JPEG Baseline / Extended", failureCall: 1, want: "register JPEG Baseline / Extended codec"},
-		{name: "RLE", failureCall: 3, want: "register RLE codec"},
-		{name: "JPEG Lossless", failureCall: 4, want: "register JPEG Lossless codec"},
-		{name: "JPEG-LS Lossless", failureCall: 6, want: "register JPEG-LS Lossless codec"},
-		{name: "JPEG-LS Near-Lossless", failureCall: 7, want: "register JPEG-LS Near-Lossless codec"},
+		{name: "JPEG Baseline / Extended / Progressive", failureCall: 1, want: "register JPEG Baseline / Extended / Progressive codec"},
+		{name: "JPEG Full Progression", failureCall: 4, want: "register JPEG Baseline / Extended / Progressive codec"},
+		{name: "RLE", failureCall: 5, want: "register RLE codec"},
+		{name: "JPEG Lossless", failureCall: 6, want: "register JPEG Lossless codec"},
+		{name: "JPEG-LS Lossless", failureCall: 8, want: "register JPEG-LS Lossless codec"},
+		{name: "JPEG-LS Near-Lossless", failureCall: 9, want: "register JPEG-LS Near-Lossless codec"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry := &failingRegistry{failureCall: test.failureCall, err: sentinel}
@@ -104,7 +108,7 @@ func TestRegisterPreservesFamilyErrorContext(t *testing.T) {
 
 func TestRegisterNilPreservesFirstFamilyErrorContext(t *testing.T) {
 	err := builtin.Register(nil)
-	if !errors.Is(err, pixeldata.ErrCodecRegistryNil) || !strings.Contains(err.Error(), "register JPEG Baseline / Extended codec") {
+	if !errors.Is(err, pixeldata.ErrCodecRegistryNil) || !strings.Contains(err.Error(), "register JPEG Baseline / Extended / Progressive codec") {
 		t.Fatalf("Register(nil) error = %v", err)
 	}
 }

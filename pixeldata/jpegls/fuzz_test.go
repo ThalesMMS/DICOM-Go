@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"testing"
+
+	"github.com/ThalesMMS/dicom-go/pixeldata"
 )
 
 func FuzzEncodeFrameMono8(f *testing.F) {
@@ -69,7 +71,32 @@ func FuzzDecodeHostileCodestream(f *testing.F) {
 	f.Add(charLSLossless2x2)
 	f.Add([]byte{0xff, 0xd8, 0xff, 0xd9})
 	f.Add([]byte{0xff, 0xd8})
+	for _, seed := range hostileSeeds(f) {
+		f.Add(seed.stream)
+	}
 	f.Fuzz(func(t *testing.T, stream []byte) {
-		_, _ = decodeFrame(stream, encoderMetadata(2, 2, 1, 8, "MONOCHROME2"))
+		_, _ = decodeFrame(stream, hostileMetadata(stream))
 	})
+}
+
+// hostileMetadata describes the frame a codestream's headers declare, so the
+// decoder reaches its entropy data, when the headers parse and the frame has
+// at most 4096 samples; otherwise it describes a 2x2 8-bit monochrome frame.
+func hostileMetadata(stream []byte) pixeldata.Metadata {
+	header, err := parseFrameHeader(stream)
+	if err != nil || header.rows*header.columns*header.components > 1<<12 {
+		return encoderMetadata(2, 2, 1, 8, "MONOCHROME2")
+	}
+	photometric := "MONOCHROME2"
+	if header.components == 3 {
+		photometric = "RGB"
+	}
+	bitsAllocated := uint16(8)
+	if header.precision > 8 {
+		bitsAllocated = 16
+	}
+	metadata := encoderMetadata(uint16(header.rows), uint16(header.columns), uint16(header.components), bitsAllocated, photometric)
+	metadata.BitsStored = uint16(header.precision)
+	metadata.HighBit = metadata.BitsStored - 1
+	return metadata
 }

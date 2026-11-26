@@ -282,7 +282,6 @@ func TestDecodeFramesRLERejectsStoredBitAndPlanarMetadata(t *testing.T) {
 		{name: "zero BitsStored", change: func(obj *object.Object) { obj.Put(dicomtest.Uint16Element(tagBitsStored, core.VRUS, nil, 0)) }, want: pixeldata.ErrIncompatiblePixelData},
 		{name: "BitsStored exceeds allocated", change: func(obj *object.Object) { obj.Put(dicomtest.Uint16Element(tagBitsStored, core.VRUS, nil, 17)) }, want: pixeldata.ErrIncompatiblePixelData},
 		{name: "HighBit mismatch", change: func(obj *object.Object) { obj.Put(dicomtest.Uint16Element(tagHighBit, core.VRUS, nil, 14)) }, want: pixeldata.ErrIncompatiblePixelData},
-		{name: "monochrome planar nonzero", change: func(obj *object.Object) { obj.Put(dicomtest.Uint16Element(tagPlanarConfiguration, core.VRUS, nil, 1)) }, want: pixeldata.ErrUnsupportedPlanarConfiguration},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -309,9 +308,16 @@ func TestDecodeFramesRLERejectsStoredBitAndPlanarMetadata(t *testing.T) {
 	if extractErr != nil {
 		t.Fatal(extractErr)
 	}
-	_, err := New().Decode(pixel, obj)
-	if !errors.Is(err, pixeldata.ErrUnsupportedPlanarConfiguration) {
+	// Planar Configuration is irrelevant to RLE segments: absent is read as
+	// interleaved output.
+	if _, err := New().Decode(pixel, obj); err != nil {
 		t.Fatalf("RGB without PlanarConfiguration error = %v", err)
+	}
+	// One sample ignores Planar Configuration (LEADTOOLS writes 2).
+	mono, monoPixel := rleObjectWithFragment(t, 1, 1, 1, 16, "MONOCHROME2", rleFragment([]byte{0}, []byte{0}))
+	mono.Put(dicomtest.Uint16Element(tagPlanarConfiguration, core.VRUS, nil, 2))
+	if _, err := New().Decode(monoPixel, mono); err != nil {
+		t.Fatalf("monochrome PlanarConfiguration=2 error = %v", err)
 	}
 }
 
@@ -488,11 +494,11 @@ func TestDecodeFramesRLERejectsUnsupportedMetadata(t *testing.T) {
 			samplesPixel: 3,
 			photometric:  "RGB",
 			opts: rleMetadataOptions{
-				planarConfiguration: uint16Ptr(1),
+				planarConfiguration: uint16Ptr(2),
 			},
 			fragment:      rleFragment([]byte{0x00}, []byte{0x00}, []byte{0x00}),
 			want:          pixeldata.ErrUnsupportedPlanarConfiguration,
-			wantSubstring: "PlanarConfiguration=1",
+			wantSubstring: "PlanarConfiguration=2",
 		},
 	}
 

@@ -112,7 +112,7 @@ func TestRenderGrayModalityLUTApplied(t *testing.T) {
 }
 
 func TestRenderGrayVOILUTApplied(t *testing.T) {
-	voiLUT, err := NewLUT([]int{3, 0, 16}, []uint16{0, 2000, 4000})
+	voiLUT, err := NewLUT([]int{3, 0, 12}, []uint16{0, 2048, 4095})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestRenderGrayVOILUTApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderGray() error = %v", err)
 	}
-	want := []uint8{0, 128, 255} // entries scaled across [0,4000] -> [0,255]
+	want := []uint8{0, 128, 255} // output range [0,4095] of 12 bits -> [0,255]
 	for i, w := range want {
 		if img.Pix[i] != w {
 			t.Errorf("VOI LUT pixel %d = %d, want %d", i, img.Pix[i], w)
@@ -146,10 +146,8 @@ func TestRenderGrayDefaultWindowFullRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderGray() error = %v", err)
 	}
-	// The DICOM LINEAR function carries a half-LSB offset, so the stored minimum
-	// maps to near-black (0 or 1) rather than exactly 0; the maximum is white.
-	if img.Pix[0] > 1 {
-		t.Errorf("default-window low pixel = %d, want near black", img.Pix[0])
+	if img.Pix[0] != 0 {
+		t.Errorf("default-window low pixel = %d, want 0", img.Pix[0])
 	}
 	if img.Pix[1] != 255 {
 		t.Errorf("default-window high pixel = %d, want 255", img.Pix[1])

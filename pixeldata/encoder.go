@@ -43,6 +43,9 @@ type EncoderCapabilities struct {
 	LossyMethod                      string
 	SupportsMultiFrame               bool
 	Backend                          string
+	// CompatibilityProfiles declares the opt-in nonstandard output profiles
+	// that EncodedFrame may report. It never broadens the native input contract.
+	CompatibilityProfiles []EncoderCompatibilityProfile
 }
 
 // EncodedFrame contains one encoded frame. Empty metadata fields preserve the
@@ -52,6 +55,7 @@ type EncodedFrame struct {
 	Data                      []byte
 	PhotometricInterpretation string
 	PlanarConfiguration       *uint16
+	CompatibilityProfile      EncoderCompatibilityProfile
 }
 
 // FrameEncoder encodes one canonical native frame. Implementations must be safe
@@ -59,6 +63,14 @@ type EncodedFrame struct {
 type FrameEncoder interface {
 	Capabilities() EncoderCapabilities
 	EncodeFrame(context.Context, []byte, Metadata) (EncodedFrame, error)
+}
+
+// FrameCollectionEncoder encodes canonical native frames together. It is
+// selected by the transcoder for JPEG 2000 Part 2. The result is one complete
+// codestream for the supplied frames, in input order.
+type FrameCollectionEncoder interface {
+	FrameEncoder
+	EncodeFrameCollection(context.Context, [][]byte, Metadata) ([]byte, error)
 }
 
 // EncoderRegistry is the explicit registration and lookup boundary for frame
@@ -88,7 +100,14 @@ func (e registeredFrameEncoder) Capabilities() EncoderCapabilities {
 }
 
 func (e registeredFrameEncoder) EncodeFrame(ctx context.Context, frame []byte, metadata Metadata) (EncodedFrame, error) {
-	return e.encoder.EncodeFrame(ctx, frame, metadata)
+	encoded, err := e.encoder.EncodeFrame(ctx, frame, metadata)
+	if err == nil {
+		err = validateEncoderCompatibility(e.capabilities, encoded)
+	}
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	return encoded, nil
 }
 
 // EncoderAvailabilityError describes an encoder that was not registered.
@@ -243,7 +262,8 @@ func (r *MemoryEncoderRegistry) EncodeFrame(ctx context.Context, uid string, fra
 	if !ok {
 		return EncodedFrame{}, encoderAvailabilityError(ErrEncoderNotFound, normalizedUID, r.RegisteredEncoderUIDs())
 	}
-	if err := validateEncoderMetadata(encoder.Capabilities(), metadata); err != nil {
+	capabilities := encoder.Capabilities()
+	if err := validateEncoderMetadata(capabilities, metadata); err != nil {
 		return EncodedFrame{}, err
 	}
 	encoded, err := callFrameEncoder(ctx, encoder, frame, metadata)
@@ -255,6 +275,9 @@ func (r *MemoryEncoderRegistry) EncodeFrame(ctx context.Context, uid string, fra
 	}
 	if len(encoded.Data) == 0 {
 		return EncodedFrame{}, fmt.Errorf("%w: empty frame", ErrEncoderOutputInvalid)
+	}
+	if err := validateEncoderCompatibility(capabilities, encoded); err != nil {
+		return EncodedFrame{}, err
 	}
 	return encoded, nil
 }
@@ -313,6 +336,13 @@ func callFrameEncoder(ctx context.Context, encoder FrameEncoder, frame []byte, m
 }
 
 func validEncoderCapabilities(capabilities EncoderCapabilities) bool {
+	seenProfiles := make(map[EncoderCompatibilityProfile]bool)
+	for _, profile := range capabilities.CompatibilityProfiles {
+		if !validEncoderCompatibilityProfile(profile) || seenProfiles[profile] || capabilities.TransferSyntaxUID != transfer.JPEGExtended.UID {
+			return false
+		}
+		seenProfiles[profile] = true
+	}
 	if capabilities.TransferSyntaxUID == "" || len(capabilities.BitsAllocated) == 0 ||
 		len(capabilities.PixelRepresentations) == 0 || len(capabilities.SamplesPerPixel) == 0 ||
 		len(capabilities.PhotometricInterpretations) == 0 {
@@ -404,6 +434,7 @@ func containsUint16(values []uint16, want uint16) bool {
 }
 
 func cloneEncoderCapabilities(capabilities EncoderCapabilities) EncoderCapabilities {
+	capabilities.CompatibilityProfiles = append([]EncoderCompatibilityProfile(nil), capabilities.CompatibilityProfiles...)
 	capabilities.BitsAllocated = append([]uint16(nil), capabilities.BitsAllocated...)
 	capabilities.PixelRepresentations = append([]uint16(nil), capabilities.PixelRepresentations...)
 	capabilities.SamplesPerPixel = append([]uint16(nil), capabilities.SamplesPerPixel...)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/ThalesMMS/dicom-go/pixeldata"
+	"github.com/ThalesMMS/dicom-go/pixeldata/deflateframe"
 	"github.com/ThalesMMS/dicom-go/pixeldata/jpeg"
 	"github.com/ThalesMMS/dicom-go/pixeldata/jpeglossless"
 	"github.com/ThalesMMS/dicom-go/pixeldata/jpegls"
@@ -21,8 +22,8 @@ type codecFamily struct {
 
 var codecFamilies = []codecFamily{
 	{
-		name:               "JPEG Baseline / Extended",
-		transferSyntaxUIDs: []string{jpeg.UID, jpeg.UIDExtended},
+		name:               "JPEG Baseline / Extended / Progressive",
+		transferSyntaxUIDs: jpeg.TransferSyntaxUIDs(),
 		register:           jpeg.Register,
 	},
 	{
@@ -44,6 +45,11 @@ var codecFamilies = []codecFamily{
 		name:               "JPEG-LS Near-Lossless",
 		transferSyntaxUIDs: []string{jpegls.NearLosslessUID},
 		register:           jpegls.RegisterNearLossless,
+	},
+	{
+		name:               "Deflated Image Frame Compression",
+		transferSyntaxUIDs: []string{deflateframe.UID},
+		register:           deflateframe.Register,
 	},
 }
 

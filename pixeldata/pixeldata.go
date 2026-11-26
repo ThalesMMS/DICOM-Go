@@ -2,6 +2,7 @@ package pixeldata
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -148,8 +149,20 @@ func (m Metadata) BytesPerSample() int {
 	return int((m.BitsAllocated + 7) / 8)
 }
 
+// isSubsampled422 reports the photometric interpretations whose native
+// pixel data is 4:2:2 subsampled.
+func isSubsampled422(photometric string) bool {
+	switch normalizedPhotometric(photometric) {
+	case "YBR_FULL_422", "YBR_PARTIAL_422":
+		return true
+	}
+	return false
+}
+
 func (m Metadata) FrameSize() int64 {
-	if normalizedPhotometric(m.PhotometricInterpretation) == "YBR_FULL_422" && m.BitsAllocated >= 8 {
+	// Native 4:2:2 (YBR_FULL_422, retired YBR_PARTIAL_422) stores two
+	// samples per pixel.
+	if isSubsampled422(m.PhotometricInterpretation) && m.BitsAllocated >= 8 {
 		samples := int64(m.Rows) * int64(m.Columns) * 2
 		return samples * int64(m.BytesPerSample())
 	}
@@ -160,8 +173,9 @@ func (m Metadata) FrameSize() int64 {
 	return samples * int64(m.BytesPerSample())
 }
 
-// TotalSize returns zero when the frame count is invalid or the product would
-// overflow int64.
+// TotalSize returns the sum of the separately stored frame sizes. For one-bit
+// frames, a native Value Field can be smaller because it packs across frame
+// boundaries. An invalid frame count or int64 overflow yields zero.
 func (m Metadata) TotalSize() int64 {
 	frameSize := m.FrameSize()
 	frames := int64(m.NumberOfFrames)
@@ -288,6 +302,79 @@ type Frames struct {
 	Rows    int
 	Columns int
 	Data    [][]byte
+	// PhotometricInterpretation, when set, is the photometric
+	// interpretation of the decoded samples where a codec changed it (for
+	// example RGB after a JPEG YCbCr conversion); decompression writes it.
+	PhotometricInterpretation string
+	// Lossy, when set, says the codec's output is not the codestream's
+	// samples (for example 4:2:2 chroma upsampled and converted to RGB);
+	// decompression then records Lossy Image Compression 01.
+	Lossy bool
+	// Diagnostics lists tolerated deviations and explicitly enabled legacy
+	// recoveries a codec applied while decoding, as fixed value-free codes (for example
+	// DiagnosticJPEGBaselineUnderExtended). Each code appears once.
+	Diagnostics []string
+}
+
+// Codec diagnostic codes reported in Frames.Diagnostics.
+const (
+	// DiagnosticJPEGBaselineUnderExtended: a Baseline (SOF0) frame under the
+	// JPEG Extended transfer syntax, a subset of Process 2 & 4.
+	DiagnosticJPEGBaselineUnderExtended = "jpeg-sof0-under-extended"
+	// DiagnosticNonZeroFramePad: a frame ends with one nonzero Item pad byte
+	// after its end marker (PS3.5 A.4 does not fix the pad value).
+	DiagnosticNonZeroFramePad = "encapsulated-nonzero-frame-pad"
+	// DiagnosticBasicOffsetTableIgnored: an inconsistent Basic Offset Table
+	// was replaced by the marker scan (DecodeRecovery opt-in).
+	DiagnosticBasicOffsetTableIgnored = "encapsulated-basic-offset-table-ignored"
+	// DiagnosticJPEGLosslessSeIgnored: a JPEG Lossless SOS had a nonzero
+	// spectral selection end, ignored (DecodeRecovery.JPEGLosslessEncoderQuirks).
+	DiagnosticJPEGLosslessSeIgnored = "jpeg-lossless-se-ignored"
+	// DiagnosticJPEGLosslessFillBits: entropy fill bits before a marker were
+	// not all ones and were accepted.
+	DiagnosticJPEGLosslessFillBits = "jpeg-lossless-invalid-fill-bits"
+	// DiagnosticJPEGLosslessCategory16ExtraBits: the encoder wrote 16 bits
+	// after each difference of category 16, and they were skipped.
+	DiagnosticJPEGLosslessCategory16ExtraBits = "jpeg-lossless-category16-extra-bits"
+	// DiagnosticJPEGLosslessPredictor6Overflow: predictor 6 was decoded with
+	// the 16-bit overflow of defective encoders and changed at least one
+	// sample (DecodeRecovery.JPEGLosslessPredictor6Overflow).
+	DiagnosticJPEGLosslessPredictor6Overflow = "jpeg-lossless-predictor6-overflow"
+	// DiagnosticJPEGLosslessYBRFull422FullResolution: a JPEG Lossless object
+	// labelled YBR_FULL_422 had three full resolution (1x1) components; as
+	// PS3.5 8.2.1 lets the codestream control decompression, the samples
+	// were decoded unconverted and reported as YBR_FULL.
+	DiagnosticJPEGLosslessYBRFull422FullResolution = "jpeg-lossless-ybr-full-422-full-resolution"
+	// DiagnosticJPEGScanParametersIgnored: a lossy sequential scan had
+	// Ss/Se/Ah/Al other than 0/63/0/0, ignored
+	// (DecodeRecovery.JPEGSequentialScanQuirks).
+	DiagnosticJPEGScanParametersIgnored = "jpeg-sequential-scan-parameters-ignored"
+	// DiagnosticJPEGLSJAIThresholds: a JPEG-LS frame of more than 12 bits
+	// without LSE thresholds was decoded with the thresholds of the JAI
+	// ImageIO encoder (DecodeRecovery.JPEGLSJAIThresholds).
+	DiagnosticJPEGLSJAIThresholds = "jpeg-ls-jai-thresholds"
+	// DiagnosticJPEGLSHP1/HP2/HP3 identify applied nonstandard HP transforms
+	// explicitly enabled by DecodeRecovery.JPEGLSHPColorTransforms.
+	DiagnosticJPEGLSHP1 = "jpeg-ls-hp1-color-transform"
+	DiagnosticJPEGLSHP2 = "jpeg-ls-hp2-color-transform"
+	DiagnosticJPEGLSHP3 = "jpeg-ls-hp3-color-transform"
+	// HP backend diagnostics identify the implementation that reconstructed
+	// a nonstandard HP frame. Standard JPEG-LS frames do not emit these codes.
+	DiagnosticJPEGLSHPBackendPureGo = "jpeg-ls-hp-backend-pure-go"
+	DiagnosticJPEGLSHPBackendCharLS = "jpeg-ls-hp-backend-charls"
+	// DiagnosticRLESegmentOverrun: RLE runs overran a segment or the frame
+	// and were cut or zero-filled (DecodeRecovery.RLESegmentOverrun).
+	DiagnosticRLESegmentOverrun = "rle-segment-overrun"
+)
+
+// AddDiagnostic appends code once.
+func (f *Frames) AddDiagnostic(code string) {
+	for _, c := range f.Diagnostics {
+		if c == code {
+			return
+		}
+	}
+	f.Diagnostics = append(f.Diagnostics, code)
 }
 
 // NativeFrames contains native, uncompressed pixel data split by frame. Frame
@@ -493,6 +580,8 @@ func codecRegistrationHint(syntax transfer.Syntax) string {
 		return "register the JPEG Lossless codec with pixeldata/jpeglossless.RegisterDefault or jpeglossless.Register(registry)"
 	case transfer.RLELossless.UID:
 		return "register the RLE Lossless codec with pixeldata/rle.RegisterDefault or rle.Register(registry)"
+	case transfer.DeflatedImageFrameCompression.UID:
+		return "register the Deflated Image Frame Compression codec with pixeldata/deflateframe.RegisterDefault, deflateframe.Register(registry), or pixeldata/builtin.Register(registry)"
 	}
 	if syntax.UID == transfer.JPEGLSLossless.UID {
 		return "register the built-in pure-Go JPEG-LS Lossless codec with pixeldata/jpegls.RegisterDefault, jpegls.Register(registry), or pixeldata/builtin.Register(registry)"
@@ -537,8 +626,7 @@ func nonStillImageTransferSyntaxHint(uid string) string {
 	case transfer.JPIPReferenced.UID,
 		transfer.JPIPReferencedDeflate.UID,
 		transfer.JPIPHTJ2KReferenced.UID,
-		transfer.JPIPHTJ2KReferencedDeflate.UID,
-		transfer.DeflatedImageFrameCompression.UID:
+		transfer.JPIPHTJ2KReferencedDeflate.UID:
 		return "streaming/reference transfer syntax is recognized but dicom-go does not fetch, inflate, or resolve external pixel streams; preserve metadata/reference values or use an external streaming pipeline"
 	case transfer.SMPTEST211020UncompressedProgressiveActiveVideo.UID,
 		transfer.SMPTEST211020UncompressedInterlacedActiveVideo.UID,
@@ -634,7 +722,10 @@ func ExtractMetadata(obj *object.Object) (Metadata, error) {
 	planarConfiguration, planarConfigurationPresent := getUint16(obj, tagPlanarConfiguration)
 
 	photometricInterpretation, ok := obj.GetString(tagPhotometricInterpretation)
-	if !ok || strings.TrimSpace(photometricInterpretation) == "" {
+	// Padding is not part of a CS value; some writers pad with NUL instead of
+	// a space (an OsiriX export writes "MONOCHROME2\x00").
+	photometricInterpretation = strings.Trim(photometricInterpretation, " \x00")
+	if !ok || photometricInterpretation == "" {
 		return Metadata{}, missingMetadataError("PhotometricInterpretation", tagPhotometricInterpretation)
 	}
 
@@ -658,10 +749,13 @@ func ExtractMetadata(obj *object.Object) (Metadata, error) {
 	}, nil
 }
 
-// ExtractNativeFrames returns native, uncompressed frames split without
-// additional per-frame copies. Each frame slice references the cloned pixel
-// buffer produced by Extract.
+// ExtractNativeFrames returns native, uncompressed frames from an owned
+// buffer. One-bit frames that cross byte boundaries are independently packed
+// starting at the least significant bit.
 func ExtractNativeFrames(obj *object.Object) (*NativeFrames, error) {
+	if _, incomplete := obj.IncompletePixelData(); incomplete {
+		return nil, object.ErrPartialFile
+	}
 	pixel, err := Extract(obj)
 	if err != nil {
 		return nil, err
@@ -678,8 +772,10 @@ func ExtractNativeFrames(obj *object.Object) (*NativeFrames, error) {
 }
 
 // ExtractNativeFramesView is ExtractNativeFrames without the full Pixel Data
-// clone. Every returned frame aliases obj's native Pixel Data and is read-only;
-// callers must not mutate the frames or obj while the view is in use.
+// clone. Frames alias the object's Pixel Data when the stored layout permits
+// it. Unaligned one-bit frames and Big Endian words holding 8-bit or 1-bit
+// samples need a separate buffer. Keep the returned frames and object
+// unchanged while the view is in use.
 func ExtractNativeFramesView(obj *object.Object) (*NativeFrames, error) {
 	pixel, err := ExtractView(obj)
 	if err != nil {
@@ -689,7 +785,7 @@ func ExtractNativeFramesView(obj *object.Object) (*NativeFrames, error) {
 }
 
 func extractNativeFrames(pixel PixelData, obj *object.Object) (*NativeFrames, error) {
-	metadata, frames, err := splitNativeFrames(pixel, obj)
+	metadata, frames, err := splitNativeFrames(pixel, obj, obj.ValueByteOrder())
 	if err != nil {
 		return nil, err
 	}
@@ -699,10 +795,23 @@ func extractNativeFrames(pixel PixelData, obj *object.Object) (*NativeFrames, er
 	}, nil
 }
 
-func decodeNativeFrames(pixel PixelData, obj *object.Object) (Frames, error) {
-	metadata, frames, err := splitNativeFrames(pixel, obj)
+func decodeNativeFrames(pixel PixelData, obj *object.Object, order binary.ByteOrder) (Frames, error) {
+	metadata, frames, err := splitNativeFrames(pixel, obj, order)
 	if err != nil {
 		return Frames{}, err
+	}
+	if metadata.BitsAllocated == 1 && len(frames) == 1 {
+		// The extractors can expose a stored single-frame value as a view.
+		// Decoding instead returns a frame with zero unused tail bits.
+		if remainder := packedFrameBits(metadata) % 8; remainder != 0 {
+			frame := frames[0]
+			last := len(frame) - 1
+			mask := byte(1<<remainder - 1)
+			if frame[last]&^mask != 0 {
+				frames[0] = core.CloneBytes(frame)
+				frames[0][last] &= mask
+			}
+		}
 	}
 	return Frames{
 		Rows:    int(metadata.Rows),
@@ -723,20 +832,35 @@ func decodeEncapsulatedUncompressedFrames(pixel PixelData, obj *object.Object) (
 	}, nil
 }
 
-func splitNativeFrames(pixel PixelData, obj *object.Object) (Metadata, [][]byte, error) {
+func splitNativeFrames(pixel PixelData, obj *object.Object, order binary.ByteOrder) (Metadata, [][]byte, error) {
+	if _, incomplete := obj.IncompletePixelData(); incomplete {
+		return Metadata{}, nil, object.ErrPartialFile
+	}
 	metadata, err := ExtractMetadata(obj)
 	if err != nil {
 		return Metadata{}, nil, err
 	}
+	frames, err := splitNativeFrameRange(pixel, obj, order, metadata, 0, metadata.NumberOfFrames)
+	if err != nil {
+		return Metadata{}, nil, err
+	}
+	return metadata, frames, nil
+}
+
+func splitNativeFrameRange(pixel PixelData, obj *object.Object, order binary.ByteOrder, metadata Metadata, first, end int) ([][]byte, error) {
 	if pixel.Encapsulated {
-		return Metadata{}, nil, ErrEncapsulatedPixelData
+		return nil, ErrEncapsulatedPixelData
 	}
 
 	frameSize := metadata.FrameSize()
-	totalSize := metadata.TotalSize()
+	frameBuffersSize := metadata.TotalSize()
+	totalSize := frameBuffersSize
+	if metadata.BitsAllocated == 1 {
+		totalSize, _ = nativePackedByteCount(metadata)
+	}
 	maxInt := int64(^uint(0) >> 1)
-	if frameSize <= 0 || totalSize <= 0 || frameSize > maxInt || totalSize > maxInt {
-		return Metadata{}, nil, fmt.Errorf(
+	if frameSize <= 0 || totalSize <= 0 || frameBuffersSize <= 0 || frameBuffersSize > maxInt {
+		return nil, fmt.Errorf(
 			"%w: rows=%d columns=%d samples_per_pixel=%d bits_allocated=%d number_of_frames=%d",
 			ErrInvalidMetadata,
 			metadata.Rows,
@@ -758,7 +882,7 @@ func splitNativeFrames(pixel PixelData, obj *object.Object) (Metadata, [][]byte,
 	actualSize := int64(len(pixel.Raw))
 	excess := actualSize - totalSize
 	if excess < 0 || (excess >= frameSize && !(totalSize%2 == 1 && excess == 1)) {
-		return Metadata{}, nil, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: expected %d bytes for %d frame(s), got %d",
 			ErrPixelDataSizeMismatch,
 			totalSizeInt,
@@ -767,13 +891,33 @@ func splitNativeFrames(pixel PixelData, obj *object.Object) (Metadata, [][]byte,
 		)
 	}
 
-	frames := make([][]byte, metadata.NumberOfFrames)
+	raw := pixel.Raw
+	if element, ok := obj.Get(core.TagPixelData); ok && nativeOWByteLanes(order, element.VR(), metadata) {
+		if len(raw)%2 != 0 {
+			return nil, fmt.Errorf("%w: Big Endian OW Pixel Data has an odd byte length", ErrPixelDataSizeMismatch)
+		}
+		raw = reverseFixedWidthValues(raw[:totalSizeInt+totalSizeInt%2], 2)
+	}
+	frames := make([][]byte, end-first)
+	if metadata.BitsAllocated == 1 && metadata.NumberOfFrames > 1 {
+		frameBits := packedFrameBits(metadata)
+		if frameBits%8 != 0 {
+			aligned := make([]byte, len(frames)*frameSizeInt)
+			for i := range frames {
+				start := i * frameSizeInt
+				end := start + frameSizeInt
+				frames[i] = aligned[start:end:end]
+				copyPackedBits(frames[i], 0, raw, int64(first+i)*frameBits, frameBits)
+			}
+			return frames, nil
+		}
+	}
 	for i := range frames {
-		start := i * frameSizeInt
-		frames[i] = pixel.Raw[start : start+frameSizeInt]
+		start := (first + i) * frameSizeInt
+		frames[i] = raw[start : start+frameSizeInt]
 	}
 
-	return metadata, frames, nil
+	return frames, nil
 }
 
 func splitEncapsulatedUncompressedFrames(pixel PixelData, obj *object.Object) (Metadata, [][]byte, error) {
@@ -908,4 +1052,45 @@ func numberOfFrames(obj *object.Object) (int, error) {
 
 func missingMetadataError(name string, tag core.Tag) error {
 	return fmt.Errorf("%w: %s (%s)", ErrMissingMetadata, name, tag)
+}
+
+// JPEGColorConversion selects how lossy JPEG decoders treat three-component
+// frames (the choice DCMTK offers as E_DecompressionColorSpaceConversion).
+type JPEGColorConversion int
+
+const (
+	// JPEGColorGuess converts YCbCr to RGB when the codestream says it is
+	// YCbCr: a JFIF APP0, then an Adobe APP14 transform, or else component
+	// identifiers other than 'R', 'G', 'B' (the libjpeg rule, and the
+	// default). The decoded frame is RGB.
+	JPEGColorGuess JPEGColorConversion = iota
+	// JPEGColorPhotometric trusts the DICOM Photometric Interpretation:
+	// YBR_FULL and YBR_FULL_422 are converted to RGB, RGB is not converted.
+	JPEGColorPhotometric
+	// JPEGColorAlways converts every three-component frame from YCbCr.
+	JPEGColorAlways
+	// JPEGColorNever keeps the stored components (chroma upsampled); a
+	// YBR_FULL_422 object decodes to YBR_FULL.
+	JPEGColorNever
+)
+
+type jpegColorConversionKey struct{}
+
+// WithJPEGColorConversion returns ctx carrying the JPEG color policy for
+// codecs (DecompressOptions.JPEGColorConversion sets it for decompression).
+func WithJPEGColorConversion(ctx context.Context, conversion JPEGColorConversion) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, jpegColorConversionKey{}, conversion)
+}
+
+// JPEGColorConversionFrom returns the JPEG color policy carried by ctx
+// (JPEGColorGuess when none).
+func JPEGColorConversionFrom(ctx context.Context) JPEGColorConversion {
+	if ctx == nil {
+		return JPEGColorGuess
+	}
+	conversion, _ := ctx.Value(jpegColorConversionKey{}).(JPEGColorConversion)
+	return conversion
 }

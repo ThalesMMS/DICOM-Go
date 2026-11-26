@@ -10,7 +10,6 @@ import (
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/object"
-	"github.com/ThalesMMS/dicom-go/pixeldata"
 )
 
 func TestAssembleFrameCodestreamsFastPathBorrowsFragments(t *testing.T) {
@@ -207,10 +206,10 @@ func TestAssembleFrameCodestreamsRejectsAmbiguousEOIBoundaries(t *testing.T) {
 func TestAssembleFrameCodestreamsRejectsInvalidInputs(t *testing.T) {
 	tests := []struct {
 		name   string
-		pixel  pixeldata.PixelData
+		pixel  testPixelData
 		frames int
 	}{
-		{name: "not encapsulated", pixel: pixeldata.PixelData{}, frames: 1},
+		{name: "not encapsulated", pixel: testPixelData{}, frames: 1},
 		{name: "zero frames", pixel: encapsulatedPixel([][]byte{{1, 2}}, nil), frames: 0},
 		{name: "no fragments", pixel: encapsulatedPixel(nil, nil), frames: 1},
 		{name: "empty fragment", pixel: encapsulatedPixel([][]byte{{}}, nil), frames: 1},
@@ -302,13 +301,18 @@ func TestAssembleFrameCodestreamsRejectsExtendedOffsetsForFragmentedFrames(t *te
 	}
 }
 
-func TestAssembleFrameCodestreamsRejectsNonZeroEOTPadding(t *testing.T) {
+// PS3.5 A.4 does not fix the pad value: one byte of any value that makes the
+// Item even is padding, and the EOT length excludes it from the frame.
+func TestAssembleFrameCodestreamsAcceptsAnyEOTPadByte(t *testing.T) {
 	obj := object.New(nil)
 	obj.Put(core.NewRawElement(tagExtendedOffsetTable, core.VROV, uint64Table(0)))
 	obj.Put(core.NewRawElement(tagExtendedOffsetTableLengths, core.VROV, uint64Table(3)))
-	_, err := collectCodestreams(encapsulatedPixel([][]byte{{1, 2, 3, 9}}, nil), obj, 1)
-	if !errors.Is(err, ErrLayout) {
-		t.Fatalf("error = %v, want fragment layout error", err)
+	frames, err := collectCodestreams(encapsulatedPixel([][]byte{{1, 2, 3, 9}}, nil), obj, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 1 || !bytes.Equal(frames[0], []byte{1, 2, 3}) {
+		t.Fatalf("frames = %v", frames)
 	}
 }
 
@@ -340,8 +344,15 @@ func TestNextFragmentItemOffsetRejectsOverflow(t *testing.T) {
 	}
 }
 
-func encapsulatedPixel(fragments [][]byte, basicOffsetTable []byte) pixeldata.PixelData {
-	return pixeldata.PixelData{
+// testPixelData mirrors pixeldata.PixelData, which this package's internal
+// tests cannot import (pixeldata imports encapsulated).
+type testPixelData struct {
+	Sequence     core.FragmentSequence
+	Encapsulated bool
+}
+
+func encapsulatedPixel(fragments [][]byte, basicOffsetTable []byte) testPixelData {
+	return testPixelData{
 		Encapsulated: true,
 		Sequence: core.FragmentSequence{
 			OffsetTable: basicOffsetTable,
@@ -368,10 +379,10 @@ func uint64Table(values ...uint64) []byte {
 
 // Preserve the original JPEG-LS offset regression cases against the extracted
 // implementation. Production decoders read one Plan frame at a time.
-func collectCodestreams(pixel pixeldata.PixelData, obj *object.Object, frames int) ([][]byte, error) {
+func collectCodestreams(pixel testPixelData, obj *object.Object, frames int) ([][]byte, error) {
 	return collectCodestreamsWithLimits(pixel, obj, frames, Limits{})
 }
-func collectCodestreamsWithLimits(pixel pixeldata.PixelData, obj *object.Object, frames int, limits Limits) ([][]byte, error) {
+func collectCodestreamsWithLimits(pixel testPixelData, obj *object.Object, frames int, limits Limits) ([][]byte, error) {
 	if !pixel.Encapsulated {
 		return nil, ErrLayout
 	}

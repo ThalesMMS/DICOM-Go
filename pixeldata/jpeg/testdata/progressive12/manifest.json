@@ -1,0 +1,1227 @@
+{
+  "License": "Apache-2.0",
+  "NoPHI": true,
+  "Schema": "jpeg-progressive12-v1",
+  "SourceBase": "7bb575edc44d195d3c6a9c343277b17d8c8a9962",
+  "Provenance": "Own deterministic unsigned 12-bit rasters and Part10/PNM files; no patient data, vendor implementation source or vendor image assets.",
+  "OS": "windows",
+  "Arch": "amd64",
+  "GoVersion": "go1.26.4",
+  "Successful": true,
+  "Tools": {
+    "cjpeg": {
+      "Path": "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+      "Version": "libjpeg-turbo version 3.2.0 (build 20260701)",
+      "SHA256": "1293de872c37e6d81ddb34fb0a7e973298aad4876f1be6e574bfb975ad7783ca"
+    },
+    "dcmcjpeg": {
+      "Path": "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+      "Version": "$dcmtk: dcmcjpeg v3.7.0 2025-12-15 $\r\n\r\ndcmcjpeg: Encode DICOM file to JPEG transfer syntax\r\n\r\nHost type: x64-Windows\r\nCharacter encoding: 65001\r\nCode page: 850 (OEM) / 1252 (ANSI)\r\nBuild options: shared cxx11 (stl) threads lfs builtin-dict dcmdictpath char-conv\r\n\r\nExternal libraries used:\r\n- ZLIB, Version 1.3.2\r\n- IJG, Version 6b  27-Mar-1998 (modified)",
+      "SHA256": "e772c17b7766e1c40d69f2672b7aed1abd0c660c5ece35e6c2e936234a722b5d"
+    },
+    "dcmdjpeg": {
+      "Path": "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+      "Version": "$dcmtk: dcmdjpeg v3.7.0 2025-12-15 $\r\n\r\ndcmdjpeg: Decode JPEG-compressed DICOM file\r\n\r\nHost type: x64-Windows\r\nCharacter encoding: 65001\r\nCode page: 850 (OEM) / 1252 (ANSI)\r\nBuild options: shared cxx11 (stl) threads lfs builtin-dict dcmdictpath char-conv\r\n\r\nExternal libraries used:\r\n- ZLIB, Version 1.3.2\r\n- IJG, Version 6b  27-Mar-1998 (modified)",
+      "SHA256": "71c9ead55c8eff4cef590332d09639dfe31fbb95c44e63f5cf559ecc32e822c2"
+    }
+  },
+  "Sources": {
+    "dcmcjpeg_test.go": "2283f09df46b406e2239e385c6c1d2958455155c5f839e40a5f52e1979d6baa0",
+    "extended.go": "a2b82f0b421b411913924f3b64a083d9bfc803c9cd8754dd05042353f7d55124",
+    "extended_encoder_profiles_test.go": "a5f2dbdc65079a4688c59de58df0dcae8082b5f3a362998b5aad26b3bd1911b1",
+    "extended_encoder_test.go": "6f44cd92516893f07bdc0ffe021e37be8ce1f90b8bc8ae0a27c912b7e0dd565f",
+    "jpeg.go": "b739bf54fe19775643a770a4ed36263959f2271f854fc7d4d55d161d675e2f71",
+    "progressive12.go": "8e37c11038107bb3c6db75403f03f1173997f0287ca80ab7191d3675ee44151e",
+    "progressive12_interop_test.go": "785282d0ec231dcbda4b7563f599c22820ea6dc31950088cfdb4080145d4fcac",
+    "progressive12_test.go": "22ea80d94c3fc90c3356d9ffcf10b47ed9e7cc5d41ea2b985be79c53a160f5b6"
+  },
+  "RuntimeFiles": {
+    "libijg12.dll": "3b892f9d060ed4abb505328c2f7ef40da54529bd95cb15a0aec90a9d972cdf2d"
+  },
+  "Cases": [
+    {
+      "Name": "mono-es-gradient",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "gradient",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-es-gradient-0.jpg",
+        "mono-es-gradient-1.jpg"
+      ],
+      "References": [
+        "mono-es-gradient-0.raw",
+        "mono-es-gradient-1.raw"
+      ],
+      "StreamHashes": [
+        "0fe57aaf7da697927f9bee65c7d4ec7f5d87ce9ca258371667ace75fdd253cbf",
+        "5b06e5d6110fd44a7ee7d2c42354dd74ff419c151185e6163283257fbcc7b0af"
+      ],
+      "ReferenceHashes": [
+        "f022dbe46fd3f4dac7e013b294c9b9f5c06020ba07ed9c4619dda60d0d4b3247",
+        "49f8fd995fef8a964c97c838d9d288ed05515b51df2c914da12d0af56a6aecc8"
+      ],
+      "NativeSHA256": "91eb8a65caa08b5a8ef686eb9e7e4f34e2637468e84b0fd2e007c2188acd04f6",
+      "CompressedSHA256": "4e0e424af4445b2cc0ae044e6d266efca486550667a1644876b59f7bca350aeb",
+      "OracleSHA256": "35e32db2df75f0de8b422b7c94640f091ea7d6deb9af8c837769cda7fa4c11f6",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+es",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-gradient-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-gradient.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-gradient.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-gradient-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "60.497259"
+      ],
+      "MaximumSourceError": [
+        16
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "mono-es-flat",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "flat",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-es-flat-0.jpg",
+        "mono-es-flat-1.jpg"
+      ],
+      "References": [
+        "mono-es-flat-0.raw",
+        "mono-es-flat-1.raw"
+      ],
+      "StreamHashes": [
+        "6dd199d50c84eb398ddc6b64876e621443c540398365f6e4cb4cd77442af390b",
+        "6c5b2641eab6f80873bcb5702e64bb875708b011fe1185fc749575fa5990a379"
+      ],
+      "ReferenceHashes": [
+        "1421c4e4ba56e2ce6d88e79612ca803db7970c0ec6371722f3ba30457da1339f",
+        "e9a4236a764c8e7d3e03e1551c5721433f93d8e9877270f95e03ddfa3762f489"
+      ],
+      "NativeSHA256": "64115cd1c260d75f93077ad933f384393c889a33f58be46eda647717598631c7",
+      "CompressedSHA256": "8a83855a4b00834c52f7351bb4fb68d0fab5a9efd8d46a4778763ca982f00d29",
+      "OracleSHA256": "6fa89fc8e1b900d9999b7bd9fc7ba609f59cb534889259ffefb4efc5228f479e",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+es",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-flat-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-flat.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-flat.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-flat-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "Infinity (exact)"
+      ],
+      "MaximumSourceError": [
+        0
+      ],
+      "MaximumDecoderDifference": 0
+    },
+    {
+      "Name": "mono-es-edges",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "edges",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-es-edges-0.jpg",
+        "mono-es-edges-1.jpg"
+      ],
+      "References": [
+        "mono-es-edges-0.raw",
+        "mono-es-edges-1.raw"
+      ],
+      "StreamHashes": [
+        "6985eafe84c660cfb96ada5a2b0ac2a8bd97f78a5df68822ca77b20f9f8552f3",
+        "6583c984520335697a84c926f777e504ff67e209b8008bdbe89db4f4973764af"
+      ],
+      "ReferenceHashes": [
+        "f3ef6fbfbbd47e18568c2bfe32e285c84c087e8055379dd4148ec0e40671f65a",
+        "1f65dd80f79096f15608ba80ff0443090c076aa0cdd4743f536625d5c41091be"
+      ],
+      "NativeSHA256": "f15b5156ff60c72b63f929a6b2f41e291d83c87859b0bd1281e5ce64052de067",
+      "CompressedSHA256": "e7a6815ff586194964b2f1abf94f91a2181ed3a4a4a890ec62540566a8463395",
+      "OracleSHA256": "0b23931d0b69648eff0f67754a3d899669bba2b673744d98a4beeb09b9868327",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+es",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "100",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-edges-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-edges.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-edges.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-edges-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "83.263121"
+      ],
+      "MaximumSourceError": [
+        1
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "mono-es-restart",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "restart",
+      "Generator": "libjpeg-turbo cjpeg -restart 3B, independently decoded by DCMTK IJG12",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-es-restart-0.jpg",
+        "mono-es-restart-1.jpg"
+      ],
+      "References": [
+        "mono-es-restart-0.raw",
+        "mono-es-restart-1.raw"
+      ],
+      "StreamHashes": [
+        "2b662e5ef2922187c470045a1b546c74f5a3e49b5a292807870e3922231d39ad",
+        "7c65945d66796469accf1f601ce8f33856b9c1bde8b809c8562ca420a37914e6"
+      ],
+      "ReferenceHashes": [
+        "f022dbe46fd3f4dac7e013b294c9b9f5c06020ba07ed9c4619dda60d0d4b3247",
+        "49f8fd995fef8a964c97c838d9d288ed05515b51df2c914da12d0af56a6aecc8"
+      ],
+      "NativeSHA256": "91eb8a65caa08b5a8ef686eb9e7e4f34e2637468e84b0fd2e007c2188acd04f6",
+      "CompressedSHA256": "42ff55e68b114b23ce3047db4fd5579417c7ce1bb782691aa7d5a0fea148f33c",
+      "OracleSHA256": "2bab7ca94340d9e44c7e84fc5d9c4d00e99aedc7a4a422dc87d225794355dcaa",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart-0.jpg",
+          "-grayscale",
+          "-scans",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart-scans.txt",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart-0.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart-1.jpg",
+          "-grayscale",
+          "-scans",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart-scans.txt",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart-1.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-es-restart-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "60.497259"
+      ],
+      "MaximumSourceError": [
+        16
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "mono-ep-gradient",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "gradient",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-ep-gradient-0.jpg",
+        "mono-ep-gradient-1.jpg"
+      ],
+      "References": [
+        "mono-ep-gradient-0.raw",
+        "mono-ep-gradient-1.raw"
+      ],
+      "StreamHashes": [
+        "fc9eb1cf798bb99535bf45d4983f8d32d525983ead6417a90f68ae0d21069ff4",
+        "f1899bc071026fbe9f6b342a75fd64265fcf7c1ffbe88689dbd97d7afc516e21"
+      ],
+      "ReferenceHashes": [
+        "f022dbe46fd3f4dac7e013b294c9b9f5c06020ba07ed9c4619dda60d0d4b3247",
+        "49f8fd995fef8a964c97c838d9d288ed05515b51df2c914da12d0af56a6aecc8"
+      ],
+      "NativeSHA256": "91eb8a65caa08b5a8ef686eb9e7e4f34e2637468e84b0fd2e007c2188acd04f6",
+      "CompressedSHA256": "f318788e970923473a54f42601a193a83801288dca3e3fe884d73ce0299516b1",
+      "OracleSHA256": "2a93eefa41ded7dcb7ef355d9f9d5b16790d79602a78d50dba4f748175537cbb",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+ep",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-gradient-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-gradient.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-gradient.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-gradient-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "60.497259"
+      ],
+      "MaximumSourceError": [
+        16
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "mono-ep-flat",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "flat",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-ep-flat-0.jpg",
+        "mono-ep-flat-1.jpg"
+      ],
+      "References": [
+        "mono-ep-flat-0.raw",
+        "mono-ep-flat-1.raw"
+      ],
+      "StreamHashes": [
+        "03da05098550f50348c27ab6dcc55c1de96444755bbbe5b1373ee670d71c4f01",
+        "13a2a7f76b6edfc0506ab8121da6bb8e69bcca4e2a0148b9dc19f6f8dfb811b4"
+      ],
+      "ReferenceHashes": [
+        "1421c4e4ba56e2ce6d88e79612ca803db7970c0ec6371722f3ba30457da1339f",
+        "e9a4236a764c8e7d3e03e1551c5721433f93d8e9877270f95e03ddfa3762f489"
+      ],
+      "NativeSHA256": "64115cd1c260d75f93077ad933f384393c889a33f58be46eda647717598631c7",
+      "CompressedSHA256": "d1e64c17d8c2190eb126c0696dd27face35acebf9e2cda53fc844e8170e73962",
+      "OracleSHA256": "669843401f5afbe71eb1c988cffd95a4c0006193107a16a2c3eb81257bb3cbed",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+ep",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-flat-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-flat.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-flat.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-flat-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "Infinity (exact)"
+      ],
+      "MaximumSourceError": [
+        0
+      ],
+      "MaximumDecoderDifference": 0
+    },
+    {
+      "Name": "mono-ep-edges",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "edges",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-ep-edges-0.jpg",
+        "mono-ep-edges-1.jpg"
+      ],
+      "References": [
+        "mono-ep-edges-0.raw",
+        "mono-ep-edges-1.raw"
+      ],
+      "StreamHashes": [
+        "988ea93467267bb58b63eb0ef67cf89b08017ceebed13280b2a6b8ba93990420",
+        "eeefcd0f16c45b8e60fcb6e942b05f9b223cb6cf7709c1d328d39e4d35284e3c"
+      ],
+      "ReferenceHashes": [
+        "f3ef6fbfbbd47e18568c2bfe32e285c84c087e8055379dd4148ec0e40671f65a",
+        "1f65dd80f79096f15608ba80ff0443090c076aa0cdd4743f536625d5c41091be"
+      ],
+      "NativeSHA256": "f15b5156ff60c72b63f929a6b2f41e291d83c87859b0bd1281e5ce64052de067",
+      "CompressedSHA256": "8652cffbc7fd6a34a3704d2451b1274355fb2ba3fc604e09a2b6f8e6aefd4534",
+      "OracleSHA256": "9b63a85b0695cbcf6827c2f41128014792f539768f41355a42f1e35eee62a73a",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+ep",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "100",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-edges-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-edges.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-edges.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-edges-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "83.263121"
+      ],
+      "MaximumSourceError": [
+        1
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "mono-ep-restart",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "restart",
+      "Generator": "libjpeg-turbo cjpeg -restart 3B, independently decoded by DCMTK IJG12",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": false,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "MONOCHROME2"
+      },
+      "Streams": [
+        "mono-ep-restart-0.jpg",
+        "mono-ep-restart-1.jpg"
+      ],
+      "References": [
+        "mono-ep-restart-0.raw",
+        "mono-ep-restart-1.raw"
+      ],
+      "StreamHashes": [
+        "4f5caeed51aef09bc0652514741c520cfa65c6f01ffba1ef29ae09200a0e7436",
+        "cbab8695eaad194625e3a9d25e94baffdefc0abe841d5529c6edcf7caa70fc09"
+      ],
+      "ReferenceHashes": [
+        "f022dbe46fd3f4dac7e013b294c9b9f5c06020ba07ed9c4619dda60d0d4b3247",
+        "49f8fd995fef8a964c97c838d9d288ed05515b51df2c914da12d0af56a6aecc8"
+      ],
+      "NativeSHA256": "91eb8a65caa08b5a8ef686eb9e7e4f34e2637468e84b0fd2e007c2188acd04f6",
+      "CompressedSHA256": "f1d0299c0ad4d75c932e69a2be82e8b4891eaa2a967d9b499b3120257f6af031",
+      "OracleSHA256": "2bab7ca94340d9e44c7e84fc5d9c4d00e99aedc7a4a422dc87d225794355dcaa",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-restart-0.jpg",
+          "-grayscale",
+          "-progressive",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-restart-0.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-restart-1.jpg",
+          "-grayscale",
+          "-progressive",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-restart-1.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-restart.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\mono-ep-restart-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "60.497259"
+      ],
+      "MaximumSourceError": [
+        16
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "rgb-es-gradient",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "gradient",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-es-gradient-0.jpg",
+        "rgb-es-gradient-1.jpg"
+      ],
+      "References": [
+        "rgb-es-gradient-0.raw",
+        "rgb-es-gradient-1.raw"
+      ],
+      "StreamHashes": [
+        "ea3c943c0c69456f79a6f9321c250cd9ef64806bb7289031c13ac25c6f854f24",
+        "1fbce79f8576ac64e6ee51ba56807f8cc0aed32e95adcbf06f79b80779e14827"
+      ],
+      "ReferenceHashes": [
+        "86468154ca5888610f91f1f52990e85b730e4313b4e2bc8a1ccb570f2ea0e690",
+        "87aea9a6276d60ed1e8c1af406eabd57fc2787c9f65e1926c6a224e67b8e8e36"
+      ],
+      "NativeSHA256": "b3f2e1bbd904ae26973ba1f2c064615c8ad52810044103b817a4466aa0ca1c4a",
+      "CompressedSHA256": "fb43a68ed6aa61f92ab6a7227c5b301bcb03819f4057b185c54693c6dd306929",
+      "OracleSHA256": "9403b57fad10388ea1ea2109fb9dbe29f02c563a37480d297ade51a6917b87cc",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+es",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-gradient-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-gradient.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-gradient.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-gradient-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "66.795001",
+        "66.965629",
+        "65.910793"
+      ],
+      "MaximumSourceError": [
+        10,
+        16,
+        13
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "rgb-es-flat",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "flat",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-es-flat-0.jpg",
+        "rgb-es-flat-1.jpg"
+      ],
+      "References": [
+        "rgb-es-flat-0.raw",
+        "rgb-es-flat-1.raw"
+      ],
+      "StreamHashes": [
+        "7f50c86b547ffd277009574e682c5b9840c1416f0d665ed530a0d2c604cb7a2b",
+        "34696cfe1d719f0f810b32cd62f3c34f54435807ddbb3d5c2aac018bf40b5b53"
+      ],
+      "ReferenceHashes": [
+        "7709d215dc338ff1ced25aad533e3f1028483d7e72ffd44915bf45994791405c",
+        "705e31a84da64ad8890023b7a7e45f7812a0e33204f9c6abc0a176bab392b0c5"
+      ],
+      "NativeSHA256": "45a502ed69dc398ca00a964d155b3347096b4b7c8dcd0d112a6eb72467252e05",
+      "CompressedSHA256": "bba87157c7482c4f2a98b09b43588af5b8b20809a2aa804697413282c4a457b4",
+      "OracleSHA256": "cfd90ea1a8c78a0b8d2a6c28e993aafb21bb0302596b6caf3399258de6368d18",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+es",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-flat-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-flat.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-flat.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-flat-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "Infinity (exact)",
+        "Infinity (exact)",
+        "Infinity (exact)"
+      ],
+      "MaximumSourceError": [
+        0,
+        0,
+        0
+      ],
+      "MaximumDecoderDifference": 0
+    },
+    {
+      "Name": "rgb-es-edges",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "edges",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-es-edges-0.jpg",
+        "rgb-es-edges-1.jpg"
+      ],
+      "References": [
+        "rgb-es-edges-0.raw",
+        "rgb-es-edges-1.raw"
+      ],
+      "StreamHashes": [
+        "de1146e083b3c955e8b0caa8e5fe512358512ae3e114b473b48bfa2feab2b56d",
+        "d918957fe04f85a96111f11db7cb0349ce16f282124971fd27e760381c522455"
+      ],
+      "ReferenceHashes": [
+        "9e85b50a756d9136616fa6ee44ab579a7b9fa2d3e81fa7092640b0375709aae5",
+        "45243692c3eda8d775607d32d6181925b3757d3c3cc2738744a00499492c59cb"
+      ],
+      "NativeSHA256": "c1c7af3eac5003c7d0f541c1557f336d6b3fd514f191420836fe2100e2eb9f7c",
+      "CompressedSHA256": "f534cc41dc06560074dcd77b87ca6ec899b65f3e9832c28e738f3d6db3b08028",
+      "OracleSHA256": "7610998d70582e20680006666a7e8782ddcd70288494d9872ddb4bd62f3bc0a2",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+es",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "100",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-edges-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-edges.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-edges.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-edges-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "83.263121",
+        "82.783886",
+        "82.932236"
+      ],
+      "MaximumSourceError": [
+        1,
+        1,
+        1
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "rgb-es-restart",
+      "UID": "1.2.840.10008.1.2.4.53",
+      "Pattern": "restart",
+      "Generator": "libjpeg-turbo cjpeg -restart 3B, independently decoded by DCMTK IJG12",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-es-restart-0.jpg",
+        "rgb-es-restart-1.jpg"
+      ],
+      "References": [
+        "rgb-es-restart-0.raw",
+        "rgb-es-restart-1.raw"
+      ],
+      "StreamHashes": [
+        "fd77c138ae848194c5cb6d01f9ce12c3616a9f05d3b8768896d9f594e4d73496",
+        "d3e50d90fb3f7929d8db5c3e312ec95d8adf02a081146b5e62eee0a79fca5dbb"
+      ],
+      "ReferenceHashes": [
+        "86468154ca5888610f91f1f52990e85b730e4313b4e2bc8a1ccb570f2ea0e690",
+        "87aea9a6276d60ed1e8c1af406eabd57fc2787c9f65e1926c6a224e67b8e8e36"
+      ],
+      "NativeSHA256": "b3f2e1bbd904ae26973ba1f2c064615c8ad52810044103b817a4466aa0ca1c4a",
+      "CompressedSHA256": "e504a399032b1e9d90b1bceb38fed476bc47f9a798562a02c25d5d01ce9dcebb",
+      "OracleSHA256": "4064e7b46909dd0205c2d3ea4129d02c1a5d3956ffec305848412c1c832abef0",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart-0.jpg",
+          "-rgb",
+          "-sample",
+          "1x1,1x1,1x1",
+          "-scans",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart-scans.txt",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart-0.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart-1.jpg",
+          "-rgb",
+          "-sample",
+          "1x1,1x1,1x1",
+          "-scans",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart-scans.txt",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart-1.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-es-restart-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "66.795001",
+        "66.965629",
+        "65.910793"
+      ],
+      "MaximumSourceError": [
+        10,
+        16,
+        13
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "rgb-ep-gradient",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "gradient",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-ep-gradient-0.jpg",
+        "rgb-ep-gradient-1.jpg"
+      ],
+      "References": [
+        "rgb-ep-gradient-0.raw",
+        "rgb-ep-gradient-1.raw"
+      ],
+      "StreamHashes": [
+        "c4ab7a584d056ab437a690343c6676950e9d1abb1a8bd22f695ce28555d651ec",
+        "2a786899c3808978e4a2113756915cc0808933901a3c33f08347414006ca024d"
+      ],
+      "ReferenceHashes": [
+        "86468154ca5888610f91f1f52990e85b730e4313b4e2bc8a1ccb570f2ea0e690",
+        "87aea9a6276d60ed1e8c1af406eabd57fc2787c9f65e1926c6a224e67b8e8e36"
+      ],
+      "NativeSHA256": "b3f2e1bbd904ae26973ba1f2c064615c8ad52810044103b817a4466aa0ca1c4a",
+      "CompressedSHA256": "7b49502cda1ee7f68d8e646c1311e6b6bcb1762f56e5167c9b609f840fbbbc04",
+      "OracleSHA256": "12dc3ed10c1c79a3be92516677872a37b5a449f0246637fec6267790f4490e64",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+ep",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-gradient-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-gradient.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-gradient.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-gradient-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "66.795001",
+        "66.965629",
+        "65.910793"
+      ],
+      "MaximumSourceError": [
+        10,
+        16,
+        13
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "rgb-ep-flat",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "flat",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-ep-flat-0.jpg",
+        "rgb-ep-flat-1.jpg"
+      ],
+      "References": [
+        "rgb-ep-flat-0.raw",
+        "rgb-ep-flat-1.raw"
+      ],
+      "StreamHashes": [
+        "362b450c4a2ec52f26a6aaafae8c2cdca4e8646d94d46773d342fc6596442345",
+        "f4ce9767ec3f8dfab30a684852c55c7b0d2708cde92cddb12bad97c9621ff817"
+      ],
+      "ReferenceHashes": [
+        "7709d215dc338ff1ced25aad533e3f1028483d7e72ffd44915bf45994791405c",
+        "705e31a84da64ad8890023b7a7e45f7812a0e33204f9c6abc0a176bab392b0c5"
+      ],
+      "NativeSHA256": "45a502ed69dc398ca00a964d155b3347096b4b7c8dcd0d112a6eb72467252e05",
+      "CompressedSHA256": "304d619012372a23e951f43b9ab5321575726511d18da130f109fead0d3a8ac2",
+      "OracleSHA256": "5cab19b8b56763c71944ace89de3527a7439bbe398b66fe3b58158dbac42bce5",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+ep",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "90",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-flat-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-flat.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-flat.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-flat-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "Infinity (exact)",
+        "Infinity (exact)",
+        "Infinity (exact)"
+      ],
+      "MaximumSourceError": [
+        0,
+        0,
+        0
+      ],
+      "MaximumDecoderDifference": 0
+    },
+    {
+      "Name": "rgb-ep-edges",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "edges",
+      "Generator": "DCMTK dcmcjpeg",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-ep-edges-0.jpg",
+        "rgb-ep-edges-1.jpg"
+      ],
+      "References": [
+        "rgb-ep-edges-0.raw",
+        "rgb-ep-edges-1.raw"
+      ],
+      "StreamHashes": [
+        "8a947d14ae52f7e15fedf0ccdc5bc39b528f43e0c35e71e7a5e9472eba828336",
+        "0e00288a1993b3155aec61655253205d625f21247430e5924ab67ac5b8869aef"
+      ],
+      "ReferenceHashes": [
+        "9e85b50a756d9136616fa6ee44ab579a7b9fa2d3e81fa7092640b0375709aae5",
+        "45243692c3eda8d775607d32d6181925b3757d3c3cc2738744a00499492c59cb"
+      ],
+      "NativeSHA256": "c1c7af3eac5003c7d0f541c1557f336d6b3fd514f191420836fe2100e2eb9f7c",
+      "CompressedSHA256": "87cf8239b90288190fc99a1efda6b0cd190a7f03226587f921da1162e85af496",
+      "OracleSHA256": "607ac8c5ce763b40b039424f1f36f992ac5bd652de49628bfabf2cf61d484bdb",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmcjpeg.exe",
+          "+ep",
+          "+bt",
+          "+sr",
+          "+cr",
+          "+q",
+          "100",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-edges-native.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-edges.dcm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-edges.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-edges-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "83.263121",
+        "82.783886",
+        "82.932236"
+      ],
+      "MaximumSourceError": [
+        1,
+        1,
+        1
+      ],
+      "MaximumDecoderDifference": 1
+    },
+    {
+      "Name": "rgb-ep-restart",
+      "UID": "1.2.840.10008.1.2.4.55",
+      "Pattern": "restart",
+      "Generator": "libjpeg-turbo cjpeg -restart 3B, independently decoded by DCMTK IJG12",
+      "Metadata": {
+        "Rows": 37,
+        "Columns": 41,
+        "SamplesPerPixel": 3,
+        "BitsAllocated": 16,
+        "BitsStored": 12,
+        "HighBit": 11,
+        "PixelRepresentation": 0,
+        "PlanarConfiguration": 0,
+        "PlanarConfigurationPresent": true,
+        "NumberOfFrames": 2,
+        "PhotometricInterpretation": "RGB"
+      },
+      "Streams": [
+        "rgb-ep-restart-0.jpg",
+        "rgb-ep-restart-1.jpg"
+      ],
+      "References": [
+        "rgb-ep-restart-0.raw",
+        "rgb-ep-restart-1.raw"
+      ],
+      "StreamHashes": [
+        "0a4f69eef308f85fb285b2fb94735d0b4d44b1de0f62743c83c5a9fd52459dc5",
+        "044a2e468ddeaf39b46bfea0942eb61e10c4e2542f02188ad74d33eb315a8322"
+      ],
+      "ReferenceHashes": [
+        "86468154ca5888610f91f1f52990e85b730e4313b4e2bc8a1ccb570f2ea0e690",
+        "87aea9a6276d60ed1e8c1af406eabd57fc2787c9f65e1926c6a224e67b8e8e36"
+      ],
+      "NativeSHA256": "b3f2e1bbd904ae26973ba1f2c064615c8ad52810044103b817a4466aa0ca1c4a",
+      "CompressedSHA256": "0c2c6d0f067600c6708becdf028bb98afac350e06895517203ce453cff71a565",
+      "OracleSHA256": "4064e7b46909dd0205c2d3ea4129d02c1a5d3956ffec305848412c1c832abef0",
+      "Commands": [
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-restart-0.jpg",
+          "-rgb",
+          "-sample",
+          "1x1,1x1,1x1",
+          "-progressive",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-restart-0.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\cjpeg.exe",
+          "-precision",
+          "12",
+          "-quality",
+          "90",
+          "-restart",
+          "3B",
+          "-outfile",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-restart-1.jpg",
+          "-rgb",
+          "-sample",
+          "1x1,1x1,1x1",
+          "-progressive",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-restart-1.pnm"
+        ],
+        [
+          "C:\\msys64\\ucrt64\\bin\\dcmdjpeg.exe",
+          "+cn",
+          "+px",
+          "-bs",
+          "+te",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-restart.dcm",
+          "C:\\Users\\user\\AppData\\Local\\Temp\\issue1458-progressive12-qualification\\rgb-ep-restart-oracle.dcm"
+        ]
+      ],
+      "PSNR": [
+        "66.795001",
+        "66.965629",
+        "65.910793"
+      ],
+      "MaximumSourceError": [
+        10,
+        16,
+        13
+      ],
+      "MaximumDecoderDifference": 1
+    }
+  ]
+}

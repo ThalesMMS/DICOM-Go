@@ -259,7 +259,7 @@ func CodecFullManifest() ProfileManifest {
 				Status:           StatusProvisional,
 				TransferSyntaxes: syntaxes(transfer.JPEGLSNearLossless),
 				BuildTags:        []string{"jpegls_charls"},
-				Implementations:  []string{"CharLS dynamic runtime adapter selected by codecfull", "base alternative: dicom-go pure-Go unsigned JPEG-LS Near-Lossless decoder", "explicit pure-Go unsigned ILV=0 Near-Lossless encoder with caller-selected error and lossy authorization"},
+				Implementations:  []string{"CharLS dynamic runtime adapter selected by codecfull", "base alternative: dicom-go pure-Go unsigned JPEG-LS Near-Lossless decoder", "explicit pure-Go unsigned Near-Lossless encoder (ILV=0, RGB ILV=1/2) with caller-selected error and lossy authorization"},
 				Dependencies: []Dependency{
 					{
 						Name:        "github.com/ebitengine/purego",
@@ -279,7 +279,7 @@ func CodecFullManifest() ProfileManifest {
 						OverrideEnv: "DICOM_GO_CHARLS_LIBRARY",
 					},
 				},
-				Coverage: []string{"near-lossless", "shared bounded JPEG-LS Item assembly", "metadata mismatch", "dependency unavailable", "base pure-Go decode: unsigned MONOCHROME1/2 ILV=0 and RGB ILV=0/1/2, 2-16 stored bits, full precision MAXVAL", "explicit base encode: unsigned MONOCHROME1/2 and RGB ILV=0, positive NEAR, preserved loss history and derived identity; no signed, palette, YBR or implicit fallback"},
+				Coverage: []string{"near-lossless", "shared bounded JPEG-LS Item assembly", "metadata mismatch", "dependency unavailable", "base pure-Go decode: unsigned MONOCHROME1/2 ILV=0 and RGB ILV=0/1/2, 2-16 stored bits, full precision MAXVAL", "explicit base encode: unsigned MONOCHROME1/2 and RGB ILV=0, RGB ILV=1/2 by EncoderOptions.Interleave, positive NEAR, preserved loss history and derived identity; no signed, palette, YBR or implicit fallback"},
 				Evidence: []Evidence{
 					directionalExactEvidence(DirectionEncode,
 						"pixeldata/jpegls/near_encoder_oracle_test.go",
@@ -289,6 +289,11 @@ func CodecFullManifest() ProfileManifest {
 						"examples/codec-adapters/jpegls/near_encoder_interop_test.go",
 						"pinned CharLS 2.4.2 independently decodes actual transcoder output; 108 unsigned ILV=0 profiles, 216 frames, every stored sample within explicit NEAR",
 						"TestCharLSDecodesPureGoNearLosslessEncoderFullSamples"),
+					directionalExactEvidence(DirectionEncode,
+						"pixeldata/jpegls/interleave_encoder_test.go",
+						"CharLS 2.4.2 scan bytes for every RGB ILV=1/2 near-lossless corpus stream and its exact reconstruction",
+						"TestInterleavedEncoderReproducesCharLSEntropy",
+						"TestInterleavedEncoderRoundTrips"),
 					directionalExactEvidence(DirectionDecode,
 						"pixeldata/jpegls/near_lossless_test.go",
 						"116 synthetic CharLS 2.4.2 exact reconstructions and independent source NEAR bounds; two prior full-frame oracles",
@@ -320,15 +325,24 @@ func CodecFullManifest() ProfileManifest {
 				Implementations:  []string{"dicom-go pure-Go JPEG-LS lossless decoder and encoder"},
 				Coverage: []string{
 					"NEAR=0 and ILV=0 decode and encode",
-					"ILV=1/2 decode for unsigned RGB, 2-16 stored bits, PlanarConfiguration=0, MAXVAL=2^precision-1",
+					"ILV=1/2 decode and encode for unsigned RGB, 2-16 stored bits, PlanarConfiguration=0, MAXVAL=2^precision-1",
 					"LSE preset coding parameters ID=1",
 					"8-bit and 16-bit monochrome including 12 stored bits",
 					"unsigned palette and interleaved RGB",
+					"nonstandard legacy compatibility only with DecodeRecovery.JPEGLSHPColorTransforms: APP8 mrfx HP1/HP2/HP3, unsigned RGB8/RGB16, NEAR=0, ILV=1/2, full precision and MAXVAL; transform/backend diagnostics; strict default refusal and standard encoding unchanged",
 					"multi-frame",
 					"single and multiple DICOM fragments with bounded frame assembly",
 					"typed capability errors for Near-Lossless and unsupported metadata",
 				},
 				Evidence: []Evidence{
+					directionalExactEvidence(DirectionDecode,
+						"pixeldata/jpegls/hp_test.go",
+						"12 independent synthetic GDCM CharLS streams; exact full RGB reconstruction, separately re-decoded by GDCM 3.2.5 on Windows/amd64",
+						"TestHPColorTransformsIndependentFixtures", "TestHPColorTransformsRejectUnqualifiedProfiles", "TestHPColorTransformsDecompressDataSet", "TestHPColorTransformsGDCM"),
+					directionalExactEvidence(DirectionDecode,
+						"examples/codec-adapters/jpegls/hp_charls_test.go",
+						"pinned CharLS 2.4.2 independently decodes all 12 HP fixtures; optional lossless adapter reports applied transforms on Windows/amd64",
+						"TestCharLSHPColorTransforms"),
 					directionalExactEvidence(
 						DirectionDecode,
 						"pixeldata/jpegls/interop_test.go",
@@ -356,6 +370,14 @@ func CodecFullManifest() ProfileManifest {
 						"pixeldata/jpegls/interleave_test.go",
 						"exact equality with independent CharLS 2.4.2 ILV=0 entropy for all default corpus profiles",
 						"TestCharLSInterleaveFullSamples",
+					),
+					directionalExactEvidence(
+						DirectionEncode,
+						"pixeldata/jpegls/interleave_encoder_test.go",
+						"exact equality with independent CharLS 2.4.2 ILV=1/2 scan bytes for every lossless corpus stream, and pure-Go round trips",
+						"TestInterleavedEncoderReproducesCharLSEntropy",
+						"TestInterleavedEncoderRoundTrips",
+						"TestInterleavedEncoderOptions",
 					),
 					directionalExactEvidence(
 						DirectionDecode,
@@ -554,22 +576,106 @@ func CodecFullManifest() ProfileManifest {
 			"embed this manifest in both final Twin Viewer release artifacts",
 		},
 	}
+	manifest.Capabilities = append(manifest.Capabilities, deflatedImageFrameCapability(), progressiveJPEGCapability())
 	declareCodecDirections(&manifest)
 	qualifyCodecFull(&manifest)
 	manifest.Capabilities = append(manifest.Capabilities, Capability{
 		ID: "jpeg-2000-lossless-encode", Family: "JPEG 2000 Part 1 Lossless explicit encoder", Status: StatusValidated,
 		Directions: []CodecDirection{DirectionEncode}, TransferSyntaxes: syntaxes(transfer.JPEG2000LosslessOnly),
 		BuildTags:       []string{"jpeg2000_openjpeg", "codecfull"},
-		Implementations: []string{"OpenJPEG 2.5.4 opj_compress through explicit caller-owned encoder registry"},
+		Implementations: []string{"OpenJPEG 2.5.4 opj_compress through explicit caller-owned encoder registry", "dicom-go pure-Go encoder (pixeldata/jpeg2000) in the default build, no tag or runtime, through explicit caller-owned encoder registry"},
 		Dependencies:    []Dependency{{Name: "OpenJPEG", Scope: "runtime", Kind: "executable", Version: "2.5.4", License: "BSD-2-Clause", Acquisition: "explicit opj_compress runtime; not required or registered by decoder-only startup", OverrideEnv: "DICOM_GO_OPENJPEG_COMPRESS"}},
-		Coverage:        []string{".90 only; reversible transform; unsigned MONOCHROME1/2 and RGB; 8..16 stored bits in 8/16 allocated bits", "explicit registration and separate encoder preflight; no implicit color conversion", "42 multiframe corpus frames, 141974 exact samples; encoder Windows/amd64 and Linux/amd64; independent native FFmpeg verifier Linux/amd64", "macOS encoding, signed samples, sub-8-bit precision and other JPEG 2000 encode UIDs remain unqualified/unsupported"},
-		Evidence: []Evidence{
+		Coverage:        []string{".90 only; reversible transform; unsigned MONOCHROME1/2 and RGB; 8..16 stored bits in 8/16 allocated bits", "explicit registration and separate encoder preflight; no implicit color conversion", "42 multiframe corpus frames, 141974 exact samples; encoder Windows/amd64 and Linux/amd64; independent native FFmpeg verifier Linux/amd64", "OpenJPEG encoder: macOS encoding, signed samples and sub-8-bit precision remain unqualified/unsupported", pureGoPart1Coverage},
+		Evidence: append([]Evidence{
 			directionalExactEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/encoder_interop_test.go", "native FFmpeg jpeg2000 decoder 7.1.5, explicitly not libopenjpeg; original synthetic samples", "TestOpenJPEGLosslessEncoderIndependentFFmpeg"),
 			directionalExactEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/encoder_process_test.go", "synthetic subprocess fault and cancellation injection", "TestOpenJPEGEncoderSubprocessFailuresCancelAndCleanup"),
+		}, pureGoLosslessEncodeEvidence()...),
+	})
+	manifest.Capabilities = append(manifest.Capabilities, Capability{
+		ID: "jpeg-2000-lossy-encode", Family: "JPEG 2000 Part 1 Lossy explicit encoder", Status: StatusValidated,
+		Directions: []CodecDirection{DirectionEncode}, TransferSyntaxes: syntaxes(transfer.JPEG2000),
+		BuildTags:       []string{"jpeg2000_openjpeg", "codecfull"},
+		Implementations: []string{"OpenJPEG 2.5.4 opj_compress through explicit caller-owned encoder registry", "dicom-go pure-Go encoder (pixeldata/jpeg2000) in the default build: irreversible 9/7 with a caller-chosen quantization step, every index coded"},
+		Dependencies:    []Dependency{{Name: "OpenJPEG", Scope: "runtime", Kind: "executable", Version: "2.5.4", License: "BSD-2-Clause", Acquisition: "explicit opj_compress runtime; not required or registered by decoder-only startup", OverrideEnv: "DICOM_GO_OPENJPEG_COMPRESS"}},
+		Coverage:        []string{".91 only; compression ratios or PSNR targets per quality layer, tiles, resolution levels, progression; irreversible 9/7 or truncated reversible 5/3", "unsigned MONOCHROME1/2 and RGB (YBR_ICT/YBR_RCT or RGB kept); 8..16 stored bits in 8/16 allocated bits; transcoder records Lossy Image Compression, ratio and method ISO_15444_1", "cross-decoded by opj_decompress and the pure-Go core within one step on every sample; PSNR per rate recorded in ENCODER_PROFILE.md; Windows/amd64", "macOS and Linux encoding, signed samples and sub-8-bit precision remain unqualified/unsupported"},
+		Evidence: []Evidence{
+			directionalToleranceEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/encoder_lossy_interop_test.go", 1, "OpenJPEG opj_decompress and the pure-Go core decoding the same encoded frames; synthetic source samples for PSNR", "TestOpenJPEGLossyEncoderRatesAndCrossDecode"),
+			directionalExactEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/encoder_lossy_test.go", "opj_compress arguments and capabilities for each coding option", "TestOpenJPEGLossyOptions", "TestOpenJPEGLossyEncoderCapabilitiesAndRegistration"),
+			pureGoLossyEncodeEvidence(),
+		},
+	})
+	manifest.Capabilities = append(manifest.Capabilities, Capability{
+		ID: "htj2k-encode", Family: "High-Throughput JPEG 2000 explicit encoder", Status: StatusValidated,
+		Directions:       []CodecDirection{DirectionEncode},
+		TransferSyntaxes: syntaxes(transfer.HTJ2KLossless, transfer.HTJ2KLosslessRPCL, transfer.HTJ2K),
+		Implementations:  []string{"dicom-go pure-Go HTJ2K encoder (pixeldata/jpeg2000 with the internal/htj2k HT block coder) in the default build, no tag or runtime, through explicit caller-owned encoder registry"},
+		Coverage: []string{
+			".201 and .202 reversible 5/3, .203 irreversible 9/7 with a caller-chosen quantization step; one tile, one layer, 64x64 code-blocks, every code-block coded by one HT cleanup pass at bit-plane zero; CAP Part 15 and Rsiz 0x4000",
+			".202 writes the RPCL progression and a TLM marker segment",
+			"MONOCHROME1/2 signed or unsigned, unsigned PALETTE COLOR (lossless) and RGB with optional RCT/ICT (YBR_RCT/YBR_ICT); 1..16 stored bits in 8/16 allocated bits; transcoder records method ISO_15444_15 for .203",
+			"decoded by OpenJPEG 2.5.4 and OpenJPH 0.32.0 (opt-in) and by the adapter's pure-Go core (RegisterCoreHTJ2K); macOS/arm64",
+			"HT refinement passes, rate control, quality layers, tiles and precincts are not produced",
+		},
+		Evidence: []Evidence{
+			directionalExactEvidence(DirectionEncode, "pixeldata/jpeg2000/oracle_test.go", "OpenJPEG opj_decompress 2.5.4 and OpenJPH ojph_expand 0.32.0 (opt-in DICOMGO_J2K_ORACLE=1); 1329545 synthetic samples bit-exact across the lossless syntaxes", "TestIndependentDecodersReproduceLosslessCodestreams"),
+			directionalToleranceEvidence(DirectionEncode, "pixeldata/jpeg2000/oracle_test.go", 2, "OpenJPEG and OpenJPH against a float64 model of the encoder's quantization (opt-in); one level up to 12 bits, two at 16", "TestIndependentDecodersAgreeOnLossyCodestreams"),
+			directionalExactEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/core_purego_encoder_test.go", "dicom-go pure-Go core decoder; codecfixture corpus and re-encoded repository fixtures including OpenJPH-encoded HTJ2K", "TestCoreDecodesPureGoEncoderCorpusExactly", "TestPureGoEncoderRoundTripsExistingFixtures", "TestCoreDecodesPureGoLossyEncoder"),
+			directionalExactEvidence(DirectionEncode, "internal/htj2k/htj2k_test.go", "HT block coder round trip and exhaustive CxtVLC codebook check", "TestCodebookCoversEveryQuadPattern", "TestMELRoundTrip", "TestCleanupRoundTrip"),
+			directionalExactEvidence(DirectionEncode, "pixeldata/jpeg2000/encoder_test.go", "marker segments, metadata refusal and deterministic concurrent output", "TestCodestreamMarkersDescribeTheFrame", "TestEncodeFrameRejectsUnsupportedMetadata", "TestEncodeIsDeterministicUnderConcurrency"),
 		},
 	})
 	manifest.ClinicalReleaseReady = len(manifest.releaseBlockers()) == 0
 	return manifest
+}
+
+// JPEG2000Part2EncoderCapability reports the explicitly selected collection
+// encoder. Its independent composed-decoder evidence is separate from
+// off-the-shelf full Annex J interoperability and the codecfull release profile.
+func JPEG2000Part2EncoderCapability() Capability {
+	return Capability{
+		ID: "jpeg-2000-part-2-encode", Family: "JPEG 2000 Part 2 explicit collection encoder",
+		Status: StatusProvisional, Directions: []CodecDirection{DirectionEncode},
+		TransferSyntaxes: syntaxes(transfer.JPEG2000Part2Lossless, transfer.JPEG2000Part2),
+		Implementations:  []string{"dicom-go pure-Go NewPart2Encoder and explicit RegisterPart2Encoder"},
+		Coverage: []string{
+			"one Annex J component collection with empty Basic Offset Table, 2–16 monochrome frames, at most 2097152 samples",
+			".92 reversible dependency transform and 5/3 wavelet, 1–16 stored bits, signed or unsigned, 8/16 allocated bits",
+			".93 irreversible float32 inverse decorrelation matrix and 9/7 wavelet, eight stored/allocated bits, explicit lossy authorization and sample error metric",
+			"whole-object TranscodeDataSet/File/Path, collection-aware FrameReader and explicitly registered nested core decoder",
+		},
+		Evidence: []Evidence{
+			directionalExactEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/part2_test.go",
+				"pure-Go core spatial decoder and Annex J synthesis", "TestPart2TranscodeCollectionRoundTrip", "TestPart2TranscodePathUsesCollectionAndAtomicLimits"),
+			directionalExactEvidence(DirectionEncode, "pixeldata/jpeg2000/part2_encoder_test.go",
+				"OpenJPEG 2.5.4 coefficient decoder with independent Python T.801 transform reconstruction, opt-in",
+				"TestPart2CollectionSignalingAndGuards", "TestPart2CollectionOpenJPEGReconstruction"),
+			directionalExactEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/part2_test.go",
+				"pydicom 3.0.2 original Part 10 extraction, independent Python Annex J and OpenJPEG 2.5.4 spatial decoder, opt-in",
+				"TestPart2IndependentPart10Decoder", "TestPart2IndependentDecoderLargeExtrema"),
+			directionalToleranceEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/part2_test.go", 8,
+				"pydicom 3.0.2, independent Python Annex J and pinned OpenJPEG 2.5.4 unrounded float32 spatial extractor, opt-in",
+				"TestPart2IndependentPart10Decoder"),
+			directionalToleranceEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/part2_test.go", 5,
+				"pure-Go core decoder and bounded per-sample transcode verification", "TestPart2LossyCollectionTranscode"),
+		},
+		Blockers: []string{"off-the-shelf complete Annex J decoder interoperability remains unqualified"},
+	}
+}
+
+// pureGoPart1Coverage describes the pure-Go Part 1 encoder shared by the
+// lossless and lossy JPEG 2000 encode capabilities.
+const pureGoPart1Coverage = "pure-Go encoder (pixeldata/jpeg2000): one tile, one layer, 64x64 code-blocks, MQ coding of every bit-plane in one codeword segment; MONOCHROME1/2 signed or unsigned, unsigned PALETTE COLOR (lossless) and RGB with optional RCT/ICT; 1..16 stored bits in 8/16 allocated bits; decoded by OpenJPEG 2.5.4 (opt-in) and the adapter's pure-Go core on macOS/arm64"
+
+func pureGoLosslessEncodeEvidence() []Evidence {
+	return []Evidence{
+		directionalExactEvidence(DirectionEncode, "pixeldata/jpeg2000/oracle_test.go", "OpenJPEG opj_decompress 2.5.4 (opt-in DICOMGO_J2K_ORACLE=1); synthetic samples for 1..16 stored bits, signed and unsigned, RGB with and without RCT", "TestIndependentDecodersReproduceLosslessCodestreams"),
+		directionalExactEvidence(DirectionEncode, "examples/codec-adapters/jpeg2000/core_purego_encoder_test.go", "dicom-go pure-Go core decoder; codecfixture corpus through the transcoder and re-encoded repository fixtures", "TestCoreDecodesPureGoEncoderCorpusExactly", "TestPureGoEncoderRoundTripsExistingFixtures"),
+		directionalExactEvidence(DirectionEncode, "pixeldata/jpeg2000/encoder_test.go", "transform inverses, packet-header primitives and marker segments", "TestReversibleTransformsInvertExactly", "TestPacketHeaderPrimitives", "TestCodestreamMarkersDescribeTheFrame"),
+	}
+}
+
+func pureGoLossyEncodeEvidence() Evidence {
+	return directionalToleranceEvidence(DirectionEncode, "pixeldata/jpeg2000/oracle_test.go", 2, "OpenJPEG opj_decompress 2.5.4 against a float64 model of the encoder's quantization (opt-in); PSNR per step in docs/JPEG2000_ENCODER.md", "TestIndependentDecodersAgreeOnLossyCodestreams")
 }
 
 func declareCodecDirections(manifest *ProfileManifest) {
@@ -591,6 +697,36 @@ func declareCodecDirections(manifest *ProfileManifest) {
 				"TestJPEGEncoderTranscodeRoundTripAndMetadata",
 				"TestJPEGEncoderRGBUpdatesPhotometricAndRoundTrips",
 				"TestJPEGEncoderRejectsIncompatibleMetadataBeforeEncoding",
+			))
+		case "jpeg-extended":
+			capability.Directions = []CodecDirection{DirectionDecode, DirectionEncode}
+			capability.Implementations = append(capability.Implementations, "dicom-go pure-Go JPEG Extended Process 2/4 SOF1 encoder written from ITU-T T.81")
+			capability.Coverage = append(capability.Coverage, "strict options constructor: lossy Process 2/4 SOF1 encoding for unsigned mono8 (8/8/7) and mono12 (16/12/11), MONOCHROME1/2, absent PlanarConfiguration, explicit quality 1-100; transcoder records Lossy Image Compression, ratio and method ISO_10918_1")
+			capability.Coverage = append(capability.Coverage,
+				"historical constructor preserves Process 4 SOF1 encoding with 9-12 stored bits in 16 allocated bits; mono9-11 reports jpeg-extended-reduced-precision compatibility, not the strict DICOM mono12 profile",
+				"explicit jpeg-extended-color compatibility profile for RGB8/RGB12/YBR_FULL12, unsigned full precision and interleaved 4:4:4; supplied components and photometric are preserved; PS3.5 Table 8.2.1-1 does not list color for .51, so this is not a DICOM-conforming color profile",
+				"finite encoder working/output capacity budgets; copied/validated profile declarations, same profile on every frame and diagnostics in in-memory, streaming and icon transcode reports; YBR stored-component MaxPixelError requires JPEGColorNever and DefaultGuess comparison refuses a changed photometric",
+			)
+			capability.Evidence = append(capability.Evidence,
+				directionalToleranceEvidence(DirectionEncode, "pixeldata/jpeg/extended_encoder_profiles_test.go", 2, "own unsigned mono8/12 and RGB8/RGB12/YBR_FULL12 fixtures, SOF1/precision/4:4:4 headers, quality PSNR floors, q100 <=2 source levels; strict/profile/refusal/budget/cancel and streaming checks",
+					"TestExtendedEncoderNewProfilesSOF1AndRoundTrip", "TestExtendedEncoderStrictAndCompatibilityProfiles", "TestExtendedEncoderColorRejectsInvalidMetadata", "TestExtendedEncoderFiniteBudgetsAndCancellation", "TestExtendedEncoderExtremeSamplesAndAdmittedBudgets", "TestExtendedEncoderTranscodeProfilesAndStoredYBRVerification", "TestExtendedEncoderStreamingCompatibilityAndYBRRefusal"),
+				directionalToleranceEvidence(DirectionEncode, "pixeldata/jpeg/extended_encoder_profiles_interop_test.go", 2, "opt-in DCMTK 3.7.0 Part10 decoder and GDCM 3.2.5 CLI/public JPEGCodec oracle, 30 own two-frame cases and six qualities; GDCM API substitutes for installed CLI refusal of color12; version/hash/metadata/PSNR evidence and limits documented in docs/JPEG_EXTENDED_ENCODER.md", "TestExtendedEncoderNewProfilesDCMTKAndGDCM"))
+			capability.Evidence = append(capability.Evidence, directionalToleranceEvidence(
+				DirectionEncode,
+				"pixeldata/jpeg/extended_encoder_test.go",
+				2,
+				"dicom-go pure-Go Process 4 decoder; quality 100 within 2 levels of the synthetic source, lower qualities within per-quality PSNR and error bounds",
+				"TestExtendedEncoderRoundTripsThroughPureGoDecoder",
+				"TestExtendedEncoderExtremesUseEveryDCCategory",
+				"TestExtendedEncoderTranscodeRecordsLossyCompression",
+				"TestExtendedEncoderRejectsIncompatibleMetadataBeforeEncoding",
+				"TestExtendedOptimalHuffmanTableLimitsLengthsAndKeepsAllOnesFree",
+			), directionalToleranceEvidence(
+				DirectionEncode,
+				"pixeldata/jpeg/extended_encoder_dcmtk_test.go",
+				2,
+				"DCMTK dcmdjpeg 3.7.0 independent decoder (opt-in) and the pure-Go decoder on the same encoded frames; PSNR per quality in docs/JPEG_EXTENDED_ENCODER.md",
+				"TestExtendedEncoderAgainstDCMTK",
 			))
 		case "encapsulated-uncompressed":
 			capability.Directions = []CodecDirection{DirectionDecode, DirectionEncode}
@@ -620,6 +756,48 @@ func declareCodecDirections(manifest *ProfileManifest) {
 				"pure-Go RLE decoder and exact native frame comparison",
 				"TestTranscodeNativeRLEPipelineIsBitExactAcrossProfiles",
 			))
+		case "jpeg-xl":
+			capability.Directions = []CodecDirection{DirectionDecode, DirectionEncode}
+			capability.Implementations = append(capability.Implementations, "dicom-go pure-Go JPEG XL codec written from ISO/IEC 18181-1/-2 (pixeldata/jpegxl), explicit registration in the default build")
+			capability.Coverage = append(capability.Coverage,
+				"pure-Go decode: modular frames (all predictors, MA trees, RCT, Palette, Squeeze; 1-16 bits, grey/RGB) exactly, JPEG-compatible VarDCT frames as a JPEG decoder renders them; bounded 8-bit sRGB XYB DCT8 without restoration filters, other XYB profiles refused with ErrUnsupported",
+				"pure-Go .111: JPEG bitstream reconstruction (sequential and progressive) byte for byte; reversible recompression of sequential 8-bit Huffman JPEG from .50/.51 through the pixeldata.CodestreamTranscoder Recompressor, without decoding pixels",
+				"pure-Go encode: .110 lossless for 1-16 stored bits, signed (offset-binary level shift) or unsigned monochrome and RGB; .112 lossy 8-bit at an explicit quality with lossy authorization (method ISO_18181_1)",
+			)
+			capability.Evidence = append(capability.Evidence, exactEvidence(
+				"pixeldata/jpegxl/fixtures_test.go",
+				"libjxl 0.12.0 cjxl recompressions of libjpeg-turbo 3.2.0 cjpeg JPEGs and cjxl lossless files of deterministic synthetic images",
+				"TestFixturesReconstructOriginalJPEGs",
+				"TestFixturesDecodeLosslessExactly",
+			), toleranceEvidence(
+				"pixeldata/jpegxl/xyb_test.go", 1,
+				"libjxl 0.11.2 cjxl/djxl independently generated static 8-bit sRGB XYB DCT8 frames, every channel checked",
+				"TestXYBVarDCTIndependentPixels",
+				"TestXYBVarDCTFrameReaderBuffer",
+			), directionalExactEvidence(
+				DirectionEncode,
+				"pixeldata/jpegxl/dicom_test.go",
+				"pure-Go JPEG XL decoder, JPEG reconstruction and exact native frame comparison",
+				"TestLosslessTranscodeRoundTripIsExact",
+				"TestSignedSamplesUseOffsetBinaryLevelShift",
+				"TestRecompressorRoundTripsJPEGBaselineExactly",
+			), directionalExactEvidence(
+				DirectionEncode,
+				"pixeldata/jpegxl/oracle_test.go",
+				"libjxl djxl 0.12.0 (opt-in DICOMGO_JXL_ORACLE=1) decodes EncodeLossless output exactly and restores RecompressJPEG output byte for byte",
+				"TestLibjxlOracleDecodesEncodeLossless",
+				"TestLibjxlOracleJPEGRecompression",
+			))
+		case "deflated-image-frame":
+			capability.Directions = []CodecDirection{DirectionDecode, DirectionEncode}
+			capability.Evidence = append(capability.Evidence, directionalExactEvidence(
+				DirectionEncode,
+				"pixeldata/deflateframe/transcode_test.go",
+				"Go compress/flate raw inflater and exact native frame comparison",
+				"TestTranscodeNativeToDeflatedFramesAndBackIsBitExact",
+				"TestTranscodeBetweenDeflatedFramesAndOtherLosslessSyntaxes",
+				"TestPart10FilesInDeflatedFrames",
+			))
 		case "jpeg-ls-lossless":
 			capability.Directions = []CodecDirection{DirectionDecode, DirectionEncode}
 			capability.Evidence = append(capability.Evidence, directionalExactEvidence(
@@ -627,6 +805,24 @@ func declareCodecDirections(manifest *ProfileManifest) {
 				"pixeldata/transcode_jpegls_test.go",
 				"dicom-go pure-Go JPEG-LS lossless decoder and exact native frame comparison",
 				"TestTranscodeNativeJPEGLSPipelineIsBitExactAcrossProfiles",
+			))
+		case "jpeg-lossless":
+			capability.Directions = []CodecDirection{DirectionDecode, DirectionEncode}
+			capability.Implementations = append(capability.Implementations, "dicom-go pure-Go JPEG Lossless Process 14/SV1 encoder")
+			capability.Coverage = append(capability.Coverage, "encoding with predictors 1-7, point transform 0 and per-frame optimal Huffman tables for 2-16 stored bits, signed monochrome and unsigned interleaved RGB/YBR_FULL")
+			capability.Evidence = append(capability.Evidence, directionalExactEvidence(
+				DirectionEncode,
+				"pixeldata/jpeglossless/encoder_test.go",
+				"dicom-go pure-Go JPEG Lossless decoder over every predictor, bit depth and sign",
+				"TestEncoderRoundTripsEveryCombination",
+				"TestEncoderRejectsUnsupportedMetadata",
+				"TestOptimalHuffmanSpecLimitsLengthsAndKeepsAllOnesFree",
+			), directionalExactEvidence(
+				DirectionEncode,
+				"pixeldata/jpeglossless/encoder_interop_test.go",
+				"DCMTK dcmdjpeg 3.7.0 independent decoder (opt-in) and transcode round trip",
+				"TestTranscodeNativeToJPEGLosslessAndBack",
+				"TestJPEGLosslessEncoderAgainstDCMTK",
 			))
 		}
 	}
@@ -812,6 +1008,74 @@ func qualifyCodecFull(manifest *ProfileManifest) {
 	}
 }
 
+// progressiveJPEGCapability is the default-build decoder of the retired
+// qualified 8-bit and 12-bit Huffman progressive JPEG syntaxes (pixeldata/jpeg).
+func progressiveJPEGCapability() Capability {
+	return Capability{
+		ID:     "jpeg-progressive",
+		Family: "JPEG Spectral Selection / Full Progression (retired)",
+		Status: StatusProvisional,
+		TransferSyntaxes: syntaxes(
+			transfer.JPEGSpectralSelection,
+			transfer.JPEGFullProgression,
+		),
+		Implementations: []string{"Go standard-library JPEG decoder for 8-bit SOF2 frames; in-tree clean-room pure-Go qualified 12-bit SOF2 decoder"},
+		Coverage: []string{
+			"Processes 6 and 10: 8-bit Huffman progressive SOF2, spectral selection and successive approximation scans",
+			"8-bit unsigned grayscale and color, YBR metadata normalized to the decoded RGB",
+			"Processes 8 and 12: unsigned mono/RGB 12-bit SOF2, 1x1 sampling, BA16/BS12/HB11; .53 spectral-only and .55 successive approximation, complete coefficient coverage and final Al=0",
+			"12-bit profile: finite 512MiB request, 256 scans/frame, 8Mi block visits/request, contextual cancellation; arithmetic, hierarchy, signed/reduced precision, YCbCr and subsampling refused",
+			"SOF2 required; sequential and arithmetic frames refused with typed errors",
+			"lossy absolute-error tolerance",
+		},
+		Evidence: []Evidence{toleranceEvidence(
+			"pixeldata/jpeg/progressive_test.go",
+			2,
+			"libjpeg-turbo 3.2.0 cjpeg/djpeg",
+			"TestProgressiveIndependentFixtures",
+			"TestProgressiveRefusesOtherProcesses",
+		), toleranceEvidence(
+			"pixeldata/jpeg/dcmcjpeg_test.go",
+			2,
+			"DCMTK dcmcjpeg/dcmdjpeg 3.7.0 (opt-in)",
+			"TestDecodersAgainstDCMCJPEGLossy",
+			"TestDecodersAgainstDCMCJPEG12BitProgressive",
+		), toleranceEvidence(
+			"pixeldata/jpeg/progressive12_test.go", 2, "DCMTK 3.7.0 IJG12; own fixtures generated by DCMTK and libjpeg-turbo 3.2.0 cjpeg on Windows/amd64",
+			"TestProgressive12IndependentFixturesAndCallers", "TestProgressive12RejectsInvalidSequences", "TestProgressive12MetadataAndResources", "TestProgressive12CancellationAndConcurrentUse", "TestProgressive12RequestWorkAndMarkerCancellation",
+		), toleranceEvidence("pixeldata/jpeg/progressive12_interop_test.go", 2, "DCMTK 3.7.0 dcmdjpeg/IJG12 (opt-in)", "TestProgressive12DCMTKQualification")},
+		Blockers: []string{
+			"cross-check redistribution-safe clinical progressive fixtures against an independent decoder",
+		},
+	}
+}
+
+// deflatedImageFrameCapability is the default-build per-frame deflate codec
+// (pixeldata/deflateframe).
+func deflatedImageFrameCapability() Capability {
+	return Capability{
+		ID:               "deflated-image-frame",
+		Family:           "Deflated Image Frame Compression",
+		Status:           StatusValidated,
+		TransferSyntaxes: syntaxes(transfer.DeflatedImageFrameCompression),
+		Implementations:  []string{"dicom-go pure-Go per-frame raw DEFLATE (RFC 1951) codec on Go compress/flate (pixeldata/deflateframe)"},
+		Coverage: []string{
+			"one raw DEFLATE stream per frame in one fragment, odd streams padded with one NULL byte (PS3.5 8.2.16, A.4.13)",
+			"1-bit and 8/16/32-bit samples, monochrome signed or unsigned, RGB interleaved or planar, multi-frame; native layout preserved",
+			"decoded size bounded by Rows x Columns x Samples per Pixel x Bits Allocated / 8; excess refused with ExpansionLimitError",
+			"typed short, corrupt, truncated and trailing-data errors",
+		},
+		Evidence: []Evidence{exactEvidence(
+			"pixeldata/deflateframe/deflateframe_test.go",
+			"C zlib raw-deflate vectors (Python 3 zlib, wbits=-15) and deterministic synthetic samples",
+			"TestDecodeIndependentZlibVectors",
+			"TestEncodeDecodeRoundTripIsBitExact",
+			"TestDecodeRefusesDecompressionBombWithBoundedMemory",
+			"TestDecodeTypedStreamErrors",
+		)},
+	}
+}
+
 func dependencyByName(dependencies []Dependency, name string) *Dependency {
 	for index := range dependencies {
 		if dependencies[index].Name == name {
@@ -837,6 +1101,7 @@ func RequiredCodecFullTransferSyntaxes() []transfer.Syntax {
 		transfer.JPEG2000Part2Lossless,
 		transfer.JPEG2000Part2,
 		transfer.RLELossless,
+		transfer.DeflatedImageFrameCompression,
 		transfer.JPEGXLLossless,
 		transfer.JPEGXLJPEGRecompression,
 		transfer.JPEGXL,

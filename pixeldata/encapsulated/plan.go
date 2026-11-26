@@ -23,6 +23,9 @@ type Format uint8
 const (
 	JPEG Format = iota + 1
 	JPEGLS
+	// JPEG2000 frames JPEG 2000 Part 1 codestreams (SOC ... EOC), used by
+	// JPEG 2000 and HTJ2K still-image syntaxes.
+	JPEG2000
 )
 
 // Limits bounds metadata, aggregate input and each individual frame before
@@ -72,17 +75,32 @@ type Plan struct {
 	frames        []frameRange
 	inputBytes    uint64
 	maxFrameBytes uint64
+	recovery      RecoveryReport
 }
 
 // View is one encoded frame. Borrowed means Data is a read-only source view;
 // otherwise the caller owns Data. No buffer is recycled on the next Frame call.
+// Padded reports that Data ends with one Item padding byte after the end
+// marker, and PadByte its value; decoders ignore it and re-encapsulation must
+// drop it (TrailingPad).
 type View struct {
 	Data     []byte
 	Borrowed bool
+	Padded   bool
+	PadByte  byte
 }
 
 func (p *Plan) Len() int           { return len(p.frames) }
 func (p *Plan) InputBytes() uint64 { return p.inputBytes }
+
+// FrameLength is the byte length Frame returns for index, without reading
+// it; false for an index outside the plan.
+func (p *Plan) FrameLength(index int) (uint64, bool) {
+	if p == nil || index < 0 || index >= len(p.frames) {
+		return 0, false
+	}
+	return p.frames[index].length, true
+}
 
 // MaxFrameBytes is the largest compressed frame buffer a read can allocate.
 func (p *Plan) MaxFrameBytes() uint64 { return p.maxFrameBytes }
@@ -99,7 +117,7 @@ func New(ctx context.Context, source Source, tables Tables, frames int, format F
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if format != JPEG && format != JPEGLS {
+	if format != JPEG && format != JPEGLS && format != JPEG2000 {
 		return nil, fmt.Errorf("%w: unsupported frame format", ErrLayout)
 	}
 	l, err := limits.normalized()
@@ -157,6 +175,12 @@ func New(ctx context.Context, source Source, tables Tables, frames int, format F
 		frameStarts, err = mapFrameOffsets(tables.Extended, starts)
 	} else if len(tables.Basic) != 0 {
 		frameStarts, err = basicFrameStarts(tables.Basic, starts, frames)
+		if err != nil && errors.Is(err, ErrLayout) && RecoveryFromContext(ctx).IgnoreInconsistentBasicOffsetTable {
+			reason := err.Error()
+			if frameStarts, err = inferFrames(ctx, p, frames, format, l); err == nil {
+				p.recovery = RecoveryReport{BasicOffsetTableIgnored: true, BasicOffsetTableEntries: len(tables.Basic) / 4, Frames: frames, Reason: reason}
+			}
+		}
 	} else if n == frames {
 		frameStarts = make([]int, frames)
 		for i := range frameStarts {
@@ -206,8 +230,8 @@ func New(ctx context.Context, source Source, tables Tables, frames int, format F
 				if err := readExact(ctx, source, start, padding[:], int64(length)); err != nil {
 					return nil, err
 				}
-				if padding[0] != 0 {
-					return nil, fmt.Errorf("%w: nonzero EOT padding", ErrLayout)
+				if !validFramePad(format, padding[0], int(size)) {
+					return nil, fmt.Errorf("%w: invalid EOT padding", ErrLayout)
 				}
 			}
 			size = length
@@ -238,7 +262,7 @@ func (p *Plan) Frame(ctx context.Context, index int) (View, error) {
 				if uint64(len(data)) != p.sizes[f.start] {
 					return View{}, fmt.Errorf("%w: source size changed", ErrSource)
 				}
-				return View{Data: data[:int(f.length):int(f.length)], Borrowed: true}, nil
+				return padded(View{Data: data[:int(f.length):int(f.length)], Borrowed: true}), nil
 			}
 		}
 	}
@@ -258,7 +282,12 @@ func (p *Plan) Frame(ctx context.Context, index int) (View, error) {
 			offset += chunk
 		}
 	}
-	return View{Data: data}, nil
+	return padded(View{Data: data}), nil
+}
+
+func padded(v View) View {
+	v.PadByte, v.Padded = TrailingPad(v.Data)
+	return v
 }
 
 func readExact(ctx context.Context, source Source, index int, data []byte, offset int64) error {

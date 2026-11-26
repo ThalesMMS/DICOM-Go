@@ -1,6 +1,10 @@
 package display
 
-import "math"
+import (
+	"math"
+
+	"github.com/ThalesMMS/dicom-go/internal/gridindex"
+)
 
 // ModalityLUT maps stored pixel values to modality values (e.g. Hounsfield
 // units). Per DICOM PS3.3 C.11.1 the linear Rescale Slope/Intercept and a
@@ -45,24 +49,27 @@ type VOILUT struct {
 	Width    float64
 	Function VOIFunction
 	LUT      *LUT
+	// Explanation is the stored Window Center & Width Explanation or LUT
+	// Explanation, when present (VOIsAt).
+	Explanation string
 }
 
 // VOIByteMapper prepares a VOI transform for repeated modality-to-display
 // mapping. Preparing once avoids rescanning a potentially large LUT for every
 // pixel.
 type VOIByteMapper struct {
-	voi     VOILUT
-	lutMin  float64
-	lutSpan float64
+	voi       VOILUT
+	rangeMin  float64
+	rangeSpan float64
 }
 
-// NewVOIByteMapper prepares voi for efficient per-pixel display mapping.
+// NewVOIByteMapper prepares voi for efficient per-pixel display mapping. A
+// VOI LUT's output range is 0 to 2^n-1, n its bits per entry (PS3.3
+// C.11.2.1.1), and is scaled to the display range as a whole.
 func NewVOIByteMapper(voi VOILUT) VOIByteMapper {
 	mapper := VOIByteMapper{voi: voi}
 	if voi.LUT != nil {
-		lo, hi := voi.LUT.outputRange()
-		mapper.lutMin = float64(lo)
-		mapper.lutSpan = float64(hi) - float64(lo)
+		mapper.rangeSpan = float64(voi.LUT.outputMax())
 	}
 	return mapper
 }
@@ -70,8 +77,10 @@ func NewVOIByteMapper(voi VOILUT) VOIByteMapper {
 // Byte maps one modality value through the configured VOI LUT or window.
 func (m VOIByteMapper) Byte(value float64) uint8 {
 	if m.voi.LUT != nil {
-		raw := m.voi.LUT.Lookup(int(math.Round(value)))
-		return scaleToByte(float64(raw), m.lutMin, m.lutSpan)
+		value = float64(m.voi.LUT.Lookup(gridindex.Nearest(value)))
+	}
+	if m.rangeSpan > 0 {
+		return scaleToByte(value, m.rangeMin, m.rangeSpan)
 	}
 	return m.voi.windowToByte(value)
 }
@@ -126,12 +135,11 @@ func linearWindow(value, center, width float64) uint8 {
 }
 
 func linearWindowUnit(value, center, width float64) float64 {
-	if width <= 1 {
-		if value > center {
-			return 1
-		}
-		return 0
-	}
+	// Window Width is at least 1 (PS3.3 C.11.2.1.2.1); a width of 1 is a
+	// threshold at c-0.5, where both window edges meet, and narrower widths
+	// (which stored windows never use, see validWindowWidth) are treated
+	// as 1.
+	width = math.Max(width, 1)
 	low := center - 0.5 - (width-1)/2
 	high := center - 0.5 + (width-1)/2
 	switch {
@@ -142,6 +150,17 @@ func linearWindowUnit(value, center, width float64) float64 {
 	default:
 		return clampFloat((value-(center-0.5))/(width-1)+0.5, 0, 1)
 	}
+}
+
+// validWindowWidth reports whether a stored Window Width is usable with the
+// VOI function: at least 1 for LINEAR (PS3.3 C.11.2.1.2.1), above 0 for
+// LINEAR_EXACT and SIGMOID (C.11.2.1.3). DCMTK likewise ignores a stored
+// window narrower than 1.
+func validWindowWidth(function VOIFunction, width float64) bool {
+	if function == VOILinear {
+		return width >= 1
+	}
+	return width > 0
 }
 
 // linearExactWindow implements the DICOM "LINEAR_EXACT" VOI function

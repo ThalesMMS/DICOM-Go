@@ -11,7 +11,10 @@ import (
 )
 
 func validateTargetVerificationCodec(source, target transfer.Syntax, options TranscodeOptions) error {
-	if !target.Encapsulated || target.UID == transfer.EncapsulatedUncompressedExplicitVRLittleEndian.UID || source.UID == target.UID && !options.ForceReencode {
+	if options.SkipVerification {
+		return nil
+	}
+	if !target.Encapsulated || target.UID == transfer.EncapsulatedUncompressedExplicitVRLittleEndian.UID || source.UID == target.UID && !options.ForceReencode && !requiresLegacyPixelRepair(options.Recovery) {
 		return nil
 	}
 	if options.EncoderRegistry == nil {
@@ -24,6 +27,30 @@ func validateTargetVerificationCodec(source, target transfer.Syntax, options Tra
 	return CheckCodecAvailability(options.DecoderRegistry, target.UID)
 }
 
+// A repair changes the interpretation of the source. Exact verification must
+// compare the requested normalized source with strict output decoding, rather
+// than compare output with the original malformed interpretation or repair the
+// already normalized output again.
+func verifyLosslessTranscodeWithRepairs(ctx context.Context, source *object.Object, sourceSyntax transfer.Syntax, output *object.Object, outputSyntax transfer.Syntax, options TranscodeOptions, limits TranscodeLimits) error {
+	if requiresLegacyPixelRepair(options.Recovery) {
+		var err error
+		source, sourceSyntax, err = DecompressDataSetContext(ctx, source, sourceSyntax, DecompressOptions{
+			Registry: options.DecoderRegistry, Recovery: options.Recovery,
+			Limits: DecompressLimits{MaxFrames: limits.MaxFrames, MaxPixels: int64(limits.MaxPixels), MaxInputBytes: limits.MaxInputBytes, MaxNativeBytes: limits.MaxOutputBytes, MaxExpansionRatio: limits.MaxExpansionRatio},
+		})
+		if err != nil {
+			return err
+		}
+		if options.Rewrite != nil {
+			source, _, err = RewriteNative(ctx, source, *options.Rewrite)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return verifyLosslessPixelData(ctx, source, sourceSyntax, output, outputSyntax, options.DecoderRegistry, limits)
+}
+
 func verifyLosslessPixelData(ctx context.Context, source *object.Object, sourceSyntax transfer.Syntax, output *object.Object, outputSyntax transfer.Syntax, registry Registry, limits TranscodeLimits) error {
 	sourceElement, sourcePresent := source.Get(core.TagPixelData)
 	outputElement, outputPresent := output.Get(core.TagPixelData)
@@ -33,7 +60,7 @@ func verifyLosslessPixelData(ctx context.Context, source *object.Object, sourceS
 	if !sourcePresent {
 		return nil
 	}
-	if sourceRaw, sourceOK := sourceElement.RawBytes(); sourceOK && !sourceSyntax.Encapsulated && sourceSyntax.IsLittleEndian() == outputSyntax.IsLittleEndian() {
+	if sourceRaw, sourceOK := sourceElement.RawBytes(); sourceOK && !sourceSyntax.Encapsulated && sourceSyntax.IsLittleEndian() == outputSyntax.IsLittleEndian() && equalPlanarLayout(source, output) {
 		if outputRaw, outputOK := outputElement.RawBytes(); outputOK && !outputSyntax.Encapsulated {
 			if !bytes.Equal(sourceRaw, outputRaw) {
 				return fmt.Errorf("%w: lossless Pixel Data changed", ErrIncompatiblePixelData)
@@ -71,6 +98,14 @@ func canonicalNativePixelBytes(ctx context.Context, dataset *object.Object, synt
 	if err != nil {
 		return nil, err
 	}
+	if err := applyNativeOutputPlanar(ctx, native, PlanarOutputInterleaved); err != nil {
+		// Other photometric layouts are compared in their existing canonical
+		// representation; an explicit planar transcode cannot produce these.
+		m, metadataErr := ExtractMetadata(native)
+		if metadataErr != nil || m.SamplesPerPixel == 3 && (m.PhotometricInterpretation == "RGB" || m.PhotometricInterpretation == "YBR_FULL") {
+			return nil, err
+		}
+	}
 	element, ok := native.Get(core.TagPixelData)
 	if !ok {
 		return nil, ErrPixelDataNotFound
@@ -80,6 +115,12 @@ func canonicalNativePixelBytes(ctx context.Context, dataset *object.Object, synt
 		return nil, ErrIncompatiblePixelData
 	}
 	return core.CloneBytes(raw), nil
+}
+
+func equalPlanarLayout(source, output *object.Object) bool {
+	src, serr := ExtractMetadata(source)
+	dst, derr := ExtractMetadata(output)
+	return serr != nil && derr != nil || serr == nil && derr == nil && src.PlanarConfiguration == dst.PlanarConfiguration
 }
 
 func validateTranscodeReadback(dataset *object.Object, syntax transfer.Syntax, limits TranscodeLimits) error {

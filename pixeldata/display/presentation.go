@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	mathbits "math/bits"
 )
 
 var (
@@ -26,8 +27,12 @@ var (
 // GSPS interpretation is an explicit non-goal of this stage (see
 // ErrUnsupportedGSPS).
 type Presentation struct {
-	// LUT maps VOI output values through a Presentation LUT Sequence.
+	// LUT maps VOI output values through a Presentation LUT Sequence, or the
+	// LIN OD shape's table (LinOD).
 	LUT *LUT
+	// LinOD reports Presentation LUT Shape LIN OD (see
+	// PrintDensity.LinODPresentationLUT).
+	LinOD bool
 	// Invert inverts the display value (MONOCHROME1, or Presentation LUT Shape
 	// INVERSE) after VOI mapping.
 	Invert bool
@@ -37,16 +42,32 @@ type Presentation struct {
 	Overlays []Overlay
 }
 
-// Apply runs the presentation stages over an 8-bit grayscale image in place.
+// Apply runs the presentation stages in place within the bounds of an 8-bit
+// grayscale image, including when it shares backing pixels with a larger image.
 func (p Presentation) Apply(img *image.Gray) {
 	if img == nil {
 		return
 	}
-	if p.LUT != nil {
-		applyPresentationLUT(img, p.LUT)
+	bounds := img.Bounds()
+	if bounds.Empty() {
+		return
 	}
-	if p.Invert {
-		invertGray(img)
+	if p.LUT != nil || p.Invert {
+		width := bounds.Dx()
+		for y := 0; y < bounds.Dy(); y++ {
+			start := y * img.Stride
+			row := img.Pix[start : start+width]
+			if p.LUT != nil {
+				for x, pixel := range row {
+					row[x] = p.LUT.entryByte(p.LUT.Lookup(int(pixel)))
+				}
+			}
+			if p.Invert {
+				for x, pixel := range row {
+					row[x] = 255 - pixel
+				}
+			}
+		}
 	}
 	if p.Shutter != nil {
 		p.Shutter.Apply(img)
@@ -58,31 +79,6 @@ func (p Presentation) Apply(img *image.Gray) {
 
 // overlayBurnValue is the grayscale value written where an overlay bit is set.
 const overlayBurnValue = 255
-
-func applyPresentationLUT(img *image.Gray, lut *LUT) {
-	if lut == nil {
-		return
-	}
-	for i := range img.Pix {
-		img.Pix[i] = lutOutputByte(lut, int(img.Pix[i]))
-	}
-}
-
-func lutOutputByte(lut *LUT, value int) uint8 {
-	entry := lut.Lookup(value)
-	if lut.BitsPerEntry == 16 {
-		return uint8(entry >> 8)
-	}
-	return uint8(entry)
-}
-
-// invertGray inverts every pixel of an 8-bit grayscale image (MONOCHROME1 /
-// Presentation LUT Shape INVERSE).
-func invertGray(img *image.Gray) {
-	for i := range img.Pix {
-		img.Pix[i] = 255 - img.Pix[i]
-	}
-}
 
 // Shutter masks the region outside a display shutter (PS3.3 C.7.6.11). When
 // more than one shape is present a pixel is visible only if it lies inside every
@@ -155,10 +151,33 @@ type CircleShutter struct {
 	Radius               int
 }
 
+// inside compares the squared distance with the squared radius exactly in
+// 128 bits, so centers and radii far outside the image (Center of Circular
+// Shutter and Radius are IS values of up to 12 digits) cannot overflow into
+// a wrong answer. A negative Radius acts as its magnitude.
 func (c CircleShutter) inside(row, col int) bool {
-	dr := (row + 1) - c.CenterRow
-	dc := (col + 1) - c.CenterCol
-	return dr*dr+dc*dc <= c.Radius*c.Radius
+	dr := absDiff(row+1, c.CenterRow)
+	dc := absDiff(col+1, c.CenterCol)
+	radius := absDiff(c.Radius, 0)
+	if dr > radius || dc > radius {
+		return false
+	}
+	// dr, dc <= radius <= 2^63, so each square is below 2^127 and the sum
+	// fits in 128 bits.
+	radiusHi, radiusLo := mathbits.Mul64(radius, radius)
+	rowHi, rowLo := mathbits.Mul64(dr, dr)
+	colHi, colLo := mathbits.Mul64(dc, dc)
+	lo, carry := mathbits.Add64(rowLo, colLo, 0)
+	hi, _ := mathbits.Add64(rowHi, colHi, carry)
+	return hi < radiusHi || (hi == radiusHi && lo <= radiusLo)
+}
+
+// absDiff is |a-b| without overflow.
+func absDiff(a, b int) uint64 {
+	if a >= b {
+		return uint64(a) - uint64(b)
+	}
+	return uint64(b) - uint64(a)
 }
 
 // PolygonShutter is a polygonal shutter. Vertices are 1-based (row, column)
@@ -199,13 +218,14 @@ func (p PolygonShutter) inside(row, col int) bool {
 	return in
 }
 
-// BitmapShutter uses a referenced overlay plane as the visible-region mask.
+// BitmapShutter uses a referenced overlay plane whose set bits mask pixels
+// (DICOM PS3.3 C.7.6.15).
 type BitmapShutter struct {
 	Group   uint16
 	Overlay Overlay
 }
 
-func (b BitmapShutter) inside(row, col int) bool {
+func (b BitmapShutter) masks(row, col int) bool {
 	overlayRow := row - (b.Overlay.OriginRow - 1)
 	overlayCol := col - (b.Overlay.OriginCol - 1)
 	if overlayRow < 0 || overlayRow >= b.Overlay.Rows || overlayCol < 0 || overlayCol >= b.Overlay.Columns {
@@ -225,11 +245,15 @@ func (s *Shutter) visible(row, col int) bool {
 	if s.Polygon != nil && !s.Polygon.inside(row, col) {
 		return false
 	}
-	if s.Bitmap != nil && !s.Bitmap.inside(row, col) {
+	if s.Bitmap != nil && s.Bitmap.masks(row, col) {
 		return false
 	}
 	return true
 }
+
+// VisibleSourcePixel evaluates a shutter in the original zero-based image
+// coordinates, independent of any regional texture origin or display reduction.
+func (s *Shutter) VisibleSourcePixel(x, y int) bool { return s == nil || s.visible(y, x) }
 
 // Apply masks every pixel outside the shutter region in place.
 func (s *Shutter) Apply(img *image.Gray) {
@@ -281,43 +305,120 @@ func (s *Shutter) ApplyTo(src image.Image) image.Image {
 // Overlay is a 1-bit DICOM overlay plane (repeating group 0x6000-0x601E,
 // PS3.3 C.9 / PS3.5 8.1.2). Data is bit-packed row-major, least-significant bit
 // first. Origin is the 1-based (row, column) position of the overlay's top-left
-// pixel within the image (Overlay Origin (60xx,0050)).
+// pixel within the image (Overlay Origin (60xx,0050)). Composite and isSet use
+// the first frame; Frame and ForImageFrame select others. Validate checks the
+// attributes against the Overlay Plane module and the length of Data.
 type Overlay struct {
 	Rows, Columns int
 	OriginRow     int
 	OriginCol     int
-	Data          []byte
+	// Data holds Frames planes of Rows*Columns bits, packed back to back.
+	Data []byte
+
+	// Group is the repeating group (0x6000-0x601E) the overlay came from.
+	Group uint16
+	// Type is Overlay Type (60xx,0040): "G" graphics or "R" ROI.
+	Type        string
+	Subtype     string
+	Label       string
+	Description string
+	// Frames is Number of Frames in Overlay (60xx,0015) and FrameOrigin the
+	// 1-based Image Frame Origin (60xx,0051); see ForImageFrame.
+	Frames      int
+	FrameOrigin int
+	// Embedded marks an overlay taken from unused bits of the image samples
+	// at BitPosition (EmbeddedOverlays).
+	Embedded    bool
+	BitPosition int
+	// ROI Area (60xx,1301), Mean (60xx,1302) and Standard Deviation
+	// (60xx,1303), when HasROIStatistics.
+	HasROIStatistics     bool
+	ROIArea              int
+	ROIMean              float64
+	ROIStandardDeviation float64
 }
 
 // isSet reports whether the overlay bit at (row, col) within the overlay plane
-// is set.
+// is set. Bits beyond Data read as unset.
 func (o Overlay) isSet(row, col int) bool {
-	idx := row*o.Columns + col
-	byteIdx := idx / 8
-	if byteIdx < 0 || byteIdx >= len(o.Data) {
+	if row < 0 || col < 0 || col >= o.Columns || row >= o.dataRows() {
 		return false
 	}
-	return o.Data[byteIdx]&(1<<uint(idx%8)) != 0
+	// row < dataRows keeps the product within the data's bit count.
+	idx := int64(row)*int64(o.Columns) + int64(col)
+	if idx>>3 >= int64(len(o.Data)) {
+		return false
+	}
+	return o.Data[idx>>3]&(1<<uint(idx&7)) != 0
 }
 
-// Composite burns the overlay onto img, writing value at every set overlay bit
-// that falls within the image bounds.
+// dataRows returns how many rows of the first plane Data reaches, counting a
+// partly covered last row, capped at Rows.
+func (o Overlay) dataRows() int {
+	if o.Rows <= 0 || o.Columns <= 0 {
+		return 0
+	}
+	columns := uint64(o.Columns)
+	rows := (uint64(len(o.Data))*8 + columns - 1) / columns
+	if rows < uint64(o.Rows) {
+		return int(rows)
+	}
+	return o.Rows
+}
+
+// overlaySpan returns the overlay indexes [lo, hi) along one axis that land
+// inside an image axis of size pixels, when overlay index 0 sits at the
+// 1-based image position origin. It never overflows, whatever the inputs.
+func overlaySpan(origin, extent, size int) (lo, hi int) {
+	if extent <= 0 || size <= 0 || origin > size {
+		return 0, 0
+	}
+	if origin >= 1 {
+		return 0, min(extent, size-(origin-1))
+	}
+	// The first 1-origin overlay indexes lie before the image.
+	if origin <= 1-extent {
+		return 0, 0
+	}
+	lo = 1 - origin
+	if size >= extent-lo {
+		return lo, extent
+	}
+	return lo, lo + size
+}
+
+// Composite burns the first overlay plane onto img, writing value at every set
+// overlay bit that falls within the image bounds. Only the part of the plane
+// that overlaps both the image (after Overlay Origin) and Data is visited, so
+// the work is bounded by the image size whatever Rows and Columns declare;
+// bits beyond Data read as unset.
 func (o Overlay) Composite(img *image.Gray, value uint8) {
-	if img == nil || o.Rows <= 0 || o.Columns <= 0 {
+	if img == nil {
 		return
 	}
 	bounds := img.Bounds()
-	for r := 0; r < o.Rows; r++ {
-		for c := 0; c < o.Columns; c++ {
-			if !o.isSet(r, c) {
-				continue
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 || img.Stride < width || len(img.Pix) < (height-1)*img.Stride+width {
+		return
+	}
+	rowLo, rowHi := overlaySpan(o.OriginRow, o.dataRows(), height)
+	colLo, colHi := overlaySpan(o.OriginCol, o.Columns, width)
+	if rowLo >= rowHi || colLo >= colHi {
+		return
+	}
+	// Within the spans, origin-1+index is an image coordinate in range.
+	dataBits := int64(len(o.Data)) * 8
+	for r := rowLo; r < rowHi; r++ {
+		pix := img.Pix[(o.OriginRow-1+r)*img.Stride:]
+		rowBit := int64(r) * int64(o.Columns)
+		for c := colLo; c < colHi; c++ {
+			idx := rowBit + int64(c)
+			if idx >= dataBits {
+				break
 			}
-			imgRow := (o.OriginRow - 1) + r
-			imgCol := (o.OriginCol - 1) + c
-			if imgRow < 0 || imgRow >= bounds.Dy() || imgCol < 0 || imgCol >= bounds.Dx() {
-				continue
+			if o.Data[idx>>3]&(1<<uint(idx&7)) != 0 {
+				pix[o.OriginCol-1+c] = value
 			}
-			img.Pix[imgRow*img.Stride+imgCol] = value
 		}
 	}
 }

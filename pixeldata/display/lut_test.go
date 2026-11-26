@@ -68,13 +68,14 @@ func TestLUTLookupClamps(t *testing.T) {
 	}
 }
 
-func TestLUTOutputRange(t *testing.T) {
-	lut, err := NewLUT([]int{4, 0, 16}, []uint16{50, 10, 4000, 200})
-	if err != nil {
-		t.Fatal(err)
-	}
-	lo, hi := lut.outputRange()
-	if lo != 10 || hi != 4000 {
-		t.Fatalf("outputRange() = (%d, %d), want (10, 4000)", lo, hi)
+func TestLUTOutputMax(t *testing.T) {
+	for _, tc := range []struct {
+		bits int
+		want uint16
+	}{{8, 255}, {10, 1023}, {12, 4095}, {16, 65535}, {0, 65535}} {
+		lut := &LUT{BitsPerEntry: tc.bits}
+		if got := lut.outputMax(); got != tc.want {
+			t.Fatalf("outputMax() for %d bits = %d, want %d", tc.bits, got, tc.want)
+		}
 	}
 }

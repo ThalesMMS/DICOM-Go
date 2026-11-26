@@ -27,6 +27,22 @@ func TestExtractMetadataAcceptsTypedUSWithoutSerialization(t *testing.T) {
 	}
 }
 
+func TestExtractMetadataTrimsPhotometricPadding(t *testing.T) {
+	for _, value := range []string{"MONOCHROME2\x00", " MONOCHROME2 ", "MONOCHROME2"} {
+		obj := object.FromElements(pixelMetadataElements(2, 2, 1, 8, 8, 7, 0, nil), nil)
+		obj.Put(core.Element{Header: core.ElementHeader{Tag: tagPhotometricInterpretation, VR: core.VRCS}, Value: core.StringValue{value}})
+		metadata, err := ExtractMetadata(obj)
+		if err != nil || metadata.PhotometricInterpretation != "MONOCHROME2" {
+			t.Fatalf("%q: %q %v", value, metadata.PhotometricInterpretation, err)
+		}
+	}
+	obj := object.FromElements(pixelMetadataElements(2, 2, 1, 8, 8, 7, 0, nil), nil)
+	obj.Put(core.Element{Header: core.ElementHeader{Tag: tagPhotometricInterpretation, VR: core.VRCS}, Value: core.StringValue{"\x00 "}})
+	if _, err := ExtractMetadata(obj); err == nil {
+		t.Fatal("padding alone accepted as a Photometric Interpretation")
+	}
+}
+
 func TestPixelMetadataUSRejectsInvalidVRAndMultiplicity(t *testing.T) {
 	for _, tc := range []struct {
 		vr    core.VR

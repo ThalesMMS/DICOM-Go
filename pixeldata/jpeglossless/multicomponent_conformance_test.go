@@ -90,7 +90,7 @@ func TestJPEGLosslessMulticomponentRejectsInvalidDICOMMetadata(t *testing.T) {
 	}{
 		{name: "planar color", samples: 3, photometric: "RGB", planar: 1, bitsStored: 8},
 		{name: "signed color", samples: 3, photometric: "RGB", pixelRep: 1, bitsStored: 8},
-		{name: "subsampled photometric", samples: 3, photometric: "YBR_FULL_422", bitsStored: 8},
+		{name: "lossy-only photometric", samples: 3, photometric: "YBR_PARTIAL_420", bitsStored: 8},
 		{name: "metadata component mismatch", samples: 1, photometric: "MONOCHROME2", bitsStored: 8},
 		{name: "metadata precision mismatch", samples: 3, photometric: "RGB", bitsStored: 7},
 	}

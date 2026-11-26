@@ -123,10 +123,21 @@ func TestNearLosslessRejectsInvalidProfilesAndParameters(t *testing.T) {
 		if bits == 8 {
 			allocated = 8
 		}
+		// Signed data decodes to the same stored codes as unsigned: the
+		// codestream holds the unsigned codes and Pixel Representation only
+		// interprets them afterwards.
 		m := encoderMetadata(33, 129, 1, allocated, "MONOCHROME2")
-		m.BitsStored, m.HighBit, m.PixelRepresentation = bits, bits-1, 1
-		obj, pixel := jpeglsObjectWithFragment(t, m, nearFixture(t, fmt.Sprintf("near-1-1c-%d-129x33-ilv0", bits)))
-		if _, err := NewNearLossless().Decode(pixel, obj); !errors.Is(err, pixeldata.ErrUnsupportedPixelRepresentation) {
+		m.BitsStored, m.HighBit = bits, bits-1
+		stream := nearFixture(t, fmt.Sprintf("near-1-1c-%d-129x33-ilv0", bits))
+		obj, pixel := jpeglsObjectWithFragment(t, m, stream)
+		unsigned, err := NewNearLossless().Decode(pixel, obj)
+		if err != nil {
+			t.Fatalf("unsigned %d: %v", bits, err)
+		}
+		m.PixelRepresentation = 1
+		obj, pixel = jpeglsObjectWithFragment(t, m, stream)
+		signed, err := NewNearLossless().Decode(pixel, obj)
+		if err != nil || !bytes.Equal(signed.Data[0], unsigned.Data[0]) {
 			t.Fatalf("signed %d: %v", bits, err)
 		}
 	}

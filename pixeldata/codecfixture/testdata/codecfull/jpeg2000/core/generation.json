@@ -1,0 +1,320 @@
+{
+  "openjpeg": "2.5.4",
+  "opj_compress_sha256": "10b00874ba6a01a925a3423025dd812d10f10f9cac2726e54cabc439b2332008",
+  "opj_decompress_sha256": "5bbfb594764d789d4b8c19e88dca42015739bc500ae9987c9a711acfd212109c",
+  "fixtures": [
+    {
+      "id": "jpeg2000-core-u8-odd-layers",
+      "rows": 23,
+      "columns": 37,
+      "components": 1,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-r",
+        "20,10,1",
+        "-n",
+        "3"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u12-tiles",
+      "rows": 47,
+      "columns": 61,
+      "components": 1,
+      "bits": 12,
+      "signed": false,
+      "args": [
+        "-t",
+        "16,16",
+        "-n",
+        "3"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u16-extremes-rlcp",
+      "rows": 33,
+      "columns": 64,
+      "components": 1,
+      "bits": 16,
+      "signed": false,
+      "args": [
+        "-p",
+        "RLCP"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "extremes"
+    },
+    {
+      "id": "jpeg2000-core-u16-high-values",
+      "rows": 48,
+      "columns": 48,
+      "components": 1,
+      "bits": 16,
+      "signed": false,
+      "args": null,
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "high"
+    },
+    {
+      "id": "jpeg2000-core-s16-extremes",
+      "rows": 40,
+      "columns": 40,
+      "components": 1,
+      "bits": 16,
+      "signed": true,
+      "args": null,
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "extremes"
+    },
+    {
+      "id": "jpeg2000-core-s12",
+      "rows": 31,
+      "columns": 33,
+      "components": 1,
+      "bits": 12,
+      "signed": true,
+      "args": [
+        "-n",
+        "4"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-rgb8-rct",
+      "rows": 31,
+      "columns": 29,
+      "components": 3,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-mct",
+        "1",
+        "-n",
+        "4"
+      ],
+      "lossy": false,
+      "photometric": "YBR_RCT",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-rgb8-no-mct",
+      "rows": 31,
+      "columns": 29,
+      "components": 3,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-mct",
+        "0",
+        "-n",
+        "4"
+      ],
+      "lossy": false,
+      "photometric": "RGB",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u8-irreversible",
+      "rows": 64,
+      "columns": 64,
+      "components": 1,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-I",
+        "-r",
+        "8"
+      ],
+      "lossy": true,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u16-irreversible",
+      "rows": 48,
+      "columns": 40,
+      "components": 1,
+      "bits": 16,
+      "signed": false,
+      "args": [
+        "-I",
+        "-r",
+        "4"
+      ],
+      "lossy": true,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-rgb8-ict",
+      "rows": 40,
+      "columns": 48,
+      "components": 3,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-I",
+        "-mct",
+        "1",
+        "-r",
+        "6"
+      ],
+      "lossy": true,
+      "photometric": "YBR_ICT",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-rgb8-rpcl-precincts",
+      "rows": 47,
+      "columns": 61,
+      "components": 3,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-p",
+        "RPCL",
+        "-c",
+        "[32,32],[16,16]",
+        "-n",
+        "4",
+        "-r",
+        "30,10,1",
+        "-t",
+        "32,24"
+      ],
+      "lossy": false,
+      "photometric": "YBR_RCT",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u12-pcrl-offsets",
+      "rows": 53,
+      "columns": 71,
+      "components": 1,
+      "bits": 12,
+      "signed": false,
+      "args": [
+        "-p",
+        "PCRL",
+        "-c",
+        "[16,32],[16,16],[8,8]",
+        "-n",
+        "3",
+        "-d",
+        "5,3",
+        "-T",
+        "2,1",
+        "-t",
+        "40,40"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-rgb8-cprl",
+      "rows": 50,
+      "columns": 43,
+      "components": 3,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-p",
+        "CPRL",
+        "-c",
+        "[32,32],[16,16]",
+        "-n",
+        "4",
+        "-r",
+        "20,5,1"
+      ],
+      "lossy": false,
+      "photometric": "YBR_RCT",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u16-block-styles",
+      "rows": 45,
+      "columns": 52,
+      "components": 1,
+      "bits": 16,
+      "signed": false,
+      "args": [
+        "-M",
+        "63",
+        "-r",
+        "20,4,1",
+        "-c",
+        "[32,32],[16,16]"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-s12-bypass-termall",
+      "rows": 40,
+      "columns": 37,
+      "components": 1,
+      "bits": 12,
+      "signed": true,
+      "args": [
+        "-M",
+        "5",
+        "-r",
+        "30,10,1",
+        "-n",
+        "4"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u8-vsc-reset-irreversible",
+      "rows": 48,
+      "columns": 48,
+      "components": 1,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-I",
+        "-M",
+        "10",
+        "-r",
+        "6"
+      ],
+      "lossy": true,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    },
+    {
+      "id": "jpeg2000-core-u8-subsampled",
+      "rows": 23,
+      "columns": 37,
+      "components": 1,
+      "bits": 8,
+      "signed": false,
+      "args": [
+        "-s",
+        "2,2"
+      ],
+      "lossy": false,
+      "photometric": "MONOCHROME2",
+      "pattern": "ramp"
+    }
+  ],
+  "deterministic": true
+}

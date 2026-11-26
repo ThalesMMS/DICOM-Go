@@ -1,7 +1,6 @@
 package pixeldata
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -10,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/internal/decoderecovery"
+	"github.com/ThalesMMS/dicom-go/internal/valueencode"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
@@ -47,6 +48,200 @@ type DecompressOptions struct {
 	TargetTransferSyntax transfer.Syntax
 	// Limits bounds work and allocations. Zero-valued fields use finite defaults.
 	Limits DecompressLimits
+	// Recovery enables opt-in tolerances for malformed encoded pixel data.
+	// The zero value is strict.
+	Recovery DecodeRecovery
+	// Report, when non-nil, receives the codec diagnostics of the decode,
+	// including every recovery that was applied.
+	Report *DecompressReport
+	// JPEGColorConversion selects the color policy of lossy JPEG decoding;
+	// the zero value is JPEGColorGuess. The decompressed data set carries the
+	// Photometric Interpretation of the decoded samples.
+	JPEGColorConversion JPEGColorConversion
+}
+
+// DecodeRecovery lists opt-in decode tolerances. Each applied recovery is
+// reported as a diagnostic code; none is ever applied silently.
+type DecodeRecovery struct {
+	// NativePlanarLayout overrides the declared layout of native unsigned
+	// 8/16-bit color samples. Their byte count cannot identify their layout;
+	// select this only for a producer whose actual layout is known.
+	NativePlanarLayout NativePlanarRecovery
+	// NativeOWByteSwap reverses each pair of bytes in native OW Pixel Data
+	// with 8/16 allocated bits. This producer-specific repair is not detectable
+	// and also reverses conforming input if enabled for it.
+	NativeOWByteSwap bool
+	// RLEReversedByteSegments reads each component's RLE byte segments least
+	// significant first, rather than the standard most significant first.
+	// Channel order is unchanged. Applies only above 8 allocated bits and
+	// cannot be distinguished from conforming samples in the encoded stream.
+	RLEReversedByteSegments bool
+	// WrongPaletteAttributeTags accepts a complete unambiguous legacy palette
+	// at (0028,1111-1113)/(0028,1211-1213) and replaces its tags with the
+	// standard (0028,1101-1103)/(0028,1201-1203). Mixed/conflicting sets fail.
+	WrongPaletteAttributeTags bool
+	// ConvertRetiredColorModels normalizes unsigned full-precision native
+	// ARGB/CMYK/HSV8/16 to interleaved RGB. ARGB uses the existing palette
+	// override semantics (alpha is an index, not opacity); CMYK uses additive
+	// ink subtraction and HSV maps binary hue bins [0,2^precision) to one
+	// turn, truncating the resulting RGB channels to stored integers.
+	// These explicit legacy conventions are not ICC color management.
+	ConvertRetiredColorModels bool
+	// IncompleteData explicitly normalizes only complete frames from a source
+	// read with object.ReadFileOptions.AllowIncompletePixelData. It never fills
+	// missing pixels and is not enabled by DetectableDecodeRecovery.
+	IncompleteData bool
+	// IgnoreInconsistentBasicOffsetTable replaces a Basic Offset Table that
+	// contradicts Number of Frames or the Item layout with the bounded
+	// marker scan (JPEG, JPEG-LS and JPEG 2000 codestreams). Exactly Number
+	// of Frames codestreams must be found.
+	IgnoreInconsistentBasicOffsetTable bool
+	// DefaultImagePixelModule assumes Samples per Pixel 1 and Photometric
+	// Interpretation MONOCHROME2 when they are absent, as GDCM does for
+	// ACR-NEMA objects, provided the rest of the Image Pixel Module is present
+	// and native Pixel Data holds one sample per pixel and cannot hold three.
+	// A three-dimensional ACR-NEMA image without Number of Frames takes it
+	// from Planes (0028,0012). The decompressed data set carries the values
+	// explicitly. Native legacy images with Recognition Code
+	// ACRNEMA_LIBIDO_1.0/1.1 also recover their reversed Rows/Columns and,
+	// for the exact unsigned 24-bit layout, interleaved RGB8 metadata. The
+	// consumed Recognition Code is removed and each repair is diagnosed.
+	DefaultImagePixelModule bool
+	// RepairPhotometricInterpretation normalizes native Image Pixel metadata
+	// from known Photometric Interpretation/sample-count contracts. Missing or
+	// unrecognized photometrics assume MONOCHROME2, RGB or retired ARGB from
+	// declared Samples per Pixel 1, 3 or 4. The caller must know the producer
+	// stores that layout: byte counts cannot distinguish RGB from YBR/HSV or
+	// ARGB from CMYK. Known photometrics may correct absent/inconsistent sample
+	// counts only when native byte size agrees exactly (plus a zero pad).
+	// Invalid monochrome Planar Configuration 1 is ignored; inferred ARGB also
+	// assumes interleaved data, while explicit valid planar ARGB is preserved.
+	// Every changed attribute is diagnosed. Compressed input and ambiguous or
+	// malformed metadata are refused. Strict and legacy defaults are unchanged.
+	RepairPhotometricInterpretation bool
+	// Unpack12BitPacked reads native Pixel Data with Bits Allocated 12,
+	// which PS3.5 8.1.1 does not allow, as 16 bits allocated, as GDCM does.
+	// A value of exactly 3 bytes per 2 samples (one trailing pad byte
+	// allowed) is unpacked: the first sample is the first byte plus the low
+	// nibble of the second as its high 4 bits, the next is the high nibble of
+	// the second byte plus the third byte as its high 8 bits (ACR-NEMA
+	// packing), reported as DiagnosticUnpacked12Bit. A value of exactly 2
+	// bytes per sample already holds 16-bit words and only Bits Allocated
+	// changes, reported as DiagnosticBitsAllocated12As16. Bits Stored and
+	// High Bit are kept. Any other length is refused with
+	// ErrPixelDataSizeMismatch.
+	Unpack12BitPacked bool
+	// JPEGLosslessEncoderQuirks retries a JPEG Lossless frame that fails
+	// strict decoding while accepting known encoder quirks: a nonzero
+	// spectral selection end (Se) in SOS, entropy fill bits that are not all
+	// ones, and then 16 extra bits after a difference of category 16, which
+	// T.81 H.1.2.2 defines without additional bits (the Cornell encoder bug;
+	// the bits are read as an ordinary 16-bit extension, as dcmdjpeg +wc
+	// does). Only the quirks the frame needs are applied, each one reported.
+	JPEGLosslessEncoderQuirks bool
+	// JPEGLosslessPredictor6Overflow decodes predictor 6 as encoders that
+	// overflowed 16-bit integers computed it: Ra and Rc are taken as signed
+	// 16-bit values in Rb + ((Ra - Rc) >> 1), as dcmdjpeg +w6 does. It only
+	// changes 16-bit scans, cannot be detected from the stream and misdecodes
+	// conforming predictor 6 images, so enable it only for sources known to
+	// be affected. Frames it changed report
+	// DiagnosticJPEGLosslessPredictor6Overflow.
+	JPEGLosslessPredictor6Overflow bool
+	// JPEGSequentialScanQuirks accepts lossy sequential DCT scans whose
+	// spectral selection or successive approximation fields are not 0, 63,
+	// 0, 0 (T.81 B.2.3), as libjpeg does with a warning; the fields are
+	// ignored and DiagnosticJPEGScanParametersIgnored is reported.
+	JPEGSequentialScanQuirks bool
+	// JPEGLSJAIThresholds decodes JPEG-LS frames of more than 12 bits that
+	// do not set their thresholds in an LSE segment with the thresholds the
+	// JAI ImageIO encoder (and dcm4che versions using it) wrote them with:
+	// the T.87 C.2.4.1.1.1 defaults without the min(MAXVAL, 4095) of FACTOR
+	// (13 bits: T1 34, T2 131, T3 548 instead of 18, 67, 276), as the LSE
+	// segment GDCM FixJAIBugJPEGLS and dcm4che insert. Under the standard
+	// thresholds such frames fail or, worse, decode to wrong samples, and
+	// conforming frames decode wrongly under these, so the bug cannot be
+	// detected: enable it only for sources known to be affected.
+	// Frames it applies to report DiagnosticJPEGLSJAIThresholds.
+	JPEGLSJAIThresholds bool
+	// JPEGLSHPColorTransforms accepts the nonstandard APP8 mrfx HP1/HP2/HP3
+	// color transforms only for qualified lossless unsigned RGB8/RGB16,
+	// full-range precision and ILV=1/2. Strict decoding remains the default.
+	// Each applied transform and the implementation used are reported as
+	// DiagnosticJPEGLSHP1/HP2/HP3 and DiagnosticJPEGLSHPBackendPureGo/CharLS.
+	JPEGLSHPColorTransforms bool
+	// RLESegmentOverrun decodes RLE segments whose runs overrun the segment
+	// or the frame: a literal run cut by the segment end keeps the bytes
+	// present, runs past the frame are clipped and short segments are
+	// zero-filled, as GDCM does (reported as DiagnosticRLESegmentOverrun).
+	RLESegmentOverrun bool
+	// ReconcileWithCodestream replaces Rows, Columns, Samples per Pixel,
+	// Photometric Interpretation, Planar Configuration, Bits Allocated, Bits
+	// Stored and High Bit that are absent or disagree with the header of the
+	// first codestream: the frame header of JPEG Baseline, Extended and
+	// Lossless, and the SIZ marker segment of JPEG 2000 (Part 1, Part 2 and
+	// HTJ2K), whose component sign also decides Pixel Representation, as GDCM
+	// does. DecompressReport.Reconciliations lists every replacement, and the
+	// decompressed data set carries the codestream values.
+	ReconcileWithCodestream bool
+	// UnwrapJP2Container decodes the codestream of JPEG 2000 Pixel Data that
+	// holds JP2 files (PS3.5 A.4.4 requires the bare codestream): a single
+	// frame whose fragments form one JP2 file, or one JP2 file per frame.
+	// DiagnosticJP2ContainerUnwrapped reports it.
+	UnwrapJP2Container bool
+	// NativePixelDataUnderEncapsulated reads Pixel Data that is a
+	// defined-length value of exactly the native size (Rows x Columns x
+	// Samples x Bits Allocated x Frames) as native pixels although the
+	// transfer syntax declares a compressed, encapsulated one, as GDCM does;
+	// DiagnosticNativePixelDataUnderEncapsulated reports it. The decompressed
+	// data set carries the native target syntax.
+	NativePixelDataUnderEncapsulated bool
+	// DefinedLengthFragments reads Pixel Data that an encapsulated transfer
+	// syntax requires with an undefined length but that was written with a
+	// defined one, holding the Items themselves: when the value is exactly a
+	// Basic Offset Table Item and at least one fragment Item (each with a
+	// defined length inside the value), optionally ended by a Sequence
+	// Delimitation Item, the Items are read as the fragment sequence, as
+	// GDCM does; DiagnosticDefinedLengthFragments reports it. Values with
+	// bytes left over, truncated Items or more than 100000 Items are not
+	// changed.
+	DefinedLengthFragments bool
+	// RepairBitCountMasks replaces Bits Allocated and Bits Stored written as
+	// a bit mask (2^n-1 above 16, such as 0xFFFF for 16) by the count n, and
+	// a High Bit written as 2^n-2 (0xFFFE) by n-1, as some FUJIFILM CR
+	// devices write them and GDCM repairs them; only when the counts agree
+	// with each other and with the size of native Pixel Data. Reported as
+	// DiagnosticBitCountMasks with one DecompressReport.Reconciliations entry
+	// per replaced attribute. Under the same conditions it replaces a High
+	// Bit of 0 with Bits Stored above 1, which places no Bits Stored field in
+	// the container, by Bits Stored minus one, as the MFSPLIT export of a
+	// Siemens MAGNETOM Skyra writes it and GDCM repairs it; reported as
+	// DiagnosticHighBitZero with a HighBit reconciliation.
+	RepairBitCountMasks bool
+}
+
+// DecompressReport receives value-free decode diagnostics.
+type DecompressReport struct {
+	// Incomplete is set only after successful complete-prefix normalization.
+	Incomplete  *IncompleteFrameRecovery
+	Diagnostics []string
+	// Reconciliations lists the attributes DecodeRecovery.ReconcileWithCodestream
+	// replaced.
+	Reconciliations []MetadataReconciliation
+}
+
+// DecodeContextWithRecovery returns ctx carrying r for codecs that frame
+// encapsulated Pixel Data (see pixeldata/encapsulated.WithRecovery).
+func DecodeContextWithRecovery(ctx context.Context, r DecodeRecovery) context.Context {
+	return decoderecovery.With(ctx, decoderecovery.Options{
+		IgnoreInconsistentBasicOffsetTable: r.IgnoreInconsistentBasicOffsetTable,
+		JPEGLosslessEncoderQuirks:          r.JPEGLosslessEncoderQuirks,
+		JPEGLosslessPredictor6Overflow:     r.JPEGLosslessPredictor6Overflow,
+		RLESegmentOverrun:                  r.RLESegmentOverrun,
+		RLEReversedByteSegments:            r.RLEReversedByteSegments,
+		JPEGSequentialScanQuirks:           r.JPEGSequentialScanQuirks,
+		JPEGLSJAIThresholds:                r.JPEGLSJAIThresholds,
+		JPEGLSHPColorTransforms:            r.JPEGLSHPColorTransforms,
+	})
 }
 
 // DecompressLimits bounds still-image decompression. Zero-valued fields use
@@ -125,6 +320,12 @@ func DecompressFileContext(ctx context.Context, file *object.File, opts Decompre
 	if file == nil {
 		return nil, fmt.Errorf("%w: file is nil", ErrMissingMetadata)
 	}
+	if partial, present := file.PartialRead(); present {
+		info, certified := file.IncompletePixelData()
+		if !opts.Recovery.IncompleteData || !certified || partial.Tag != core.TagPixelData || partial.Offset != info.FailureOffset || !errors.Is(partial.Err, object.ErrIncompletePixelData) {
+			return nil, object.ErrPartialFile
+		}
+	}
 	source, err := sourceTransferSyntax(file)
 	if err != nil {
 		return nil, err
@@ -159,6 +360,10 @@ func DecompressDataSetContext(ctx context.Context, dataset *object.Object, sourc
 	if dataset == nil {
 		return nil, transfer.Syntax{}, fmt.Errorf("%w: dataset is nil", ErrMissingMetadata)
 	}
+	info, incomplete := dataset.IncompletePixelData()
+	if incomplete && (!opts.Recovery.IncompleteData || incompatibleIncompleteRecovery(opts.Recovery)) {
+		return nil, transfer.Syntax{}, object.ErrPartialFile
+	}
 	limits, err := normalizedDecompressLimits(opts.Limits)
 	if err != nil {
 		return nil, transfer.Syntax{}, err
@@ -175,63 +380,127 @@ func DecompressDataSetContext(ctx context.Context, dataset *object.Object, sourc
 		return nil, transfer.Syntax{}, err
 	}
 
+	var defaulted []string
+	var reconciled []MetadataReconciliation
+	if opts.Recovery.RepairBitCountMasks {
+		var masks []MetadataReconciliation
+		var repairs []string
+		dataset, masks, repairs = withBitCountMaskRepair(dataset, source)
+		defaulted = append(defaulted, repairs...)
+		reconciled = append(reconciled, masks...)
+	}
+	if opts.Recovery.DefinedLengthFragments {
+		var split bool
+		if dataset, split = definedLengthFragments(dataset, source); split {
+			defaulted = append(defaulted, DiagnosticDefinedLengthFragments)
+		}
+	}
+	dataset, legacy, err := withLegacyImageRecovery(dataset, source, opts.Recovery)
+	if err != nil {
+		return nil, transfer.Syntax{}, err
+	}
+	defaulted = append(defaulted, legacy...)
+	if opts.Recovery.RepairPhotometricInterpretation {
+		var repairs []string
+		dataset, repairs, err = withPhotometricRecovery(dataset, source, limits)
+		if err != nil {
+			return nil, transfer.Syntax{}, err
+		}
+		defaulted = append(defaulted, repairs...)
+	}
+	if opts.Recovery.UnwrapJP2Container {
+		var unwrapped bool
+		if dataset, unwrapped = unwrapJP2(dataset, source); unwrapped {
+			defaulted = append(defaulted, DiagnosticJP2ContainerUnwrapped)
+		}
+	}
+	if opts.Recovery.NativePixelDataUnderEncapsulated {
+		var native bool
+		if source, native = nativeUnderEncapsulated(dataset, source); native {
+			defaulted = append(defaulted, DiagnosticNativePixelDataUnderEncapsulated)
+		}
+	}
+	if opts.Recovery.ReconcileWithCodestream {
+		var fromCodestream []MetadataReconciliation
+		dataset, fromCodestream = reconcileWithCodestream(dataset, source)
+		reconciled = append(reconciled, fromCodestream...)
+		if len(fromCodestream) > 0 {
+			defaulted = append(defaulted, DiagnosticReconciledWithCodestream)
+		}
+	}
 	pixel, err := ExtractView(dataset)
 	if err != nil {
 		return nil, transfer.Syntax{}, err
 	}
+	lossy := DetectDataSetLossyState(dataset, source)
 	inputBytes, ok := decompressionInputBytes(pixel)
 	if !ok {
 		return nil, transfer.Syntax{}, decompressLimitError("MaxInputBytes", math.MaxInt64, limits.MaxInputBytes)
 	}
-	if inputBytes > limits.MaxInputBytes {
-		return nil, transfer.Syntax{}, decompressLimitError("MaxInputBytes", inputBytes, limits.MaxInputBytes)
-	}
 	metadata, err := ExtractMetadata(dataset)
+	if err != nil {
+		if inputBytes > limits.MaxInputBytes {
+			return nil, transfer.Syntax{}, decompressLimitError("MaxInputBytes", inputBytes, limits.MaxInputBytes)
+		}
+		return nil, transfer.Syntax{}, err
+	}
+	if err := checkDecodeAdmission(limits, metadata, source, inputBytes); err != nil {
+		return nil, transfer.Syntax{}, err
+	}
+	var pixelRepairs []string
+	dataset, metadata, pixelRepairs, err = withLegacyPixelRepairs(ctx, dataset, source, metadata, opts.Recovery)
 	if err != nil {
 		return nil, transfer.Syntax{}, err
 	}
-	if metadata.Rows == 0 || metadata.Columns == 0 || metadata.SamplesPerPixel == 0 || metadata.BitsAllocated == 0 || metadata.NumberOfFrames <= 0 {
-		return nil, transfer.Syntax{}, fmt.Errorf(
-			"%w: rows=%d columns=%d samples_per_pixel=%d bits_allocated=%d number_of_frames=%d",
-			ErrInvalidMetadata,
-			metadata.Rows,
-			metadata.Columns,
-			metadata.SamplesPerPixel,
-			metadata.BitsAllocated,
-			metadata.NumberOfFrames,
-		)
-	}
-	if metadata.NumberOfFrames > limits.MaxFrames {
-		return nil, transfer.Syntax{}, decompressLimitError("MaxFrames", int64(metadata.NumberOfFrames), int64(limits.MaxFrames))
-	}
-	pixels, ok := checkedDecompressProduct(int64(metadata.Rows), int64(metadata.Columns), int64(metadata.NumberOfFrames))
-	if !ok {
-		return nil, transfer.Syntax{}, decompressLimitError("MaxPixels", math.MaxInt64, limits.MaxPixels)
-	}
-	if pixels > limits.MaxPixels {
-		return nil, transfer.Syntax{}, decompressLimitError("MaxPixels", pixels, limits.MaxPixels)
-	}
-	nativeBytes, ok := estimatedDecompressNativeBytes(metadata, source)
-	if !ok {
-		return nil, transfer.Syntax{}, decompressLimitError("MaxNativeBytes", math.MaxInt64, limits.MaxNativeBytes)
-	}
-	if nativeBytes > limits.MaxNativeBytes {
-		return nil, transfer.Syntax{}, decompressLimitError("MaxNativeBytes", nativeBytes, limits.MaxNativeBytes)
-	}
-	if source.Encapsulated && source.UID != transfer.EncapsulatedUncompressedExplicitVRLittleEndian.UID {
-		ratio := decompressionExpansionRatio(nativeBytes, inputBytes)
-		if ratio > limits.MaxExpansionRatio {
-			return nil, transfer.Syntax{}, decompressLimitError("MaxExpansionRatio", ratio, limits.MaxExpansionRatio)
+	defaulted = append(defaulted, pixelRepairs...)
+	if requiresLegacyPixelRepair(opts.Recovery) {
+		pixel, err = ExtractView(dataset)
+		if err != nil {
+			return nil, transfer.Syntax{}, err
 		}
+	}
+	var incompleteReport *IncompleteFrameRecovery
+	if incomplete {
+		dataset, incompleteReport, err = normalizeIncompletePixelData(ctx, dataset, source, pixel, metadata, info, limits)
+		if err != nil {
+			return nil, transfer.Syntax{}, err
+		}
+		metadata, err = ExtractMetadata(dataset)
+		if err != nil {
+			return nil, transfer.Syntax{}, err
+		}
+		pixel, err = ExtractView(dataset)
+		if err != nil {
+			return nil, transfer.Syntax{}, err
+		}
+		defaulted = append(defaulted, DiagnosticIncompletePixelData)
+	}
+	if opts.Recovery != (DecodeRecovery{}) {
+		ctx = DecodeContextWithRecovery(ctx, opts.Recovery)
+	}
+	if opts.JPEGColorConversion != JPEGColorGuess {
+		ctx = WithJPEGColorConversion(ctx, opts.JPEGColorConversion)
 	}
 	frames, err := decodeForDecompressionContext(ctx, source, pixel, dataset, opts.Registry)
 	if err != nil {
 		return nil, transfer.Syntax{}, err
 	}
+	diagnostics := frames.Diagnostics
+	lossy = withDecodedLossy(lossy, frames)
 	outputMetadata := decompressedOutputMetadata(metadata, source, frames)
 	frames, err = littleEndianOutputFramesContext(ctx, outputMetadata, source, frames)
 	if err != nil {
 		return nil, transfer.Syntax{}, err
+	}
+	if opts.Recovery.ConvertRetiredColorModels {
+		var converted string
+		frames, outputMetadata, converted, err = retiredColorFrames(ctx, dataset, source, frames, outputMetadata)
+		if err != nil {
+			return nil, transfer.Syntax{}, err
+		}
+		if converted != "" {
+			defaulted = append(defaulted, converted)
+		}
 	}
 	raw, err := nativeFrameBytesContext(ctx, outputMetadata, frames)
 	if err != nil {
@@ -241,7 +510,20 @@ func DecompressDataSetContext(ctx context.Context, dataset *object.Object, sourc
 		return nil, transfer.Syntax{}, err
 	}
 
-	return datasetWithNativePixelData(dataset, outputMetadata, raw, source), target, nil
+	output, err := datasetWithNativePixelData(dataset, outputMetadata, raw, source)
+	if err != nil {
+		return nil, transfer.Syntax{}, err
+	}
+	if metadata.PhotometricInterpretation != outputMetadata.PhotometricInterpretation && opts.Recovery.ConvertRetiredColorModels && isRetiredColor(metadata.PhotometricInterpretation) {
+		removeRetiredColorAttributes(output)
+	}
+	stampLossyState(output, lossy, int64(len(raw)), inputBytes)
+	if opts.Report != nil {
+		opts.Report.Diagnostics = append(append(opts.Report.Diagnostics[:0], defaulted...), diagnostics...)
+		opts.Report.Reconciliations = append(opts.Report.Reconciliations[:0], reconciled...)
+		opts.Report.Incomplete = incompleteReport
+	}
+	return output, target, nil
 }
 
 func normalizedDecompressLimits(limits DecompressLimits) (DecompressLimits, error) {
@@ -267,6 +549,50 @@ func normalizedDecompressLimits(limits DecompressLimits) (DecompressLimits, erro
 	return limits, nil
 }
 
+// checkDecodeAdmission applies limits to a source of metadata whose Pixel
+// Data holds inputBytes (native bytes, or the Basic Offset Table plus the
+// fragments), before anything is decoded: the input bytes, Number of Frames,
+// Rows * Columns * Number of Frames, the predicted decoded bytes and, for a
+// compressed encapsulated source, their expansion ratio. Whole-object
+// decompression, the streaming transcode, FrameReader's per-frame admission
+// and CheckTranscodeDecodeLimits all admit through it, so a preflight refuses
+// exactly what decoding would.
+func checkDecodeAdmission(limits DecompressLimits, metadata Metadata, source transfer.Syntax, inputBytes int64) error {
+	if inputBytes < 0 {
+		return decompressLimitError("MaxInputBytes", math.MaxInt64, limits.MaxInputBytes)
+	}
+	if inputBytes > limits.MaxInputBytes {
+		return decompressLimitError("MaxInputBytes", inputBytes, limits.MaxInputBytes)
+	}
+	if metadata.Rows == 0 || metadata.Columns == 0 || metadata.SamplesPerPixel == 0 || metadata.BitsAllocated == 0 || metadata.NumberOfFrames <= 0 {
+		return fmt.Errorf("%w: rows=%d columns=%d samples_per_pixel=%d bits_allocated=%d number_of_frames=%d",
+			ErrInvalidMetadata, metadata.Rows, metadata.Columns, metadata.SamplesPerPixel, metadata.BitsAllocated, metadata.NumberOfFrames)
+	}
+	if metadata.NumberOfFrames > limits.MaxFrames {
+		return decompressLimitError("MaxFrames", int64(metadata.NumberOfFrames), int64(limits.MaxFrames))
+	}
+	pixels, ok := checkedDecompressProduct(int64(metadata.Rows), int64(metadata.Columns), int64(metadata.NumberOfFrames))
+	if !ok {
+		return decompressLimitError("MaxPixels", math.MaxInt64, limits.MaxPixels)
+	}
+	if pixels > limits.MaxPixels {
+		return decompressLimitError("MaxPixels", pixels, limits.MaxPixels)
+	}
+	nativeBytes, ok := estimatedDecompressNativeBytes(metadata, source)
+	if !ok || nativeBytes <= 0 {
+		return decompressLimitError("MaxNativeBytes", math.MaxInt64, limits.MaxNativeBytes)
+	}
+	if nativeBytes > limits.MaxNativeBytes {
+		return decompressLimitError("MaxNativeBytes", nativeBytes, limits.MaxNativeBytes)
+	}
+	if source.Encapsulated && source.UID != transfer.EncapsulatedUncompressedExplicitVRLittleEndian.UID {
+		if ratio := decompressionExpansionRatio(nativeBytes, inputBytes); ratio > limits.MaxExpansionRatio {
+			return decompressLimitError("MaxExpansionRatio", ratio, limits.MaxExpansionRatio)
+		}
+	}
+	return nil
+}
+
 func decompressLimitError(limit string, actual, maximum int64) error {
 	return &DecompressResourceLimitError{Limit: limit, Actual: actual, Maximum: maximum}
 }
@@ -283,15 +609,20 @@ func checkedDecompressProduct(values ...int64) (int64, bool) {
 }
 
 func estimatedDecompressNativeBytes(metadata Metadata, source transfer.Syntax) (int64, bool) {
+	if metadata.BitsAllocated == 1 && !source.Encapsulated {
+		return nativePackedByteCount(metadata)
+	}
 	nativeBytes := metadata.TotalSize()
 	if nativeBytes <= 0 {
 		return 0, false
 	}
-	if normalizedPhotometric(metadata.PhotometricInterpretation) != "YBR_FULL_422" {
+	if !isSubsampled422(metadata.PhotometricInterpretation) {
 		return nativeBytes, true
 	}
-	switch transfer.NormalizeUID(source.UID) {
-	case transfer.JPEGBaseline.UID, transfer.JPEGExtended.UID:
+	switch uid := transfer.NormalizeUID(source.UID); {
+	case uid == transfer.JPEGBaseline.UID, uid == transfer.JPEGExtended.UID:
+	case transfer.IsJPEG2000TransferSyntax(uid):
+		// A 4:2:2 JPEG 2000 codestream decodes to full-resolution RGB.
 	default:
 		return nativeBytes, true
 	}
@@ -354,7 +685,11 @@ func sourceTransferSyntax(file *object.File) (transfer.Syntax, error) {
 			metaUID = transfer.NormalizeUID(uid)
 		}
 	}
-	if fileUID != "" && metaUID != "" && fileUID != metaUID {
+	// A recovery reader records its decision; a File whose syntax is the
+	// recorded one may disagree with the File Meta value it recovered from.
+	resolution, recovered := file.TransferSyntaxResolution()
+	recovered = recovered && transfer.NormalizeUID(resolution.Syntax.UID) == fileUID
+	if fileUID != "" && metaUID != "" && fileUID != metaUID && !recovered {
 		return transfer.Syntax{}, fmt.Errorf("%w: file transfer syntax does not match File Meta Information", ErrIncompatiblePixelData)
 	}
 	if fileUID != "" {
@@ -442,6 +777,11 @@ func nativeFrameBytesContext(ctx context.Context, metadata Metadata, frames Fram
 
 	frameSize := metadata.FrameSize()
 	totalSize := metadata.TotalSize()
+	var frameBits int64
+	if metadata.BitsAllocated == 1 {
+		frameBits = packedFrameBits(metadata)
+		totalSize, _ = nativePackedByteCount(metadata)
+	}
 	maxInt := int64(^uint(0) >> 1)
 	if frameSize <= 0 || totalSize <= 0 || frameSize > maxInt || totalSize > maxInt {
 		return nil, fmt.Errorf(
@@ -455,7 +795,7 @@ func nativeFrameBytesContext(ctx context.Context, metadata Metadata, frames Fram
 		)
 	}
 
-	raw := bytes.NewBuffer(make([]byte, 0, int(totalSize)))
+	raw := make([]byte, int(totalSize))
 	for i, frame := range frames.Data {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -469,15 +809,30 @@ func nativeFrameBytesContext(ctx context.Context, metadata Metadata, frames Fram
 				frameSize,
 			)
 		}
-		raw.Write(frame)
+		if frameBits%8 != 0 {
+			for offset := int64(0); offset < frameBits; {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				count := min(frameBits-offset, 64<<10)
+				copyPackedBits(raw, int64(i)*frameBits+offset, frame, offset, count)
+				offset += count
+			}
+		} else {
+			copy(raw[int64(i)*frameSize:], frame)
+		}
 	}
-	return raw.Bytes(), nil
+	return raw, nil
 }
 
-func datasetWithNativePixelData(dataset *object.Object, metadata Metadata, raw []byte, source transfer.Syntax) *object.Object {
+func datasetWithNativePixelData(dataset *object.Object, metadata Metadata, raw []byte, source transfer.Syntax) (*object.Object, error) {
 	elements := dataset.Elements()
 	if source.ByteOrder == binary.BigEndian {
-		elements = transcodeElementsToLittleEndian(elements)
+		var err error
+		elements, err = transcodeElementsToLittleEndian(elements, binary.BigEndian)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if source.Encapsulated {
 		elements = removeElements(elements,
@@ -489,6 +844,7 @@ func datasetWithNativePixelData(dataset *object.Object, metadata Metadata, raw [
 	replacements := []core.Element{
 		core.NewRawElement(core.TagPixelData, nativePixelDataVR(metadata), raw),
 		photometricInterpretationElement(metadata.PhotometricInterpretation),
+		uint16RawElement(tagSamplesPerPixel, metadata.SamplesPerPixel),
 	}
 	if metadata.PlanarConfigurationPresent {
 		replacements = append(replacements, uint16RawElement(tagPlanarConfiguration, metadata.PlanarConfiguration))
@@ -496,7 +852,7 @@ func datasetWithNativePixelData(dataset *object.Object, metadata Metadata, raw [
 	for _, replacement := range replacements {
 		elements = replaceElement(elements, replacement)
 	}
-	return object.FromElements(elements, nil)
+	return object.FromElements(elements, nil), nil
 }
 
 func removeElements(elements []core.Element, tags ...core.Tag) []core.Element {
@@ -556,14 +912,25 @@ func decompressedOutputMetadata(metadata Metadata, source transfer.Syntax, frame
 	if metadata.SamplesPerPixel != 3 {
 		return metadata
 	}
+	if frames.PhotometricInterpretation != "" {
+		// The codec reported the color space of its interleaved output.
+		metadata.PhotometricInterpretation = frames.PhotometricInterpretation
+		metadata.PlanarConfiguration = 0
+		metadata.PlanarConfigurationPresent = true
+		return metadata
+	}
 	switch transfer.NormalizeUID(source.UID) {
+	case transfer.RLELossless.UID:
+		// RLE decodes color-by-plane segments to interleaved samples.
+		metadata.PlanarConfiguration = 0
+		metadata.PlanarConfigurationPresent = true
 	case transfer.JPEGBaseline.UID, transfer.JPEGExtended.UID:
 		switch normalizedPhotometric(metadata.PhotometricInterpretation) {
 		case "YBR_FULL":
 			metadata.PhotometricInterpretation = "RGB"
 			metadata.PlanarConfiguration = 0
 			metadata.PlanarConfigurationPresent = true
-		case "YBR_FULL_422":
+		case "YBR_FULL_422", "YBR_PARTIAL_422":
 			if decodedFramesUseExpandedRGB(metadata, frames) {
 				metadata.PhotometricInterpretation = "RGB"
 				metadata.PlanarConfiguration = 0
@@ -614,30 +981,71 @@ func normalizedPhotometric(value string) string {
 	return strings.Trim(strings.ToUpper(value), " \x00")
 }
 
-func transcodeElementsToLittleEndian(elements []core.Element) []core.Element {
+// Byte-order rules for converting native values between Little and Big Endian:
+//
+//   - PS3.5 7.3 reverses every binary VR at its value width: AT/OW/SS/US 2,
+//     FL/OF/OL/SL/UL 4, FD/OD/OV/SV/UV 8. OB, UN and text are byte streams.
+//     Float and Double Float Pixel Data therefore follow OF and OD.
+//   - PS3.5 defines OW Pixel Data (7FE0,0010) byte order for 16-bit words and
+//     is silent for wider samples under the retired Explicit VR Big Endian
+//     syntax. Independent readers such as pydicom order each sample of Bits
+//     Allocated 32 or 64 as one big-endian integer, so native OW Pixel Data
+//     with those widths reverses at the sample width. Word swapping would
+//     transpose the halves of every sample (1249000 would become 250085395).
+//   - The sample width comes from Bits Allocated in the same dataset or item.
+//     A nested Icon Image Sequence item never inherits its parent's width.
+//   - OB Pixel Data and OW Pixel Data with Bits Allocated 16 or less keep the
+//     VR rule. A value whose length is not a multiple of its width is refused
+//     instead of leaving a partially converted tail.
+
+// transcodeElementsToLittleEndian reverses the byte order of every fixed-width
+// binary value. source is the byte order of the input values; the conversion
+// is symmetric, and source is needed only to read Bits Allocated.
+func transcodeElementsToLittleEndian(elements []core.Element, source binary.ByteOrder) ([]core.Element, error) {
 	// dataset.Elements() already returned an owned top-level slice. Update that
 	// slice in place and let nested sequences use copy-on-write so the source
 	// object remains immutable without cloning unaffected sequence trees.
+	pixelWidth, err := pixelDataSampleSwapWidth(elements, source)
+	if err != nil {
+		return nil, err
+	}
 	for i := range elements {
-		if value, changed := transcodeValueToLittleEndian(elements[i].VR(), elements[i].Value); changed {
+		value, changed, err := transcodeValueToLittleEndian(elements[i], pixelWidth, source)
+		if err != nil {
+			return nil, err
+		}
+		if changed {
 			elements[i].Value = value
 		}
 	}
-	return elements
+	return elements, nil
 }
 
-func transcodeValueToLittleEndian(vr core.VR, value core.Value) (core.Value, bool) {
-	switch v := value.(type) {
+func transcodeValueToLittleEndian(element core.Element, pixelWidth int, source binary.ByteOrder) (core.Value, bool, error) {
+	switch v := element.Value.(type) {
 	case core.RawValue:
+		vr := element.VR()
 		width := byteOrderValueWidth(vr)
-		if width <= 1 || len(v) < width {
-			return value, false
+		if element.Tag() == core.TagPixelData && vr == core.VROW && pixelWidth > width {
+			width = pixelWidth
 		}
-		return core.RawValue(reverseFixedWidthValues(v.Bytes(), width)), true
+		if width <= 1 {
+			return element.Value, false, nil
+		}
+		if len(v)%width != 0 {
+			return nil, false, fmt.Errorf("%w: %s %s value has %d bytes, not a multiple of %d-byte values", ErrPixelDataSizeMismatch, element.Tag(), vr, len(v), width)
+		}
+		if len(v) == 0 {
+			return element.Value, false, nil
+		}
+		return core.RawValue(reverseFixedWidthValues(v.Bytes(), width)), true, nil
 	case core.SequenceValue:
 		var items []core.DataSet
 		for i, item := range v.Items {
-			elements, changed := transcodeElementsToLittleEndianCopy(item.Elements)
+			elements, changed, err := transcodeElementsToLittleEndianCopy(item.Elements, source)
+			if err != nil {
+				return nil, false, err
+			}
 			if !changed {
 				continue
 			}
@@ -648,18 +1056,25 @@ func transcodeValueToLittleEndian(vr core.VR, value core.Value) (core.Value, boo
 			items[i].Elements = elements
 		}
 		if items == nil {
-			return value, false
+			return element.Value, false, nil
 		}
-		return core.SequenceValue{Items: items}, true
+		return core.SequenceValue{Items: items}, true, nil
 	default:
-		return value, false
+		return element.Value, false, nil
 	}
 }
 
-func transcodeElementsToLittleEndianCopy(elements []core.Element) ([]core.Element, bool) {
+func transcodeElementsToLittleEndianCopy(elements []core.Element, source binary.ByteOrder) ([]core.Element, bool, error) {
+	pixelWidth, err := pixelDataSampleSwapWidth(elements, source)
+	if err != nil {
+		return nil, false, err
+	}
 	var out []core.Element
 	for i, element := range elements {
-		value, changed := transcodeValueToLittleEndian(element.VR(), element.Value)
+		value, changed, err := transcodeValueToLittleEndian(element, pixelWidth, source)
+		if err != nil {
+			return nil, false, err
+		}
 		if !changed {
 			continue
 		}
@@ -669,35 +1084,55 @@ func transcodeElementsToLittleEndianCopy(elements []core.Element) ([]core.Elemen
 		out[i].Value = value
 	}
 	if out == nil {
-		return elements, false
+		return elements, false, nil
 	}
-	return out, true
+	return out, true, nil
+}
+
+// pixelDataSampleSwapWidth returns the sample width at which native OW Pixel
+// Data in this element list must be reversed, or 0 to use the VR width. It
+// reads Bits Allocated only from the same list.
+func pixelDataSampleSwapWidth(elements []core.Element, source binary.ByteOrder) (int, error) {
+	for _, element := range elements {
+		if element.Tag() != tagBitsAllocated {
+			continue
+		}
+		var bitsAllocated uint16
+		switch value := element.Value.(type) {
+		case core.Uint16Value:
+			if len(value) != 1 {
+				return 0, fmt.Errorf("%w: BitsAllocated has %d values", ErrInvalidMetadata, len(value))
+			}
+			bitsAllocated = value[0]
+		case core.RawValue:
+			if len(value) != 2 {
+				return 0, fmt.Errorf("%w: BitsAllocated has %d bytes", ErrInvalidMetadata, len(value))
+			}
+			if source == nil {
+				source = binary.LittleEndian
+			}
+			bitsAllocated = source.Uint16(value)
+		default:
+			return 0, nil
+		}
+		switch bitsAllocated {
+		case 32:
+			return 4, nil
+		case 64:
+			return 8, nil
+		default:
+			return 0, nil
+		}
+	}
+	return 0, nil
 }
 
 func byteOrderValueWidth(vr core.VR) int {
-	switch vr {
-	case core.VRAT, core.VROW, core.VRSS, core.VRUS:
-		return 2
-	case core.VRFL, core.VROF, core.VROL, core.VRSL, core.VRUL:
-		return 4
-	case core.VRFD, core.VROD, core.VROV, core.VRSV, core.VRUV:
-		return 8
-	default:
-		return 1
-	}
+	return valueencode.ByteOrderWidth(vr)
 }
 
 func reverseFixedWidthValues(data []byte, width int) []byte {
-	out := core.CloneBytes(data)
-	if width <= 1 {
-		return out
-	}
-	for offset := 0; offset+width <= len(out); offset += width {
-		for left, right := offset, offset+width-1; left < right; left, right = left+1, right-1 {
-			out[left], out[right] = out[right], out[left]
-		}
-	}
-	return out
+	return valueencode.ReverseFixedWidth(data, width)
 }
 
 func fileMetaWithTransferSyntax(meta *object.Object, syntax transfer.Syntax) *object.Object {

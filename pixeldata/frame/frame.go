@@ -93,6 +93,25 @@ func (f *Frame) GetImage() (image.Image, error) {
 	return frame.GetImage()
 }
 
+// StoredSampleData returns the frame's pixel bytes and their stored-sample
+// format, for pixeldata.ReadStoredSamples, StoredSamples and
+// ComputeStoredSampleStatistics. The bytes alias the frame and are read-only.
+// A native frame keeps its transfer syntax's byte order; a decoded frame is
+// described by its effective metadata after decode (codecs require HighBit =
+// BitsStored-1 and output little-endian containers), so its samples are
+// interpreted exactly once.
+func (f *Frame) StoredSampleData() ([]byte, pixeldata.SampleFormat, error) {
+	switch {
+	case f == nil:
+		return nil, pixeldata.SampleFormat{}, fmt.Errorf("%w: nil frame", ErrFrameTypeNotPresent)
+	case f.Encapsulated && f.EncapsulatedData != nil:
+		return f.EncapsulatedData.Data, f.EncapsulatedData.SampleFormat(), nil
+	case !f.Encapsulated && f.NativeData != nil:
+		return f.NativeData.Data, f.NativeData.SampleFormat(), nil
+	}
+	return nil, pixeldata.SampleFormat{}, fmt.Errorf("%w: frame data is nil", ErrFrameTypeNotPresent)
+}
+
 // NativeFrame contains one uncompressed native frame.
 type NativeFrame struct {
 	Index     int
@@ -101,6 +120,9 @@ type NativeFrame struct {
 	ByteOrder binary.ByteOrder
 	Window    Window
 	Rescale   Rescale
+	// Palette supplies RGB LUTs for positive retired ARGB alpha indices.
+	// The caller owns it and must keep it read-only while rendering.
+	Palette *display.PaletteColorLUT
 }
 
 func (f *NativeFrame) IsEncapsulated() bool {
@@ -118,11 +140,25 @@ func (f *NativeFrame) GetEncapsulatedFrame() (*EncapsulatedFrame, error) {
 	return nil, ErrFrameTypeNotPresent
 }
 
+// SampleFormat returns the stored-sample format of Data.
+func (f *NativeFrame) SampleFormat() pixeldata.SampleFormat {
+	return f.Metadata.SampleFormat(f.ByteOrder)
+}
+
 func (f *NativeFrame) GetImage() (image.Image, error) {
 	if f == nil {
 		return nil, fmt.Errorf("%w: nil native frame", ErrFrameTypeNotPresent)
 	}
-	return renderImage(f.Data, f.Metadata, f.ByteOrder, f.Rescale, f.Window)
+	// Native pixel data cannot be 4:2:0 (PS3.3 C.7.6.3.1.2); decoded frames
+	// of MPEG and HEVC objects can. An invalid Planar Configuration is
+	// reported first, by RenderColor.
+	interleaved := !f.Metadata.PlanarConfigurationPresent || f.Metadata.PlanarConfiguration == 0
+	if f.Metadata.SamplesPerPixel == 3 && interleaved {
+		if err := display.ValidateColorPhotometric(f.Metadata.PhotometricInterpretation, transfer.ExplicitVRLittleEndian.UID); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrUnsupportedPhotometricInterpretation, err)
+		}
+	}
+	return renderImage(f.Data, f.Metadata, f.ByteOrder, f.Rescale, f.Window, f.Palette)
 }
 
 // EncapsulatedFrame contains one frame decoded from an encapsulated transfer
@@ -134,6 +170,9 @@ type EncapsulatedFrame struct {
 	ByteOrder binary.ByteOrder
 	Window    Window
 	Rescale   Rescale
+	// Palette supplies RGB LUTs for positive retired ARGB alpha indices.
+	// The caller owns it and must keep it read-only while rendering.
+	Palette *display.PaletteColorLUT
 }
 
 func (f *EncapsulatedFrame) IsEncapsulated() bool {
@@ -151,11 +190,16 @@ func (f *EncapsulatedFrame) GetEncapsulatedFrame() (*EncapsulatedFrame, error) {
 	return f, nil
 }
 
+// SampleFormat returns the stored-sample format of the decoded Data.
+func (f *EncapsulatedFrame) SampleFormat() pixeldata.SampleFormat {
+	return f.Metadata.SampleFormat(f.ByteOrder)
+}
+
 func (f *EncapsulatedFrame) GetImage() (image.Image, error) {
 	if f == nil {
 		return nil, fmt.Errorf("%w: nil encapsulated frame", ErrFrameTypeNotPresent)
 	}
-	return renderImage(f.Data, f.Metadata, f.ByteOrder, f.Rescale, f.Window)
+	return renderImage(f.Data, f.Metadata, f.ByteOrder, f.Rescale, f.Window, f.Palette)
 }
 
 type Window struct {
@@ -176,6 +220,13 @@ type options struct {
 	byteOrder binary.ByteOrder
 	window    Window
 	rescale   Rescale
+	palette   *display.PaletteColorLUT
+}
+
+// WithPalette supplies borrowed, read-only RGB LUTs for retired ARGB palette
+// overrides. Alpha zero uses source RGB even when no palette is supplied.
+func WithPalette(palette *display.PaletteColorLUT) Option {
+	return func(opts *options) { opts.palette = palette }
 }
 
 func WithByteOrder(order binary.ByteOrder) Option {
@@ -223,6 +274,7 @@ func NewNativeFrame(index int, data []byte, metadata pixeldata.Metadata, opts ..
 			ByteOrder: options.byteOrder,
 			Window:    options.window,
 			Rescale:   options.rescale,
+			Palette:   options.palette,
 		},
 	}
 }
@@ -238,6 +290,7 @@ func NewEncapsulatedFrame(index int, data []byte, metadata pixeldata.Metadata, o
 			ByteOrder: options.byteOrder,
 			Window:    options.window,
 			Rescale:   options.rescale,
+			Palette:   options.palette,
 		},
 	}
 }
@@ -289,13 +342,30 @@ func ExtractFrames(file *object.File, opts ...Option) ([]*Frame, error) {
 	if file == nil || file.Dataset == nil {
 		return nil, errors.New("dicom: file has no dataset")
 	}
-	defaults := []Option{WithByteOrder(file.TransferSyntax.ByteOrder)}
-	if window, ok := WindowFromObject(file.Dataset); ok {
-		defaults = append(defaults, WithWindow(window.Center, window.Width), WithVOIFunction(window.Function))
+	// Retired ARGB alpha components index the RGB palettes. Read these only for
+	// ARGB, preserving the existing extraction behavior for every other model.
+	var argbPalette *display.PaletteColorLUT
+	if name, _ := file.Dataset.GetString(core.NewTag(0x0028, 0x0004)); normalizedPhotometric(name) == "ARGB" {
+		var err error
+		argbPalette, err = display.PaletteFromObject(file.Dataset)
+		if err != nil {
+			return nil, err
+		}
 	}
-	rescale := RescaleFromObject(file.Dataset)
-	defaults = append(defaults, WithRescale(rescale.Slope, rescale.Intercept))
-	opts = append(defaults, opts...)
+	// Each frame gets the window and rescale of its own functional groups
+	// (enhanced multi-frame) before the caller's options.
+	optionsAt := func(index int) []Option {
+		defaults := []Option{WithByteOrder(file.TransferSyntax.ByteOrder)}
+		if argbPalette != nil {
+			defaults = append(defaults, WithPalette(argbPalette))
+		}
+		if window, ok := WindowAt(file.Dataset, index); ok {
+			defaults = append(defaults, WithWindow(window.Center, window.Width), WithVOIFunction(window.Function))
+		}
+		rescale := RescaleAt(file.Dataset, index)
+		defaults = append(defaults, WithRescale(rescale.Slope, rescale.Intercept))
+		return append(defaults, opts...)
+	}
 
 	if pixeldata.IsJPIPReferencedTransferSyntax(file.TransferSyntax.UID) {
 		_, err := pixeldata.DecodeFrames(file.TransferSyntax.UID, pixeldata.PixelData{}, file.Dataset)
@@ -312,7 +382,11 @@ func ExtractFrames(file *object.File, opts ...Option) ([]*Frame, error) {
 
 	native, err := pixeldata.ExtractNativeFrames(file.Dataset)
 	if err == nil {
-		return FromNativeFrames(native, opts...), nil
+		frames := make([]*Frame, len(native.Data))
+		for i, data := range native.Data {
+			frames[i] = NewNativeFrame(i, data, native.Metadata, optionsAt(i)...)
+		}
+		return frames, nil
 	}
 	if !errors.Is(err, pixeldata.ErrEncapsulatedPixelData) {
 		return nil, err
@@ -331,7 +405,16 @@ func ExtractFrames(file *object.File, opts ...Option) ([]*Frame, error) {
 		return nil, err
 	}
 	metadata = decodedFrameMetadata(metadata, file.TransferSyntax.UID)
-	return FromDecodedFrames(metadata, decoded.Data, true, opts...), nil
+	if metadata.SamplesPerPixel == 3 && decoded.PhotometricInterpretation != "" {
+		metadata.PhotometricInterpretation = decoded.PhotometricInterpretation
+		metadata.PlanarConfiguration = 0
+		metadata.PlanarConfigurationPresent = true
+	}
+	frames := make([]*Frame, len(decoded.Data))
+	for i, data := range decoded.Data {
+		frames[i] = NewEncapsulatedFrame(i, data, metadata, optionsAt(i)...)
+	}
+	return frames, nil
 }
 
 func decodedFrameMetadata(metadata pixeldata.Metadata, transferSyntaxUID string) pixeldata.Metadata {
@@ -342,7 +425,7 @@ func decodedFrameMetadata(metadata pixeldata.Metadata, transferSyntaxUID string)
 	switch uid {
 	case transfer.JPEGBaseline.UID, transfer.JPEGExtended.UID:
 		switch normalizedPhotometric(metadata.PhotometricInterpretation) {
-		case "YBR_FULL", "YBR_FULL_422":
+		case "YBR_FULL", "YBR_FULL_422", "YBR_PARTIAL_422":
 			metadata.PhotometricInterpretation = "RGB"
 			metadata.PlanarConfiguration = 0
 			metadata.PlanarConfigurationPresent = true
@@ -368,6 +451,28 @@ func WindowFromObject(obj *object.Object) (Window, bool) {
 	return Window{Center: voi.Center, Width: voi.Width, Function: voi.Function}, true
 }
 
+// WindowAt is WindowFromObject for the zero-based frameIndex of a
+// multi-frame object (display.VOIAt: per-frame, shared, then top-level).
+func WindowAt(obj *object.Object, frameIndex int) (Window, bool) {
+	voi, _ := display.VOIAt(obj, frameIndex)
+	if voi.Width <= 0 {
+		return Window{}, false
+	}
+	return Window{Center: voi.Center, Width: voi.Width, Function: voi.Function}, true
+}
+
+// RescaleAt is RescaleFromObject for the zero-based frameIndex of a
+// multi-frame object (display.ModalityLUTAt: per-frame, shared, then
+// top-level).
+func RescaleAt(obj *object.Object, frameIndex int) Rescale {
+	modality, _ := display.ModalityLUTAt(obj, frameIndex)
+	out := Rescale{Slope: modality.Slope, Intercept: modality.Intercept}
+	if out.Slope == 0 {
+		out.Slope = 1
+	}
+	return out
+}
+
 func RescaleFromObject(obj *object.Object) Rescale {
 	out := Rescale{Slope: 1}
 	if obj == nil {
@@ -382,7 +487,7 @@ func RescaleFromObject(obj *object.Object) Rescale {
 	return out
 }
 
-func renderImage(data []byte, metadata pixeldata.Metadata, order binary.ByteOrder, rescale Rescale, window Window) (image.Image, error) {
+func renderImage(data []byte, metadata pixeldata.Metadata, order binary.ByteOrder, rescale Rescale, window Window, palette *display.PaletteColorLUT) (image.Image, error) {
 	rows := int(metadata.Rows)
 	cols := int(metadata.Columns)
 	if rows <= 0 || cols <= 0 {
@@ -394,9 +499,12 @@ func renderImage(data []byte, metadata pixeldata.Metadata, order binary.ByteOrde
 		return renderGrayscaleImage(data, metadata, photometric, rows, cols, order, rescale, window)
 	case 3:
 		return RenderColor(data, metadata, order)
-	default:
-		return nil, fmt.Errorf("%w: SamplesPerPixel=%d", ErrUnsupportedSamplesPerPixel, metadata.SamplesPerPixel)
+	case 4:
+		if photometric == "ARGB" {
+			return renderColorWithPalette(data, metadata, order, palette)
+		}
 	}
+	return nil, fmt.Errorf("%w: SamplesPerPixel=%d", ErrUnsupportedSamplesPerPixel, metadata.SamplesPerPixel)
 }
 
 // renderGrayscaleImage renders a single-sample frame through the shared
@@ -440,12 +548,19 @@ func renderGrayscaleImage(data []byte, metadata pixeldata.Metadata, photometric 
 }
 
 // RenderColor renders native or decoded three-sample color bytes through the
-// shared display pipeline. It supports 8-bit unsigned RGB and YBR_FULL in
-// interleaved or planar layout, plus interleaved YBR_FULL_422. PALETTE COLOR is
-// intentionally outside this adapter because pixeldata.Metadata does not carry
-// the required palette LUTs.
+// shared display pipeline. It supports unsigned RGB and YBR_FULL in 8- or
+// 16-bit containers, interleaved or planar, YBR_FULL_422 and YBR_PARTIAL_422
+// (subsampled or decoded) and decoded YBR_PARTIAL_420, scaled to 8 bits.
+// Retired ARGB with alpha zero uses source RGB; positive alpha requires
+// WithPalette on a frame or the display.ColorFrame API.
+// PALETTE COLOR is intentionally outside this adapter because
+// pixeldata.Metadata does not carry the required palette LUTs.
 func RenderColor(data []byte, metadata pixeldata.Metadata, order binary.ByteOrder) (*image.RGBA, error) {
-	if metadata.BitsAllocated != 8 {
+	return renderColorWithPalette(data, metadata, order, nil)
+}
+
+func renderColorWithPalette(data []byte, metadata pixeldata.Metadata, order binary.ByteOrder, palette *display.PaletteColorLUT) (*image.RGBA, error) {
+	if metadata.BitsAllocated != 8 && metadata.BitsAllocated != 16 {
 		return nil, fmt.Errorf("%w: %w: BitsAllocated=%d for color", ErrUnsupportedBitsAllocated, display.ErrUnsupportedColorLayout, metadata.BitsAllocated)
 	}
 	if metadata.PixelRepresentation != 0 {
@@ -456,11 +571,11 @@ func RenderColor(data []byte, metadata pixeldata.Metadata, order binary.ByteOrde
 	if metadata.PlanarConfigurationPresent {
 		planar = int(metadata.PlanarConfiguration)
 	}
-	if planar != 0 && planar != 1 || planar == 1 && photometric != "RGB" && photometric != "YBR_FULL" {
+	if planar != 0 && planar != 1 || planar == 1 && photometric != "RGB" && photometric != "YBR_FULL" && photometric != "ARGB" {
 		return nil, fmt.Errorf("%w: %w: PlanarConfiguration=%d for %s", ErrUnsupportedPlanarConfiguration, display.ErrUnsupportedColorLayout, planar, photometric)
 	}
 	switch photometric {
-	case "RGB", "YBR_FULL", "YBR_FULL_422":
+	case "RGB", "YBR_FULL", "YBR_FULL_422", "YBR_PARTIAL_422", "YBR_PARTIAL_420", "ARGB":
 	case "PALETTE COLOR":
 		return nil, fmt.Errorf("%w: %q requires palette LUT metadata", ErrUnsupportedPhotometricInterpretation, metadata.PhotometricInterpretation)
 	default:
@@ -474,6 +589,7 @@ func RenderColor(data []byte, metadata pixeldata.Metadata, order binary.ByteOrde
 		Columns:             int(metadata.Columns),
 		Pixels:              data,
 		Photometric:         photometric,
+		Palette:             palette,
 		SamplesPerPixel:     int(metadata.SamplesPerPixel),
 		PlanarConfiguration: planar,
 		Format: display.PixelFormat{

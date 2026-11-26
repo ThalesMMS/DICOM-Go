@@ -83,8 +83,20 @@ func validateSourceSamples(root string, f codecFullCorpusFixture) error {
 	if s == nil {
 		return nil
 	}
-	if f.Reconstruction == nil || f.Family != "jpeg-ls" || f.Input.Signed || s.Near < 0 || s.Near > 255 || s.Near > ((1<<f.Input.BitsStored)-1)/2 || f.Lossy != (s.Near > 0) {
-		return fmt.Errorf("codecfixture: invalid JPEG-LS source-bound evidence for %s", f.ID)
+	switch {
+	case f.Reconstruction == nil:
+		return fmt.Errorf("codecfixture: source samples without reconstruction for %s", f.ID)
+	case f.Family == "jpeg-ls":
+		if f.Input.Signed || s.Near < 0 || s.Near > 255 || s.Near > ((1<<f.Input.BitsStored)-1)/2 || f.Lossy != (s.Near > 0) {
+			return fmt.Errorf("codecfixture: invalid JPEG-LS source-bound evidence for %s", f.ID)
+		}
+	case f.Family == "jpeg-2000-part-1":
+		// Reversible JPEG 2000 reproduces its source exactly.
+		if f.Lossy || s.Near != 0 {
+			return fmt.Errorf("codecfixture: invalid JPEG 2000 source evidence for %s", f.ID)
+		}
+	default:
+		return fmt.Errorf("codecfixture: source samples unsupported for family %s (%s)", f.Family, f.ID)
 	}
 	path, err := resolveCodecFullCorpusPath(root, s.Path)
 	if err != nil {
@@ -241,7 +253,8 @@ func validateReconstruction(root string, f codecFullCorpusFixture) error {
 	if e.Layout.Rows != f.Input.Rows || e.Layout.Columns != f.Input.Columns || e.Layout.Components != f.Input.Components || e.Layout.BitsStored != f.Input.BitsStored || e.Layout.Signed != f.Input.Signed || e.Frames != f.Input.Frames {
 		return fmt.Errorf("codecfixture: reconstructed layout contradicts input for %s", f.ID)
 	}
-	if e.Frames < 1 || e.Frames > 10000 || e.Backend == "" || e.Version == "" || e.Source == "" || e.Generator == "" || f.Comparison != "exact-reconstruction" {
+	comparable := f.Comparison == "exact-reconstruction" || f.Comparison == "sample-metrics" && f.SamplePolicy != nil && f.SamplePolicy.Rationale != ""
+	if e.Frames < 1 || e.Frames > 10000 || e.Backend == "" || e.Version == "" || e.Source == "" || e.Generator == "" || !comparable {
 		return fmt.Errorf("codecfixture: incomplete reconstruction provenance for %s", f.ID)
 	}
 	for _, file := range []struct{ path, hash string }{{f.Path, f.SHA256}, {f.ReferencePath, f.ReferenceSHA256}} {
@@ -567,4 +580,79 @@ func validateSHA256(path, want string) error {
 		return fmt.Errorf("sha256=%s want=%s", got, want)
 	}
 	return nil
+}
+
+// CorpusFixture is the public, value-free view of one validated manifest entry
+// used by runners outside this package, such as optional codec modules.
+type CorpusFixture struct {
+	ID                string
+	Family            string
+	Path              string
+	ReferencePath     string
+	Comparison        string
+	Expectation       string
+	Lossy             bool
+	Input             CorpusInput
+	SamplePolicy      *SamplePolicy
+	Reconstruction    *ReconstructionEvidence
+	SourceSamplesPath string
+}
+
+// CorpusFixtures validates the codecfull manifest and returns every fixture.
+func CorpusFixtures(moduleRoot string) ([]CorpusFixture, error) {
+	root := filepath.Join(moduleRoot, "pixeldata", "codecfixture", "testdata", "codecfull")
+	if err := validateCodecFullCorpus(root); err != nil {
+		return nil, err
+	}
+	manifest, err := readCodecFullCorpusManifest(root)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CorpusFixture, 0, len(manifest.Fixtures))
+	for _, f := range manifest.Fixtures {
+		fixture := CorpusFixture{ID: f.ID, Family: f.Family, Path: f.Path, ReferencePath: f.ReferencePath, Comparison: f.Comparison, Expectation: f.Expectation, Lossy: f.Lossy, Input: f.Input, SamplePolicy: f.SamplePolicy, Reconstruction: f.Reconstruction}
+		if f.SourceSamples != nil {
+			fixture.SourceSamplesPath = f.SourceSamples.Path
+		}
+		out = append(out, fixture)
+	}
+	return out, nil
+}
+
+// CorpusFilePath resolves a manifest-relative path inside the corpus root.
+func CorpusFilePath(moduleRoot, relative string) (string, error) {
+	return resolveCodecFullCorpusPath(filepath.Join(moduleRoot, "pixeldata", "codecfixture", "testdata", "codecfull"), relative)
+}
+
+// ReadSourceSamples loads hash-checked source samples, split per frame in the
+// fixture's reconstruction layout.
+func ReadSourceSamples(moduleRoot, id string) ([][]byte, error) {
+	root := filepath.Join(moduleRoot, "pixeldata", "codecfixture", "testdata", "codecfull")
+	manifest, err := readCodecFullCorpusManifest(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range manifest.Fixtures {
+		if f.ID != id || f.SourceSamples == nil {
+			continue
+		}
+		if err := validateSourceSamples(root, f); err != nil {
+			return nil, err
+		}
+		path, err := resolveCodecFullCorpusPath(root, f.SourceSamples.Path)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		size := int(f.Reconstruction.Layout.frameBytes())
+		frames := make([][]byte, f.Input.Frames)
+		for i := range frames {
+			frames[i] = data[i*size : (i+1)*size]
+		}
+		return frames, nil
+	}
+	return nil, fmt.Errorf("codecfixture: source samples unavailable for %s", id)
 }

@@ -12,6 +12,20 @@ import (
 	"testing"
 )
 
+func TestPart2EncoderCapabilityIsExplicitAndProvisional(t *testing.T) {
+	capability := JPEG2000Part2EncoderCapability()
+	if capability.Status != StatusProvisional || !reflect.DeepEqual(capability.Directions, []CodecDirection{DirectionEncode}) ||
+		len(capability.TransferSyntaxes) != 2 || len(capability.Blockers) == 0 || len(capability.Evidence) == 0 {
+		t.Fatalf("incomplete explicit Annex J capability: %+v", capability)
+	}
+	manifest := CodecFullManifest()
+	for _, current := range manifest.Capabilities {
+		if current.ID == capability.ID {
+			t.Fatal("provisional explicit encoder entered the qualified codecfull profile")
+		}
+	}
+}
+
 func TestCodecFullManifestIsValidAndComplete(t *testing.T) {
 	manifest := CodecFullManifest()
 	if err := manifest.Validate(); err != nil {
@@ -64,10 +78,10 @@ func TestCodecFullManifestDeclaresDirectionalCapabilities(t *testing.T) {
 	manifest := CodecFullManifest()
 	for _, capability := range manifest.Capabilities {
 		wantDirections := []CodecDirection{DirectionDecode}
-		if capability.ID == "jpeg-2000-lossless-encode" {
+		if capability.ID == "jpeg-2000-lossless-encode" || capability.ID == "jpeg-2000-lossy-encode" || capability.ID == "htj2k-encode" {
 			wantDirections = []CodecDirection{DirectionEncode}
 		}
-		if capability.ID == "jpeg-baseline" || capability.ID == "rle-lossless" || capability.ID == "encapsulated-uncompressed" || capability.ID == "jpeg-ls-lossless" || capability.ID == "jpeg-ls" {
+		if capability.ID == "jpeg-baseline" || capability.ID == "jpeg-extended" || capability.ID == "rle-lossless" || capability.ID == "encapsulated-uncompressed" || capability.ID == "jpeg-ls-lossless" || capability.ID == "jpeg-ls" || capability.ID == "jpeg-lossless" || capability.ID == "deflated-image-frame" || capability.ID == "jpeg-xl" {
 			wantDirections = []CodecDirection{DirectionDecode, DirectionEncode}
 		}
 		if !reflect.DeepEqual(capability.Directions, wantDirections) {
@@ -134,8 +148,19 @@ func TestCodecFullManifestDistinguishesJPEGBaselineAndExtendedPrecision(t *testi
 			t.Errorf("JPEG Extended coverage = %#v, want %q", extended.Coverage, want)
 		}
 	}
-	if slices.Contains(extended.Directions, DirectionEncode) {
-		t.Fatalf("JPEG Extended directions = %#v, encode must remain unsupported", extended.Directions)
+	if !slices.Contains(extended.Directions, DirectionEncode) {
+		t.Fatalf("JPEG Extended directions = %#v, want the explicit Process 4 encoder", extended.Directions)
+	}
+	encodeCoverage := strings.Join(extended.Coverage, "; ")
+	for _, want := range []string{"Process 4 SOF1 encoding", "9-12 stored bits in 16 allocated bits", "ISO_10918_1", "mono8 (8/8/7)", "jpeg-extended-color", "jpeg-extended-reduced-precision", "not a DICOM-conforming color profile", "JPEGColorNever"} {
+		if !strings.Contains(encodeCoverage, want) {
+			t.Errorf("JPEG Extended coverage = %#v, want %q", extended.Coverage, want)
+		}
+	}
+	for _, want := range []string{"Process 4", "12-bit"} {
+		if strings.Contains(strings.Join(baseline.Coverage, "; "), want) {
+			t.Errorf("JPEG Baseline coverage = %#v must not claim %q", baseline.Coverage, want)
+		}
 	}
 }
 
@@ -155,8 +180,8 @@ func TestCodecFullManifestDeclaresJPEGLosslessMulticomponentSubset(t *testing.T)
 			t.Errorf("JPEG Lossless coverage = %#v, want %q", capability.Coverage, want)
 		}
 	}
-	if slices.Contains(capability.Directions, DirectionEncode) {
-		t.Fatalf("JPEG Lossless directions = %#v, encode must remain unsupported", capability.Directions)
+	if !slices.Contains(capability.Directions, DirectionEncode) {
+		t.Fatalf("JPEG Lossless directions = %#v, want the pure-Go encoder declared", capability.Directions)
 	}
 }
 
@@ -197,13 +222,13 @@ func TestManifestLegacyJSONWithoutDirectionsDefaultsToDecode(t *testing.T) {
 
 func TestManifestValidationAllowsTransferSyntaxAcrossDisjointDirections(t *testing.T) {
 	manifest := CodecFullManifest()
-	jpegExtended := capabilityByID(t, manifest, "jpeg-extended")
+	decodeOnly := capabilityByID(t, manifest, "jpeg-2000-part-2")
 	manifest.Capabilities = append(manifest.Capabilities, Capability{
-		ID:               "jpeg-extended-encode-test",
-		Family:           jpegExtended.Family,
+		ID:               "jpeg-2000-part-2-encode-test",
+		Family:           decodeOnly.Family,
 		Status:           StatusValidated,
 		Directions:       []CodecDirection{DirectionEncode},
-		TransferSyntaxes: append([]TransferSyntax(nil), jpegExtended.TransferSyntaxes...),
+		TransferSyntaxes: append([]TransferSyntax(nil), decodeOnly.TransferSyntaxes...),
 		Implementations:  []string{"test-only encoder capability"},
 		Coverage:         []string{"direction-aware manifest validation"},
 		Evidence: []Evidence{{
@@ -257,7 +282,7 @@ func TestManifestValidationRejectsInvalidDirectionContracts(t *testing.T) {
 		{
 			name: "evidence direction not declared",
 			mutate: func(manifest *ProfileManifest) {
-				capabilityByID(t, *manifest, "jpeg-extended").Evidence[0].Direction = DirectionEncode
+				capabilityByID(t, *manifest, "jpeg-2000-part-2").Evidence[0].Direction = DirectionEncode
 			},
 			wantErr: "evidence direction",
 		},

@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "origin": "deterministic synthetic RGB images, no patient data",
+  "encoder": "libjxl cjxl v0.11.2 332feb1, official x64 Windows static release",
+  "reference_decoder": "libjxl djxl v0.11.2 332feb1",
+  "common_encoder_arguments": [
+    "-d",
+    "2.1",
+    "-m",
+    "0",
+    "--gaborish=0",
+    "--epf=0",
+    "--num_threads=1",
+    "--container=0"
+  ],
+  "comparison": "all RGB channels, absolute error <= 1 unsigned 8-bit level (direct sRGB rounding versus libjxl output conversion)",
+  "files": [
+    {
+      "path": "chaos-1.jxl",
+      "sha256": "0a693e06bc2d958b5fb1723f2faccb2a7b15385561fbfc1289839e01f2e6570d",
+      "bytes": 1358
+    },
+    {
+      "path": "chaos-1.ppm",
+      "sha256": "0dc17528adb75737e2b475e8856e81aa113f0c05f97e71834ce04ab64d2e4d26",
+      "bytes": 3232
+    },
+    {
+      "path": "colors-3.jxl",
+      "sha256": "66d5a9e637ef90286ad818f60ee54d47fdc984a42493f2349ede5ab683c7cb5d",
+      "bytes": 219
+    },
+    {
+      "path": "colors-3.ppm",
+      "sha256": "9c20f6c6aa9dabcfe02c50e95c8417fd1b42d5a10c4b1c6918f816a50cde9623",
+      "bytes": 541
+    },
+    {
+      "path": "groups-1.jxl",
+      "sha256": "43f93089ff1d07aef11d91761766d8137b0e7e81583e3fcdfd78a12918559f80",
+      "bytes": 6863
+    },
+    {
+      "path": "groups-1.ppm",
+      "sha256": "1a5460835ca2623e3cf73b4d28da1698e286e95c223870f1086ddb1e69a409cf",
+      "bytes": 33101
+    },
+    {
+      "path": "plain-1.jxl",
+      "sha256": "04192e2ce397e23302d761ef31d2fdf7779c37d5e27cb35116393a285cf84c13",
+      "bytes": 71
+    },
+    {
+      "path": "plain-1.ppm",
+      "sha256": "cbd25193924de455e1d5441f78c28f5679f34d14e83ef3d50301c8d08ad5796d",
+      "bytes": 1966
+    },
+    {
+      "path": "tile-3.jxl",
+      "sha256": "2ad2bfb4895af3609880de63ab8bc234de4c358ebb56e416c3c5530c5ccc6c61",
+      "bytes": 1755
+    },
+    {
+      "path": "tile-3.ppm",
+      "sha256": "a1d7f2900866b3350c3a5a3ae42f46f0736f655834f1048ff3ee0a36ebf79c60",
+      "bytes": 7852
+    },
+    {
+      "path": "tiny-1.jxl",
+      "sha256": "9e1fc47a7abe162bd38930f80915a0e23612385170523b3a6da43e35bb78cb01",
+      "bytes": 87
+    },
+    {
+      "path": "tiny-1.ppm",
+      "sha256": "5b752e7424509c63d2360573e04d77eb0797d17a14fc003316d900327d8131df",
+      "bytes": 95
+    },
+    {
+      "path": "tiny-5.jxl",
+      "sha256": "bead55ceff16c2a3fbb0137816b786da8fe328e4b2ec8873f2bdbcc5f99eb8ff",
+      "bytes": 84
+    },
+    {
+      "path": "tiny-5.ppm",
+      "sha256": "d987664bfbd13e25a55479f53e1c957ea4896222e45e7fda28b20ad95e39bd88",
+      "bytes": 95
+    },
+    {
+      "path": "unsupported-filter.jxl",
+      "sha256": "10c621e884849c68a33c9133bb6b1bd47409004a04b2d80a5da3ca05122eb190",
+      "bytes": 268
+    },
+    {
+      "path": "unsupported-transform.jxl",
+      "sha256": "5eee11d5253920710b6957bef7e459be844f41529d671b0639ba6786c9f864a5",
+      "bytes": 199
+    }
+  ],
+  "oracle_cjxl_sha256": "b6ae9f8a2c47fb371f62afa9ebf4e87db2fdd42b0b643ab2e90e0382d323f551",
+  "oracle_djxl_sha256": "48b8e42736f2e05ed9b4fd99e26717fc91a393cef63432c3ae194fbdcc9115e9"
+}

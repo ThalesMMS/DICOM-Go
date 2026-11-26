@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "issue": 2028,
+  "profile": "JPEG 2000 Part 1 YBR_FULL_422: 3 unsigned 8-bit components, component 0 at 1x1, components 1 and 2 at XRsiz=2 YRsiz=1, odd width; decoded to full-resolution interleaved RGB",
+  "provenance": {
+    "source": "Project-authored deterministic synthetic planes (generate.py)",
+    "generator": "generate.py",
+    "synthetic": true,
+    "noPHI": true,
+    "license": "Apache-2.0",
+    "permission": "Project-owned synthetic data and generator; redistributable under dicom-go LICENSE",
+    "deIdentification": "Not applicable: all samples generated from arithmetic; no patient data imported",
+    "vendorImplementationCopied": false
+  },
+  "tools": [
+    {
+      "name": "opj_compress",
+      "version": "OpenJPEG 2.5.4",
+      "sha256": "10b00874ba6a01a925a3423025dd812d10f10f9cac2726e54cabc439b2332008",
+      "args": [
+        "-F",
+        "17,6,3,8,u@1x1:2x1:2x1",
+        "-mct",
+        "0",
+        "-n",
+        "2"
+      ],
+      "use": "Encode the codestream from raw planar input"
+    },
+    {
+      "name": "opj_decompress",
+      "version": "OpenJPEG 2.5.4",
+      "sha256": "5bbfb594764d789d4b8c19e88dca42015739bc500ae9987c9a711acfd212109c",
+      "args": [
+        "-c",
+        "<component>"
+      ],
+      "use": "Independent per-component reconstruction (no sYCC conversion)"
+    },
+    {
+      "name": "Python",
+      "version": "3.14.7",
+      "use": "Independent chroma replication and PS3.3 C.7.6.3.1.2 YBR_FULL to RGB conversion"
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "ybr422-17x6",
+      "codestream": "ybr422-17x6.j2k",
+      "transferSyntax": "1.2.840.10008.1.2.4.90",
+      "input": {
+        "rows": 6,
+        "columns": 17,
+        "samplesPerPixel": 3,
+        "bitsAllocated": 8,
+        "bitsStored": 8,
+        "highBit": 7,
+        "pixelRepresentation": 0,
+        "planarConfiguration": 0,
+        "photometric": "YBR_FULL_422"
+      },
+      "components": [
+        {
+          "xrsiz": 1,
+          "yrsiz": 1,
+          "columns": 17,
+          "rows": 6,
+          "depth": 8,
+          "signed": false
+        },
+        {
+          "xrsiz": 2,
+          "yrsiz": 1,
+          "columns": 9,
+          "rows": 6,
+          "depth": 8,
+          "signed": false
+        },
+        {
+          "xrsiz": 2,
+          "yrsiz": 1,
+          "columns": 9,
+          "rows": 6,
+          "depth": 8,
+          "signed": false
+        }
+      ],
+      "reference": {
+        "path": "ybr422-17x6.openjpeg.raw",
+        "layout": "planar component planes at their own sizes, component 0 then 1 then 2, 8-bit",
+        "backend": "OpenJPEG opj_decompress 2.5.4, one component per run"
+      },
+      "expected": {
+        "path": "ybr422-17x6.rgb.raw",
+        "layout": "interleaved RGB, 8-bit, Rows x Columns x 3",
+        "photometric": "RGB",
+        "lossyImageCompression": "01",
+        "upsampling": "replication: output column x uses chroma column floor(x/2)",
+        "conversion": "PS3.3 C.7.6.3.1.2 YBR_FULL to RGB, clamped to 0..255, rounded half away from zero"
+      }
+    }
+  ],
+  "assets": [
+    {
+      "path": "generate.py",
+      "bytes": 9002,
+      "sha256": "04bf5b4cc313afca90edda06b396d89f76396644252fc5545f62ecd6a18696c3"
+    },
+    {
+      "path": "ybr422-17x6.j2k",
+      "bytes": 363,
+      "sha256": "a8414043f13af15d50e78014eb33a20029ae0caa1375c4cc6fd7e2e184844d0c"
+    },
+    {
+      "path": "ybr422-17x6.openjpeg.raw",
+      "bytes": 210,
+      "sha256": "a5fcb15486b4d8cbb58bd7794774aea70ae8daee51fef48b9f959dcf85c223a2"
+    },
+    {
+      "path": "ybr422-17x6.rgb.raw",
+      "bytes": 306,
+      "sha256": "5e4c8f266675ec1066f5faab1b287bd12eb6d68afebbd6480b5d25485ebeaf55"
+    }
+  ]
+}

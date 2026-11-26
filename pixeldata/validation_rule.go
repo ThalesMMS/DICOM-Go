@@ -53,8 +53,11 @@ func (metadataValidationRule) ValidateDataSet(_ context.Context, ctx validation.
 	}
 	if raw, rawOK := pixelElement.RawBytes(); rawOK {
 		expected := metadata.TotalSize()
+		if metadata.BitsAllocated == 1 {
+			expected, _ = nativePackedByteCount(metadata)
+		}
 		actual := int64(len(raw))
-		if expected <= 0 || actual < expected || actual > expected+1 {
+		if expected <= 0 || actual < expected || actual-expected > 1 {
 			findings = append(findings, pixelFinding(core.TagPixelData))
 		}
 	}

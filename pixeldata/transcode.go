@@ -63,21 +63,151 @@ type TranscodeLimits struct {
 // DecoderRegistry is required for compressed inputs and EncoderRegistry is
 // required for encoded outputs. Neither falls back to a package global.
 type TranscodeOptions struct {
+	// BeforeSource and BeforePublish are optional TranscodePath authorization
+	// checks. An error aborts before opening or publishing, respectively.
+	BeforeSource  func(context.Context) error
+	BeforePublish func(context.Context) error
+
+	// WriteOptions applies only to TranscodePath's final serialization. APIs
+	// returning Object/File do not serialize and leave these options to the
+	// caller's object.WriteFileWithOptions. It does not configure pixel codecs.
+	WriteOptions object.WriteFileOptions
+	// MaxFragmentBytes and OffsetTable control top-level encapsulated output.
+	// Zero keeps the stored layout on an equivalent-syntax copy, and one
+	// Fragment per frame with automatic tables after an encode. A positive
+	// fragment cap includes Item padding and must be even and at least 2.
+	// Native targets reject explicit encapsulation options.
+	MaxFragmentBytes int64
+	OffsetTable      object.OffsetTablePolicy
+	// PlanarOutput controls native color output, preserving the historical
+	// layout at zero. Encapsulated targets reject explicit planar policies;
+	// their codec determines the representation.
+	PlanarOutput PlanarOutputPolicy
+	// SecondaryCapture converts a compatible single-frame image to classic
+	// Secondary Capture with Conversion Type WSD and a new SOP Instance UID.
+	// Multi-frame and functional-group IODs are explicitly unsupported.
+	SecondaryCapture bool
+	// UIDPolicy leaves existing lossless/copy identity unchanged at zero;
+	// a new lossy generation always receives a new UID. Preserve conflicts
+	// with SecondaryCapture or a newly lossy encode and is refused.
+	// UIDRoot selects an organizational root only for newly generated SOP
+	// Instance UIDs. Empty preserves UUID generation. It never remaps Study,
+	// Series or predecessor references and conflicts with UIDPreserve.
+	UIDRoot         string
+	UIDPolicy       TranscodeUIDPolicy
 	DecoderRegistry Registry
 	EncoderRegistry EncoderRegistry
 	Limits          TranscodeLimits
 	AllowLossy      bool
+	// Pipeline controls bounded frame work in TranscodePath's streaming route.
+	// In-memory adapters continue to use their bounded whole-object route.
+	Pipeline TranscodePipelineOptions
+	// SkipVerification omits TranscodePath's additional top-level output decode/pixel
+	// comparison. False preserves verification; structural readback, codec
+	// output validation, limits and atomic publication always remain mandatory.
+	SkipVerification bool
+	// MaxPixelError opts into lossy verification in stored-sample units. Nil
+	// preserves the default policy; zero requires zero measured error (exact
+	// samples only when AverageBlockSize is zero or one).
+	// The finite, nonnegative value is copied at the public call boundary.
+	// It cannot be combined with SkipVerification. Comparison uses the native
+	// samples delivered to the encoder (after any explicit Rewrite), without
+	// Rescale, LUT, VOI or display transforms. See LossyVerificationReport.
+	MaxPixelError *float64
+	// AverageBlockSize is the square block side for the difference of sample
+	// means, separately per component and frame. Zero means one (per sample).
+	// Partial edge blocks use their actual area. A positive value requires
+	// MaxPixelError. Opposite signed errors within a block can cancel.
+	AverageBlockSize int
+	// Durability applies only to TranscodePath's filesystem publication.
+	Durability TranscodeDurability
 	// ForceReencode disables the equivalent-transfer-syntax pixel fast path.
 	ForceReencode bool
+	// CompressIcons encodes Icon Image Sequence pixels with the target codec.
+	// By default icons are kept or decoded to native pixels, as PS3.5 A.4
+	// permits even when top-level Pixel Data is encapsulated. Native targets
+	// always receive native icons. This option requires a lossless encoder;
+	// it never silently changes icon samples or infers missing metadata.
+	CompressIcons bool
+	// ExtractEmbeddedOverlays moves overlays stored in unused bits of the
+	// pixel samples (Overlay Bits Allocated > 1) to 1-bit Overlay Data
+	// (60xx,3000) and clears those bits before encoding, since encoders keep
+	// only Bits Stored. Without it such an encoded target fails with
+	// ErrTranscodeEmbeddedOverlay; native targets keep the bits unchanged.
+	ExtractEmbeddedOverlays bool
+	// RecoverUN, when set, first gives UN elements with a known, unambiguous
+	// VR that VR (object.Object.RecoverUN with these options): Private
+	// Creators encoded as UN become LO, public attributes take their
+	// dictionary VR and private ones their PrivateDataDictionary VR, so an
+	// Explicit VR target does not keep UN where the VR is known (as
+	// gdcmconv -X/-U does). The recovery is reported in
+	// TranscodeReport.UNRecovery; without it the output keeps the received
+	// VRs.
+	RecoverUN *object.UNRecoveryOptions
+	// Rewrite, when set, changes the stored pixel representation between
+	// decoding and encoding (RewriteNative): the source is decoded to native
+	// Explicit VR Little Endian, rewritten, then encoded to the target, so
+	// for example PALETTE COLOR, YBR_FULL or planar RGB can reach encoders
+	// that accept only interleaved RGB. Reported in TranscodeReport.Rewrite.
+	Rewrite *NativeRewrite
+	// Recovery enables the opt-in decode tolerances of DecompressOptions for
+	// the source; applied ones are reported in
+	// TranscodeReport.DecodeDiagnostics. With
+	// NativePixelDataUnderEncapsulated, native Pixel Data declared under a
+	// compressed syntax is transcoded as native, so the output declares the
+	// target syntax correctly.
+	Recovery DecodeRecovery
+	// CodestreamTranscoder, when set and able to convert the source syntax to
+	// the target, rewrites the encoded frames directly instead of decoding
+	// and re-encoding pixels (for example JPEG <-> JPEG XL JPEG
+	// Recompression). ForceReencode disables it.
+	CodestreamTranscoder CodestreamTranscoder
 }
 
 // TranscodeReport contains value-free operational metadata.
 type TranscodeReport struct {
+	// IdentityChanged reports caller-requested SOP identity changes (a new
+	// lossy generation is additionally reported by Lossy).
+	IdentityChanged    bool
 	Frames             int
 	NativeBytes        int64
 	EncodedBytes       int64
 	PixelDataPreserved bool
 	Lossy              bool
+	// These fields report TranscodePath's applied policies, including explicit
+	// verification opt-out. PeakInFlightBytes is a conservative package-buffer
+	// reservation, not measured RSS; the disk spool has a separate output cap.
+	Verification TranscodeVerification
+	// LossyVerification records the measured error when MaxPixelError was
+	// applied successfully to a newly lossy representation. Nil means the
+	// lossy error metric was not applied, including pass-through outputs.
+	LossyVerification  *LossyVerificationReport
+	Durability         TranscodeDurability
+	FileSynced         bool
+	DirectorySynced    bool
+	WorkerLimit        int
+	PeakInFlightFrames int
+	PeakInFlightBytes  int64
+	Timings            TranscodeTimings
+	// Streaming distinguishes the bounded frame route from whole-object
+	// fallback (recovery, rewrite, deflated/big-endian and other layouts).
+	Streaming bool
+	// EmbeddedOverlaysExtracted counts overlays moved out of the pixel
+	// samples (TranscodeOptions.ExtractEmbeddedOverlays).
+	EmbeddedOverlaysExtracted int
+	// UNRecovery reports TranscodeOptions.RecoverUN; nil when not requested.
+	UNRecovery *object.UNRecoveryReport
+	// Rewrite reports TranscodeOptions.Rewrite; nil when not requested.
+	Rewrite *NativeRewriteReport
+	// DecodeDiagnostics lists the TranscodeOptions.Recovery tolerances that
+	// were applied (DecompressReport.Diagnostics codes).
+	DecodeDiagnostics []string
+	// EncodeCompatibilityProfiles identifies explicitly selected output
+	// outside a standard DICOM attribute profile, without patient values.
+	EncodeCompatibilityProfiles []EncoderCompatibilityProfile
+	// Icons records the encoding policy applied to each Icon Image Sequence
+	// item. Paths contain only tags and zero-based sequence item indexes.
+	Icons []IconTranscodeReport
 }
 
 // TranscodeError identifies a stable stage without echoing paths, patient
@@ -127,6 +257,44 @@ func ResolveTranscodeLimits(limits TranscodeLimits) (TranscodeLimits, error) {
 // TranscodeDataSet returns a detached data set encoded for target. Input is
 // borrowed and never mutated.
 func TranscodeDataSet(ctx context.Context, dataset *object.Object, source, target transfer.Syntax, options TranscodeOptions) (*object.Object, TranscodeReport, error) {
+	var err error
+	options, err = ResolveTranscodeVerificationOptions(options)
+	if err != nil {
+		return nil, TranscodeReport{}, err
+	}
+	if options.SecondaryCapture {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		limits, err := normalizeTranscodeLimits(options.Limits)
+		if err != nil {
+			return nil, TranscodeReport{}, err
+		}
+		bounded, cancel := context.WithTimeout(ctx, limits.MaxDuration)
+		defer cancel()
+		ctx = bounded
+		limits.MaxOutputBytes = limits.MaxInputBytes
+		if _, err := measureTranscodeObject(ctx, dataset, limits); err != nil {
+			return nil, TranscodeReport{}, err
+		}
+	}
+	if err := validateTranscodeOutputOptions(dataset, target, options); err != nil {
+		return nil, TranscodeReport{}, err
+	}
+	result, report, err := transcodeDataSetIcons(ctx, dataset, source, target, options)
+	if err != nil {
+		return nil, TranscodeReport{}, err
+	}
+	if err := applyMaterializedOutputOptions(ctx, dataset, result, target, options, &report); err != nil {
+		return nil, TranscodeReport{}, err
+	}
+	return result, report, nil
+}
+
+// transcodeDataSet processes top-level pixels; its input has icon sequences
+// temporarily removed so their independently described pixels cannot be
+// mistaken for top-level frames or endian-swapped twice.
+func transcodeDataSet(ctx context.Context, dataset *object.Object, source, target transfer.Syntax, options TranscodeOptions) (*object.Object, TranscodeReport, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -135,6 +303,61 @@ func TranscodeDataSet(ctx context.Context, dataset *object.Object, source, targe
 	}
 	if dataset == nil {
 		return nil, TranscodeReport{}, fmt.Errorf("%w: dataset is nil", ErrMissingMetadata)
+	}
+	if options.RecoverUN != nil {
+		recovered, unReport, err := dataset.RecoverUN(ctx, *options.RecoverUN)
+		if err != nil {
+			return nil, TranscodeReport{}, &TranscodeError{Stage: "un_recovery", Err: err}
+		}
+		options.RecoverUN = nil
+		output, report, err := transcodeDataSet(ctx, recovered, source, target, options)
+		if err != nil {
+			return nil, TranscodeReport{}, err
+		}
+		report.UNRecovery = &unReport
+		return output, report, nil
+	}
+	if options.Recovery.DefinedLengthFragments {
+		options.Recovery.DefinedLengthFragments = false
+		if split, ok := definedLengthFragments(dataset, source); ok {
+			output, report, err := transcodeDataSet(ctx, split, source, target, options)
+			if err != nil {
+				return nil, TranscodeReport{}, err
+			}
+			report.DecodeDiagnostics = append([]string{DiagnosticDefinedLengthFragments}, report.DecodeDiagnostics...)
+			return output, report, nil
+		}
+	}
+	if options.Recovery.NativePixelDataUnderEncapsulated {
+		options.Recovery.NativePixelDataUnderEncapsulated = false
+		if native, ok := nativeUnderEncapsulated(dataset, source); ok {
+			output, report, err := transcodeDataSet(ctx, dataset, native, target, options)
+			if err != nil {
+				return nil, TranscodeReport{}, err
+			}
+			report.DecodeDiagnostics = append([]string{DiagnosticNativePixelDataUnderEncapsulated}, report.DecodeDiagnostics...)
+			return output, report, nil
+		}
+	}
+	if options.Rewrite != nil {
+		rewrite := *options.Rewrite
+		options.Rewrite = nil
+		native, decodeReport, err := transcodeDataSet(ctx, dataset, source, transfer.ExplicitVRLittleEndian, options)
+		if err != nil {
+			return nil, TranscodeReport{}, err
+		}
+		rewritten, rewriteReport, err := RewriteNative(ctx, native, rewrite)
+		if err != nil {
+			return nil, TranscodeReport{}, &TranscodeError{Stage: "rewrite", Err: err}
+		}
+		options.Recovery = DecodeRecovery{}
+		output, report, err := transcodeDataSet(ctx, rewritten, transfer.ExplicitVRLittleEndian, target, options)
+		if err != nil {
+			return nil, TranscodeReport{}, err
+		}
+		report.Rewrite = &rewriteReport
+		report.DecodeDiagnostics = append(decodeReport.DecodeDiagnostics, report.DecodeDiagnostics...)
+		return output, report, nil
 	}
 	limits, err := normalizeTranscodeLimits(options.Limits)
 	if err != nil {
@@ -155,7 +378,13 @@ func TranscodeDataSet(ctx context.Context, dataset *object.Object, source, targe
 	if err != nil {
 		return nil, TranscodeReport{}, err
 	}
-	plan := buildTranscodePlan(source, target, options.ForceReencode, hasAnyPixelData(dataset))
+	legacyRepair := requiresLegacyPixelRepair(options.Recovery)
+	hasPixels := hasAnyPixelData(dataset)
+	plan := buildTranscodePlan(source, target, options.ForceReencode || legacyRepair, hasPixels)
+	// A metadata-only parent may still own separately repaired icon images.
+	if legacyRepair && hasPixels && plan.mode == transcodeNativeClone {
+		plan.mode = transcodeDecodeNative
+	}
 	validated, err := validateTranscodeInput(dataset, plan, limits)
 	if err != nil {
 		return nil, TranscodeReport{}, err
@@ -176,20 +405,20 @@ func TranscodeDataSet(ctx context.Context, dataset *object.Object, source, targe
 			PixelDataPreserved: true,
 		}, nil
 	}
+	if usesCodestreamTranscoder(plan, options) {
+		return transcodeCodestreams(ctx, dataset, metadata, pixel, plan, options, limits)
+	}
 
 	if source.Encapsulated && source.UID != transfer.EncapsulatedUncompressedExplicitVRLittleEndian.UID && options.DecoderRegistry == nil {
 		return nil, TranscodeReport{}, codecAvailabilityError(ErrCodecRegistryNil, source.UID, nil)
 	}
+	var decodeReport DecompressReport
 	decompressed, _, err := DecompressDataSetContext(ctx, dataset, source, DecompressOptions{
 		Registry:             options.DecoderRegistry,
 		TargetTransferSyntax: transfer.ExplicitVRLittleEndian,
-		Limits: DecompressLimits{
-			MaxFrames:         limits.MaxFrames,
-			MaxPixels:         int64(limits.MaxPixels),
-			MaxInputBytes:     limits.MaxInputBytes,
-			MaxNativeBytes:    limits.MaxOutputBytes,
-			MaxExpansionRatio: limits.MaxExpansionRatio,
-		},
+		Recovery:             options.Recovery,
+		Report:               &decodeReport,
+		Limits:               transcodeDecompressLimits(limits),
 	})
 	if err != nil {
 		return nil, TranscodeReport{}, err
@@ -202,12 +431,15 @@ func TranscodeDataSet(ctx context.Context, dataset *object.Object, source, targe
 	if nativeBytes <= 0 || nativeBytes > limits.MaxOutputBytes {
 		return nil, TranscodeReport{}, transcodeLimitError("native_bytes")
 	}
-	report := TranscodeReport{Frames: metadata.NumberOfFrames, NativeBytes: nativeBytes}
+	report := TranscodeReport{Frames: metadata.NumberOfFrames, NativeBytes: nativeBytes, DecodeDiagnostics: decodeReport.Diagnostics}
 
 	switch plan.mode {
 	case transcodeDecodeNative:
 		if target.UID == transfer.ExplicitVRBigEndian.UID {
-			elements := transcodeElementsToLittleEndian(decompressed.Elements())
+			elements, swapErr := transcodeElementsToLittleEndian(decompressed.Elements(), binary.LittleEndian)
+			if swapErr != nil {
+				return nil, TranscodeReport{}, swapErr
+			}
 			result := object.FromElements(elements, nil)
 			result.SetValueByteOrder(binary.BigEndian)
 			result, cloneErr := cloneDetachedObject(ctx, result, outputCloneLimits(limits))
@@ -241,7 +473,12 @@ func TranscodeDataSet(ctx context.Context, dataset *object.Object, source, targe
 		report.EncodedBytes = encodedBytes
 		return result.object, report, nil
 	case transcodeDecodeEncode:
-		return transcodeWithEncoder(ctx, decompressed, metadata, target, options, limits, report)
+		moved, extracted, overlayErr := moveEmbeddedOverlays(decompressed, options.ExtractEmbeddedOverlays)
+		if overlayErr != nil {
+			return nil, TranscodeReport{}, overlayErr
+		}
+		report.EmbeddedOverlaysExtracted = extracted
+		return transcodeWithEncoder(ctx, moved, metadata, target, options, limits, report)
 	default:
 		panic("pixeldata: invalid transcode plan")
 	}

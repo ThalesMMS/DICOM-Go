@@ -60,6 +60,9 @@ type transcodeObjectUsage struct {
 }
 
 func measureTranscodeObject(ctx context.Context, source *object.Object, limits TranscodeLimits) (transcodeObjectUsage, error) {
+	if _, incomplete := source.IncompletePixelData(); incomplete {
+		return transcodeObjectUsage{}, object.ErrPartialFile
+	}
 	if source == nil {
 		return transcodeObjectUsage{}, nil
 	}
@@ -350,6 +353,14 @@ func hasAnyPixelData(dataset *object.Object) bool {
 }
 
 func strictFileTransferSyntax(file *object.File) (transfer.Syntax, error) {
+	if file != nil {
+		if _, partial := file.PartialRead(); partial {
+			return transfer.Syntax{}, object.ErrPartialFile
+		}
+		if _, incomplete := file.Dataset.IncompletePixelData(); incomplete {
+			return transfer.Syntax{}, object.ErrPartialFile
+		}
+	}
 	// Constructed files may legitimately carry the source syntax in either the
 	// File field or File Meta. sourceTransferSyntax accepts either form while
 	// still rejecting a disagreement when both are present.

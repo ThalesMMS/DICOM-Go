@@ -15,14 +15,18 @@ const (
 )
 
 // Encoder encodes canonical native frames as DICOM RLE Lossless frames.
-// Encoder has no mutable state and is safe for concurrent use.
-type Encoder struct{}
+// Encoder is safe for concurrent use. NewEncoder retains at most two 64 KiB
+// workspaces; returned encoded frames always belong to the caller. The zero
+// value is also usable and does not retain workspaces.
+type Encoder struct {
+	workspaces chan []byte
+}
 
 var _ pixeldata.FrameEncoder = (*Encoder)(nil)
 
 // NewEncoder returns a pure Go DICOM RLE Lossless frame encoder.
 func NewEncoder() *Encoder {
-	return &Encoder{}
+	return &Encoder{workspaces: make(chan []byte, 2)}
 }
 
 // RegisterEncoder registers a new RLE encoder in registry.
@@ -37,10 +41,10 @@ func RegisterEncoder(registry pixeldata.EncoderRegistry) error {
 func (*Encoder) Capabilities() pixeldata.EncoderCapabilities {
 	return pixeldata.EncoderCapabilities{
 		TransferSyntaxUID:          UID,
-		BitsAllocated:              []uint16{8, 16},
+		BitsAllocated:              encoderBitsAllocated(),
 		PixelRepresentations:       []uint16{0, 1},
 		SamplesPerPixel:            []uint16{1, 3},
-		PhotometricInterpretations: []string{"MONOCHROME1", "MONOCHROME2", "PALETTE COLOR", "RGB"},
+		PhotometricInterpretations: []string{"MONOCHROME1", "MONOCHROME2", "PALETTE COLOR", "RGB", "YBR_FULL"},
 		Lossless:                   true,
 		SupportsMultiFrame:         true,
 		Backend:                    "pure-go",
@@ -49,7 +53,7 @@ func (*Encoder) Capabilities() pixeldata.EncoderCapabilities {
 
 // EncodeFrame encodes one little-endian, sample-interleaved native frame.
 // The result is one complete RLE frame suitable for one encapsulated fragment.
-func (*Encoder) EncodeFrame(ctx context.Context, frame []byte, metadata pixeldata.Metadata) (pixeldata.EncodedFrame, error) {
+func (e *Encoder) EncodeFrame(ctx context.Context, frame []byte, metadata pixeldata.Metadata) (pixeldata.EncodedFrame, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -71,7 +75,20 @@ func (*Encoder) EncodeFrame(ctx context.Context, frame []byte, metadata pixeldat
 	}
 	encoded := make([]byte, rleHeaderLength, int(capacity))
 	binary.LittleEndian.PutUint32(encoded[0:4], uint32(segmentCount))
-	row := make([]byte, int(metadata.Columns))
+	columns, rows := int(metadata.Columns), int(metadata.Rows)
+	stride := int(metadata.SamplesPerPixel) * bytesPerSample
+	rowsPerChunk := encoderWorkspaceLimit / columns
+	if rowsPerChunk == 0 {
+		rowsPerChunk = 1
+	}
+	if rowsPerChunk > rows {
+		rowsPerChunk = rows
+	}
+	var workspace []byte
+	if stride != 1 {
+		workspace = e.acquireWorkspace(rowsPerChunk * columns)
+		defer e.releaseWorkspace(workspace)
+	}
 
 	for sample := 0; sample < int(metadata.SamplesPerPixel); sample++ {
 		for plane := bytesPerSample - 1; plane >= 0; plane-- {
@@ -81,15 +98,29 @@ func (*Encoder) EncodeFrame(ctx context.Context, frame []byte, metadata pixeldat
 			segment := sample*bytesPerSample + bytesPerSample - 1 - plane
 			binary.LittleEndian.PutUint32(encoded[4+segment*4:8+segment*4], uint32(len(encoded)))
 
-			for y := 0; y < int(metadata.Rows); y++ {
+			for y := 0; y < rows; y += rowsPerChunk {
 				if err := ctx.Err(); err != nil {
 					return pixeldata.EncodedFrame{}, err
 				}
-				for x := 0; x < int(metadata.Columns); x++ {
-					sampleIndex := (y*int(metadata.Columns)+x)*int(metadata.SamplesPerPixel) + sample
-					row[x] = frame[sampleIndex*bytesPerSample+plane]
+				chunkRows := rowsPerChunk
+				if chunkRows > rows-y {
+					chunkRows = rows - y
 				}
-				encoded = appendPackBitsRow(encoded, row)
+				count := chunkRows * columns
+				var chunk []byte
+				if stride == 1 {
+					chunk = frame[y*columns : y*columns+count]
+				} else {
+					chunk = workspace[:count]
+					start := y*columns*stride + sample*bytesPerSample + plane
+					extractBytePlane(chunk, frame[start:], stride)
+					if err := ctx.Err(); err != nil {
+						return pixeldata.EncodedFrame{}, err
+					}
+				}
+				for offset := 0; offset < count; offset += columns {
+					encoded = appendPackBitsRow(encoded, chunk[offset:offset+columns])
+				}
 			}
 			if len(encoded)%2 != 0 {
 				encoded = append(encoded, 0)
@@ -110,7 +141,10 @@ func validateEncoderInput(metadata pixeldata.Metadata) (bytesPerSample int, segm
 	if metadata.Columns == 0 {
 		return 0, 0, 0, 0, unsupportedEncoderMetadata("Columns")
 	}
-	if metadata.BitsAllocated != 8 && metadata.BitsAllocated != 16 {
+	if metadata.SamplesPerPixel != 1 && metadata.SamplesPerPixel != 3 {
+		return 0, 0, 0, 0, unsupportedEncoderMetadata("SamplesPerPixel")
+	}
+	if !supportedBitsAllocated(int(metadata.BitsAllocated), int(metadata.SamplesPerPixel)) {
 		return 0, 0, 0, 0, unsupportedEncoderMetadata("BitsAllocated")
 	}
 	if metadata.BitsStored == 0 || metadata.BitsStored > metadata.BitsAllocated {
@@ -131,9 +165,7 @@ func validateEncoderInput(metadata pixeldata.Metadata) (bytesPerSample int, segm
 	photometric := strings.ToUpper(strings.TrimSpace(metadata.PhotometricInterpretation))
 	switch metadata.SamplesPerPixel {
 	case 1:
-		if metadata.PlanarConfigurationPresent && metadata.PlanarConfiguration != 0 {
-			return 0, 0, 0, 0, unsupportedEncoderMetadata("PlanarConfiguration")
-		}
+		// Planar Configuration is irrelevant for one sample.
 		if photometric != "MONOCHROME1" && photometric != "MONOCHROME2" && photometric != "PALETTE COLOR" {
 			return 0, 0, 0, 0, unsupportedEncoderMetadata("PhotometricInterpretation")
 		}
@@ -141,7 +173,7 @@ func validateEncoderInput(metadata pixeldata.Metadata) (bytesPerSample int, segm
 			return 0, 0, 0, 0, unsupportedEncoderMetadata("PixelRepresentation")
 		}
 	case 3:
-		if photometric != "RGB" {
+		if photometric != "RGB" && photometric != "YBR_FULL" {
 			return 0, 0, 0, 0, unsupportedEncoderMetadata("PhotometricInterpretation")
 		}
 		if metadata.PixelRepresentation != 0 {
@@ -169,6 +201,16 @@ func validateEncoderInput(metadata pixeldata.Metadata) (bytesPerSample int, segm
 		return 0, 0, 0, 0, fmt.Errorf("%w: encoded frame length", pixeldata.ErrEncoderOutputInvalid)
 	}
 	return bytesPerSample, segmentCount, frameLength, maxEncodedLength, nil
+}
+
+// encoderBitsAllocated lists the whole-byte sample widths an RLE header can
+// hold for one sample (up to 15 segments); three samples allow up to 40.
+func encoderBitsAllocated() []uint16 {
+	out := make([]uint16, 0, 15)
+	for bits := uint16(8); bits <= 120; bits += 8 {
+		out = append(out, bits)
+	}
+	return out
 }
 
 func unsupportedEncoderMetadata(field string) error {

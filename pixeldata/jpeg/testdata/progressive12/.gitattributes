@@ -1,0 +1,3 @@
+# Independent sample references and codestreams must keep exact byte hashes.
+*.raw binary
+*.jpg binary

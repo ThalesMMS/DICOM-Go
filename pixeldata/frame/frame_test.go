@@ -710,10 +710,10 @@ func TestNativeFrameGetImageColorErrorsRemainTyped(t *testing.T) {
 		{name: "planar YBR FULL 422", data: make([]byte, 4), metadata: colorTestMetadata(2, "YBR_FULL_422", 1), wantErr: ErrUnsupportedPlanarConfiguration, wantDisplay: display.ErrUnsupportedColorLayout},
 		{name: "odd width YBR FULL 422", data: make([]byte, 8), metadata: colorTestMetadata(3, "YBR_FULL_422", 0), wantErr: ErrInvalidFrameMetadata, wantDisplay: display.ErrUnsupportedColorLayout},
 		{name: "unsupported photometric", data: make([]byte, 3), metadata: colorTestMetadata(1, "YBR_PARTIAL_420", 0), wantErr: ErrUnsupportedPhotometricInterpretation, wantDisplay: display.ErrUnsupportedColorPhotometric},
-		{name: "unsupported bits", data: make([]byte, 6), metadata: func() pixeldata.Metadata { m := colorTestMetadata(1, "RGB", 0); m.BitsAllocated = 16; return m }(), wantErr: ErrUnsupportedBitsAllocated, wantDisplay: display.ErrUnsupportedColorLayout},
-		{name: "bits retain precedence over signed samples", data: make([]byte, 6), metadata: func() pixeldata.Metadata {
+		{name: "unsupported bits", data: make([]byte, 12), metadata: func() pixeldata.Metadata { m := colorTestMetadata(1, "RGB", 0); m.BitsAllocated = 32; return m }(), wantErr: ErrUnsupportedBitsAllocated, wantDisplay: display.ErrUnsupportedColorLayout},
+		{name: "bits retain precedence over signed samples", data: make([]byte, 12), metadata: func() pixeldata.Metadata {
 			m := colorTestMetadata(1, "RGB", 0)
-			m.BitsAllocated = 16
+			m.BitsAllocated = 32
 			m.PixelRepresentation = 1
 			return m
 		}(), wantErr: ErrUnsupportedBitsAllocated, wantDisplay: display.ErrUnsupportedColorLayout},
