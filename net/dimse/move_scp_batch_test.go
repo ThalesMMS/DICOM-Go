@@ -3,6 +3,7 @@ package dimse
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,15 @@ func TestServePatientRootCMoveBatchReportsIncrementalCounts(t *testing.T) {
 	assertCMoveCounts(t, "first pending", responses[0], StatusPending, 2, 1, 0, 0)
 	assertCMoveCounts(t, "second pending", responses[1], StatusPending, 1, 1, 0, 1)
 	assertCMoveCounts(t, "final", responses[2], StatusCMoveSubOperationsCompleteOneOrMoreFailures, 0, 1, 1, 1)
+	for i, response := range responses[:2] {
+		if response.Identifier != nil || response.FailedSOPInstanceUIDListOrNil != nil {
+			t.Fatalf("pending response %d carries an Identifier: %#v", i, response)
+		}
+	}
+	// The warning sub-operation is not listed: only failures are.
+	if got := responses[2].FailedSOPInstanceUIDListOrNil; !reflect.DeepEqual(got, []string{"1.2.3.3"}) {
+		t.Fatalf("final Failed SOP Instance UID List = %v, want [1.2.3.3]", got)
+	}
 }
 
 func TestServeStudyRootCMoveBatchRejectsYieldCardinalityViolations(t *testing.T) {
@@ -178,7 +188,10 @@ func TestServeStudyRootCMoveBatchHonorsInterleavedCCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCMoveCounts(t, "cancel", final, StatusCMoveCancel, 1, 1, 0, 0)
+	if final.NumberOfRemainingSuboperationsOrNil != nil {
+		t.Fatal("Cancel Remaining must be absent for opaque batch initiation")
+	}
+	assertCMoveCounts(t, "cancel", final, StatusCMoveCancel, 0, 1, 0, 0)
 	if err := <-serverDone; !errors.Is(err, ErrCMoveCanceled) {
 		t.Fatalf("ServeStudyRootCMove() error = %v, want ErrCMoveCanceled", err)
 	}

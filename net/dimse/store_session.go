@@ -24,6 +24,7 @@ const (
 )
 
 type StoreItemResult struct {
+	AssociationID               string
 	SourceIndex                 int
 	Descriptor                  StoreDescriptor
 	AssociationIndex            int
@@ -46,11 +47,19 @@ type StoreBatchResult struct {
 	Unknown      int
 	Canceled     int
 	Complete     bool
+	// ReleaseFailures counts associations whose A-RELEASE failed or went
+	// unanswered after every C-STORE on them had its outcome; their items
+	// keep those outcomes. With ContinueOnError the batch goes on to its next
+	// association and StoreBatch returns a "release" StoreError once the
+	// batch ends; without it the batch stops at the first failed release.
+	ReleaseFailures int
 }
 
 // StoreProgress is deliberately origin-, UID-, and value-free. SourceIndex is
 // the stable caller-owned correlation key.
 type StoreProgress struct {
+	// AssociationID is the opaque identity of the real accepted association.
+	AssociationID    string
 	SourceIndex      int
 	Completed        int
 	Total            int
@@ -64,6 +73,10 @@ type StoreProgress struct {
 type StoreProgressHandler func(context.Context, StoreProgress) error
 
 type StoreSessionOptions struct {
+	// DialOptions configure each association. Its CommonExtendedNegotiation
+	// is a catalog: each association proposes the items whose SOP Class it
+	// carries (see RelatedGeneralStorageSOPClasses), so a peer that lacks a
+	// new or private Storage SOP Class can accept it as a related general one.
 	DialOptions ul.DialOptions
 	PlanOptions StorePlanOptions
 
@@ -72,7 +85,10 @@ type StoreSessionOptions struct {
 	RetryUncertain         bool
 	MaxAssociationAttempts int
 	MaxStoreAttempts       int
-	MaxInFlightBytes       int64
+	// MaxInFlightBytes bounds the payload bytes of the operations outstanding
+	// at once on a pipelined association. An object larger than it is sent
+	// alone; PlanOptions.Limits.MaxItemBytes bounds a single object.
+	MaxInFlightBytes int64
 	// MaxInvokedOperations caps outstanding C-STORE operations on one
 	// association. Zero or one keeps the serial StoreClient loop. Values
 	// greater than one opt into AsyncSession pipelining when the peer also
@@ -84,7 +100,26 @@ type StoreSessionOptions struct {
 	MoveOriginatorMessageIDOrNil *uint16
 	ReleaseTimeout               time.Duration
 	CleanupTimeout               time.Duration
-	OnProgress                   StoreProgressHandler
+	// OnProgress reports terminal item progress. On the serial path a confirmed
+	// remote response is reported once even if cancellation arrives before the
+	// callback; its context may already be canceled. No next source starts.
+	OnProgress StoreProgressHandler
+	// OnStorePrepared observes a validated source after presentation-context
+	// selection and before its C-STORE command. It is opt-in, synchronous and
+	// panic-contained, and does not change status or counters. ReadMetadata is
+	// valid only during this callback; keep only its detached result.
+	OnStorePrepared func(context.Context, StorePreparedObservation)
+	// OnStoreResponse observes each correlated remote response before
+	// cancellation accounting and association Finished. Panics are contained.
+	// Outcome describes the remote status alone; Completed/Total remain zero.
+	// Confirmed serial progress follows this observer, including when it cancels
+	// the operation; uncertain exchanges are not promoted to terminal responses.
+	OnStoreResponse func(context.Context, StoreProgress)
+	// Association observers are opt-in, run outside session locks, and must
+	// return promptly. Panics are contained. Finished follows release/abort or
+	// transport termination and is called once per successfully started handle.
+	OnAssociationStarted  func(context.Context, *ul.Association, int)
+	OnAssociationFinished func(context.Context, *ul.Association, int)
 }
 
 type storeDialFunc func(context.Context, string, ul.DialOptions) (*ul.Association, error)
@@ -99,16 +134,23 @@ type StoreSession struct {
 	dial    storeDialFunc
 	runGate chan struct{}
 
-	mu     sync.Mutex
-	closed bool
-	active *ul.Association
+	mu            sync.Mutex
+	closed        bool
+	active        *ul.Association
+	activeContext context.Context
+	activeIndex   int
 }
 
 func NewStoreSession(address string, options StoreSessionOptions) (*StoreSession, error) {
 	if address == "" {
 		return nil, ErrStoreInvalidOptions
 	}
+	fixedContexts, err := cloneStoreProfileContexts(options.PlanOptions.PresentationContexts)
+	if err != nil {
+		return nil, err
+	}
 	options = cloneStoreSessionOptions(options)
+	options.PlanOptions.PresentationContexts = fixedContexts
 	if options.Priority > 2 || options.MaxAssociationAttempts < 0 || options.MaxStoreAttempts < 0 || options.MaxInFlightBytes < 0 || options.MaxInvokedOperations < 0 || options.ReleaseTimeout < 0 || options.CleanupTimeout < 0 {
 		return nil, ErrStoreInvalidOptions
 	}
@@ -124,9 +166,8 @@ func NewStoreSession(address string, options StoreSessionOptions) (*StoreSession
 	if options.CleanupTimeout == 0 {
 		options.CleanupTimeout = time.Second
 	}
-	if options.MaxInFlightBytes > 0 && (options.PlanOptions.Limits.MaxItemBytes == 0 || options.PlanOptions.Limits.MaxItemBytes > options.MaxInFlightBytes) {
-		options.PlanOptions.Limits.MaxItemBytes = options.MaxInFlightBytes
-	}
+	// MaxInFlightBytes is not a per-object bound (#1956): an object above it
+	// is sent alone, and MaxItemBytes keeps its own value.
 	limits, err := normalizeStoreLimits(options.PlanOptions.Limits)
 	if err != nil {
 		return nil, err
@@ -175,7 +216,7 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 	}
 	sources = append([]StoreSource(nil), sources...)
 
-	plan, err := PlanStoreBatch(ctx, sources, s.options.PlanOptions)
+	plan, err := planStoreBatch(ctx, sources, s.options.PlanOptions, s.options.DialOptions.TransferSyntaxAllowlist)
 	result = newStoreBatchResult(plan)
 	defer func() {
 		result.Complete = storeBatchComplete(result.Items)
@@ -207,6 +248,9 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 		return result, plan.Failures[0].Err
 	}
 	remainingTotalBytes := s.options.PlanOptions.Limits.MaxTotalBytes
+	// deadAssociations counts consecutive associations that became unusable
+	// without one stored object.
+	deadAssociations := 0
 
 	for associationIndex := range plan.Associations {
 		associationPlan := plan.Associations[associationIndex]
@@ -230,7 +274,9 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 					item.AssociationIndex = associationIndex
 					item.Attempt = dialAttempt
 					item.Outcome = StoreOutcomeFailure
-					cause := error(ErrStoreAssociation)
+					// Keep the dial error in the chain so a caller can tell a
+					// refused connection or a timeout from a rejection.
+					cause := fmt.Errorf("%w: %w", ErrStoreAssociation, dialErr)
 					if errors.Is(dialErr, ul.ErrNoAcceptedPresentationContexts) {
 						cause = fmt.Errorf("%w: %w", ErrStorePresentationContextRejected, dialErr)
 					}
@@ -251,8 +297,20 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 				break
 			}
 			result.Associations++
-			s.setActive(assoc)
+			s.setActive(ctx, assoc, associationIndex)
 			associationUsable := true
+			succeededAtDial := result.Succeeded
+			// stopReconnecting reports the second consecutive association
+			// lost before storing anything. Each further attempt would cost
+			// one more timeout against a peer that is not answering.
+			stopReconnecting := func() bool {
+				if result.Succeeded != succeededAtDial {
+					deadAssociations = 0
+					return false
+				}
+				deadAssociations++
+				return deadAssociations >= maxDeadStoreAssociations
+			}
 			if invoked := effectiveStoreInvoked(storeSessionPipelineOptIn(s.options), s.options.MaxInvokedOperations, assoc.EffectiveAsynchronousOperationsWindow()); invoked > 1 {
 				nextPos, nextCompleted, usable, pipeErr := s.storeAssociationPipelined(ctx, assoc, invoked, associationPlan, &result, sources, associationIndex, position, completed, &remainingTotalBytes)
 				position = nextPos
@@ -262,7 +320,7 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 					return result, pipeErr
 				}
 				if !associationUsable {
-					if s.options.DisableReconnect || position >= len(associationPlan.Items) {
+					if stopReconnecting() || s.options.DisableReconnect || position >= len(associationPlan.Items) {
 						for _, remaining := range associationPlan.Items[position:] {
 							remainingResult := &result.Items[remaining.SourceIndex]
 							if remainingResult.Outcome != StoreOutcomeNotSent {
@@ -270,7 +328,7 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 							}
 							remainingResult.Descriptor = cloneStoreDescriptor(remaining.Descriptor)
 							remainingResult.Outcome = StoreOutcomeFailure
-							remainingResult.Err = newStoreError("reconnect", remaining.SourceIndex, ErrStoreAssociation, false)
+							remainingResult.Err = newStoreError("reconnect", remaining.SourceIndex, lostAssociationCause(&result, associationPlan.Items[:position]), false)
 							result.Failed++
 							completed++
 						}
@@ -285,10 +343,11 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 				item := &result.Items[planned.SourceIndex]
 				item.Descriptor = cloneStoreDescriptor(planned.Descriptor)
 				item.AssociationIndex = associationIndex
+				item.AssociationID = assoc.ID()
 				item.Attempt++
 				if err := s.contextOrClosed(ctx); err != nil {
 					associationUsable = false
-					s.abortAssociation(assoc)
+					s.abortAssociation(assoc, nil)
 					s.clearActive(assoc)
 					s.cancelAllNotSent(&result, plan, err)
 					result.Complete = storeBatchComplete(result.Items)
@@ -316,13 +375,29 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 					}
 					continue
 				}
-				opened, openErr := openStoreSource(ctx, sources[planned.SourceIndex])
+				opened, selectedPC, openErr := s.selectedStoreRepresentation(ctx, sources[planned.SourceIndex], assoc, planned.Descriptor, remainingTotalBytes)
 				if openErr == nil {
 					openErr = validateOpenedStoreSource(planned.Descriptor, opened)
+				}
+				if openErr == nil {
+					s.observeStorePrepared(ctx, *item, opened, selectedPC.TransferSyntaxUID)
+					openErr = checkStoreAccess(ctx, opened.BeforeStore)
 				}
 				if openErr != nil {
 					if opened.Close != nil {
 						_ = closeStoreSource(opened.Close)
+					}
+					if errors.Is(openErr, ErrStoreAccessDenied) {
+						item.Err = newStoreError("authorize", planned.SourceIndex, ErrStoreAccessDenied, false)
+						_ = s.releaseAssociation(assoc)
+						s.clearActive(assoc)
+						return result, item.Err
+					}
+					if err := ctx.Err(); err != nil && opened.BeforeStore != nil {
+						s.abortAssociation(assoc, nil)
+						s.clearActive(assoc)
+						s.cancelAllNotSent(&result, plan, err)
+						return result, err
 					}
 					item.Outcome = StoreOutcomeFailure
 					item.Err = newStoreError("open", planned.SourceIndex, openErr, false)
@@ -347,15 +422,18 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 				}
 
 				item.Attempted = true
-				writeDataSet := s.boundedStoreWriter(opened.WriteDataSet, &remainingTotalBytes)
+				writeDataSet := s.boundedStoreWriter(opened.WriteDataSet, &remainingTotalBytes, storeWriterRepresentationBound(planned.Descriptor, selectedPC.TransferSyntaxUID))
 				storeResult, storeErr := client.StoreEncodedWithOptions(ctx, writeDataSet, CStoreOptions{
 					AffectedSOPClassUID:          planned.Descriptor.SOPClassUID,
 					AffectedSOPInstanceUID:       planned.Descriptor.SOPInstanceUID,
-					TransferSyntaxUIDs:           planned.Descriptor.WritableTransferSyntaxUIDs,
+					TransferSyntaxUIDs:           []string{selectedPC.TransferSyntaxUID},
 					Priority:                     s.options.Priority,
 					MoveOriginatorAETitle:        s.options.MoveOriginatorAETitle,
 					MoveOriginatorMessageIDOrNil: s.options.MoveOriginatorMessageIDOrNil,
 				})
+				if storeResult.Response != nil {
+					s.observeStoreResponse(ctx, *item, storeResult.Response.Status)
+				}
 				closeErr := closeStoreSource(opened.Close)
 				item.NegotiatedTransferSyntaxUID = storeResult.PresentationContext.TransferSyntaxUID
 				if storeResult.Response != nil {
@@ -365,7 +443,7 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 				uncertain := errors.Is(storeErr, ErrAssociationStateUncertain)
 				if uncertain && !s.options.DisableReconnect && s.options.RetryUncertain && item.Attempt < s.options.MaxStoreAttempts {
 					associationUsable = false
-					s.abortAssociation(assoc)
+					s.abortAssociation(assoc, storeErr)
 					s.clearActive(assoc)
 					item.Outcome = StoreOutcomeNotSent
 					item.Err = nil
@@ -374,7 +452,7 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 				switch {
 				case uncertain:
 					item.Outcome = StoreOutcomeUnknown
-					cause := error(ErrStoreUncertain)
+					cause := uncertainStoreCause(storeErr)
 					if errors.Is(storeErr, ErrStoreResourceLimit) {
 						cause = ErrStoreResourceLimit
 					}
@@ -399,41 +477,51 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 				}
 				completed++
 				position++
-				if ctx.Err() != nil {
+				// Preserve a correlated terminal exchange already received before
+				// cancellation. Its completion must reach OnProgress exactly once;
+				// the callback's cancellation check then stops the batch. An uncertain
+				// exchange has no authoritative terminal result and still aborts here.
+				if ctx.Err() != nil && (storeResult.Response == nil || uncertain) {
 					associationUsable = false
-					s.abortAssociation(assoc)
+					s.abortAssociation(assoc, storeErr)
 					s.clearActive(assoc)
 					s.cancelAllNotSent(&result, plan, ctx.Err())
 					result.Complete = storeBatchComplete(result.Items)
 					return result, ctx.Err()
 				}
-				if err := s.reportProgress(ctx, *item, completed, len(sources)); err != nil {
+				progressErr := s.reportProgress(ctx, *item, completed, len(sources))
+				if progressErr == nil {
+					// A nil progress callback still must return the cancellation of
+					// the last confirmed item, rather than finish the batch successfully.
+					progressErr = ctx.Err()
+				}
+				if progressErr != nil {
 					_ = s.releaseAssociation(assoc)
 					s.clearActive(assoc)
 					if ctx.Err() != nil {
 						s.cancelAllNotSent(&result, plan, ctx.Err())
 						result.Complete = storeBatchComplete(result.Items)
 					}
-					return result, err
+					return result, progressErr
 				}
 				if item.Err != nil && !s.options.ContinueOnError {
 					if associationUsable {
 						_ = s.releaseAssociation(assoc)
 					} else {
-						s.abortAssociation(assoc)
+						s.abortAssociation(assoc, storeErr)
 					}
 					s.clearActive(assoc)
 					return result, item.Err
 				}
 				if !associationUsable {
-					s.abortAssociation(assoc)
+					s.abortAssociation(assoc, storeErr)
 					s.clearActive(assoc)
-					if s.options.DisableReconnect || position >= len(associationPlan.Items) {
+					if stopReconnecting() || s.options.DisableReconnect || position >= len(associationPlan.Items) {
 						for _, remaining := range associationPlan.Items[position:] {
 							remainingResult := &result.Items[remaining.SourceIndex]
 							remainingResult.Descriptor = cloneStoreDescriptor(remaining.Descriptor)
 							remainingResult.Outcome = StoreOutcomeFailure
-							remainingResult.Err = newStoreError("reconnect", remaining.SourceIndex, ErrStoreAssociation, false)
+							remainingResult.Err = newStoreError("reconnect", remaining.SourceIndex, lostAssociationCause(&result, associationPlan.Items[:position]), false)
 							result.Failed++
 							completed++
 						}
@@ -446,14 +534,32 @@ func (s *StoreSession) StoreBatch(ctx context.Context, sources []StoreSource) (r
 				releaseErr := s.releaseAssociation(assoc)
 				s.clearActive(assoc)
 				if releaseErr != nil {
-					return result, newStoreError("release", -1, ErrStoreAssociation, false)
+					// Every item of this association has its outcome; a lost
+					// release ends only this association (#2000).
+					result.ReleaseFailures++
+					if !s.options.ContinueOnError {
+						return result, storeReleaseError()
+					}
 				}
 			}
 		}
 	}
 	result.Complete = storeBatchComplete(result.Items)
+	if result.ReleaseFailures > 0 {
+		return result, storeReleaseError()
+	}
 	return result, nil
 }
+
+// storeReleaseError reports an association whose release failed after every
+// C-STORE on it had its outcome.
+func storeReleaseError() error {
+	return newStoreError("release", -1, ErrStoreAssociation, false)
+}
+
+// maxDeadStoreAssociations is how many consecutive associations may be lost
+// without a stored object before a batch stops reconnecting.
+const maxDeadStoreAssociations = 2
 
 func newStoreBatchResult(plan StorePlan) StoreBatchResult {
 	items := make([]StoreItemResult, plan.SourceCount)
@@ -472,6 +578,7 @@ func (s *StoreSession) dialAssociation(ctx context.Context, contexts []ul.Presen
 		opts := cloneStoreDialOptions(s.options.DialOptions)
 		opts.Context = ctx
 		opts.Contexts = cloneStorePresentationContexts(contexts)
+		opts.CommonExtendedNegotiation = commonExtendedNegotiationFor(opts.CommonExtendedNegotiation, opts.Contexts)
 		if storeSessionPipelineOptIn(s.options) && opts.AsynchronousOperationsWindow == nil {
 			invoked := uint16(s.options.MaxInvokedOperations)
 			opts.AsynchronousOperationsWindow = &ul.AsynchronousOperationsWindow{
@@ -526,7 +633,7 @@ func validateOpenedStoreSource(planned StoreDescriptor, opened OpenedStoreSource
 	if actual.SOPClassUID != planned.SOPClassUID || actual.SOPInstanceUID != planned.SOPInstanceUID || actual.TransferSyntaxUID != planned.TransferSyntaxUID || (planned.Size > 0 && actual.Size != planned.Size) {
 		return ErrStoreSourceChanged
 	}
-	if !equalStoreSyntaxUIDs(actual.WritableTransferSyntaxUIDs, planned.WritableTransferSyntaxUIDs) {
+	if !equalStoreSyntaxUIDs(actual.WritableTransferSyntaxUIDs, planned.WritableTransferSyntaxUIDs) || !equalStoreRepresentationSizes(actual.TransferSyntaxSizes, planned.TransferSyntaxSizes) {
 		return ErrStoreSourceChanged
 	}
 	if planned.PixelDataHeaderSet && (!actual.PixelDataHeaderSet || actual.PixelDataHeader != planned.PixelDataHeader) {
@@ -564,7 +671,7 @@ func (s *StoreSession) reportProgress(ctx context.Context, item StoreItemResult,
 		return nil
 	}
 	progress := StoreProgress{
-		SourceIndex: item.SourceIndex, Completed: completed, Total: total,
+		AssociationID: item.AssociationID, SourceIndex: item.SourceIndex, Completed: completed, Total: total,
 		AssociationIndex: item.AssociationIndex, Attempt: item.Attempt,
 		Outcome: item.Outcome, Status: item.Status, StatusSet: item.StatusSet,
 	}
@@ -593,10 +700,13 @@ func (s *StoreSession) releaseAssociation(assoc *ul.Association) error {
 	return assoc.Release(ctx)
 }
 
-func (s *StoreSession) abortAssociation(assoc *ul.Association) {
+// abortAssociation aborts after cause: a protocol violation is answered with
+// an A-P-ABORT and its reason, anything else (nil included) with a
+// service-user A-ABORT.
+func (s *StoreSession) abortAssociation(assoc *ul.Association, cause error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.options.CleanupTimeout)
 	defer cancel()
-	_ = assoc.AbortWithContext(ctx, ul.AbortReasonNotSpecified)
+	_ = assoc.AbortForError(ctx, cause)
 }
 
 func (s *StoreSession) cancelAllNotSent(result *StoreBatchResult, plan StorePlan, cause error) {
@@ -616,8 +726,11 @@ func (s *StoreSession) cancelAllNotSent(result *StoreBatchResult, plan StorePlan
 	}
 }
 
-func (s *StoreSession) boundedStoreWriter(writeDataSet CStoreDataSetWriter, remainingTotal *int64) CStoreDataSetWriter {
+func (s *StoreSession) boundedStoreWriter(writeDataSet CStoreDataSetWriter, remainingTotal *int64, representationBound int64) CStoreDataSetWriter {
 	limit := s.options.PlanOptions.Limits.MaxItemBytes
+	if representationBound > 0 {
+		limit = min(limit, representationBound)
+	}
 	return func(ctx context.Context, destination io.Writer, syntax transfer.Syntax) error {
 		writer := &storeByteLimitWriter{destination: destination, remaining: limit, remainingTotal: remainingTotal}
 		return writeDataSet(ctx, writer, syntax)
@@ -676,18 +789,35 @@ func (s *StoreSession) isClosed() bool {
 	return s.closed
 }
 
-func (s *StoreSession) setActive(assoc *ul.Association) {
+func (s *StoreSession) setActive(ctx context.Context, assoc *ul.Association, index int) {
 	s.mu.Lock()
 	s.active = assoc
+	s.activeContext = ctx
+	s.activeIndex = index
 	s.mu.Unlock()
+	observeStoreAssociation(s.options.OnAssociationStarted, ctx, assoc, index)
 }
 
 func (s *StoreSession) clearActive(assoc *ul.Association) {
 	s.mu.Lock()
-	if s.active == assoc {
+	active := s.active == assoc
+	ctx, index := s.activeContext, s.activeIndex
+	if active {
 		s.active = nil
+		s.activeContext = nil
 	}
 	s.mu.Unlock()
+	if active {
+		observeStoreAssociation(s.options.OnAssociationFinished, context.WithoutCancel(ctx), assoc, index)
+	}
+}
+
+func observeStoreAssociation(observer func(context.Context, *ul.Association, int), ctx context.Context, assoc *ul.Association, index int) {
+	if observer == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	observer(ctx, assoc, index)
 }
 
 // Close prevents new batches. It waits for an active batch to finish and is
@@ -737,11 +867,17 @@ func cloneStoreSessionOptions(options StoreSessionOptions) StoreSessionOptions {
 }
 
 func cloneStoreDialOptions(options ul.DialOptions) ul.DialOptions {
+	options.Transport = options.Transport.Clone()
 	options.Contexts = cloneStorePresentationContexts(options.Contexts)
+	options.TransferSyntaxAllowlist = append([]string(nil), options.TransferSyntaxAllowlist...)
 	options.RoleSelections = append([]ul.RoleSelectionItem(nil), options.RoleSelections...)
 	options.ExtendedNegotiation = append([]ul.SopClassExtendedNegotiationItem(nil), options.ExtendedNegotiation...)
 	for i := range options.ExtendedNegotiation {
 		options.ExtendedNegotiation[i].Data = append([]byte(nil), options.ExtendedNegotiation[i].Data...)
+	}
+	options.CommonExtendedNegotiation = append([]ul.SopClassCommonExtendedNegotiationItem(nil), options.CommonExtendedNegotiation...)
+	for i := range options.CommonExtendedNegotiation {
+		options.CommonExtendedNegotiation[i].RelatedGeneralSOPClassUIDs = append([]string(nil), options.CommonExtendedNegotiation[i].RelatedGeneralSOPClassUIDs...)
 	}
 	if options.UserIdentity != nil {
 		identity := *options.UserIdentity
@@ -765,4 +901,31 @@ func cloneStorePresentationContexts(contexts []ul.PresentationContext) []ul.Pres
 		clone[i].TransferSyntaxUIDs = append([]string(nil), clone[i].TransferSyntaxUIDs...)
 	}
 	return clone
+}
+
+func equalStoreRepresentationSizes(left, right map[string]int64) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for uid, bound := range left {
+		if right[uid] != bound {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *StoreSession) observeStoreResponse(ctx context.Context, item StoreItemResult, status uint16) {
+	if s.options.OnStoreResponse == nil {
+		return
+	}
+	outcome := StoreOutcomeFailure
+	if status == StatusSuccess {
+		outcome = StoreOutcomeSuccess
+	} else if IsCStoreWarningStatus(status) {
+		outcome = StoreOutcomeWarning
+	}
+	progress := StoreProgress{AssociationID: item.AssociationID, SourceIndex: item.SourceIndex, AssociationIndex: item.AssociationIndex, Attempt: item.Attempt, Outcome: outcome, Status: status, StatusSet: true}
+	defer func() { _ = recover() }()
+	s.options.OnStoreResponse(context.WithoutCancel(ctx), progress)
 }

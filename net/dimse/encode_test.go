@@ -49,3 +49,28 @@ func TestEncodeCommandSetUsesImplicitVRLittleEndianGroupLength(t *testing.T) {
 		t.Fatalf("MessageID = %d, want 7", messageID)
 	}
 }
+
+// Command UIDs repeat a dataset's identity, which may be a legacy value read
+// from a file; forwarding it must not fail on the command copy, which has to
+// match the dataset it announces.
+func TestEncodeCommandSetCarriesLegacyUIDsUnchanged(t *testing.T) {
+	const legacy = "1.2.826.0.1.03.RTPLAN"
+	data, err := EncodeCommandSet(CStoreRequest{AffectedSOPClassUID: "1.2.840.10008.5.1.4.1.1.7", AffectedSOPInstanceUID: legacy, MessageID: 3}.CommandSet())
+	if err != nil {
+		t.Fatalf("EncodeCommandSet() error = %v", err)
+	}
+	command, err := DecodeCommandSet(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := ParseCStoreRequest(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.AffectedSOPInstanceUID != legacy || request.AffectedSOPClassUID != "1.2.840.10008.5.1.4.1.1.7" {
+		t.Fatalf("decoded request %+v", request)
+	}
+	if !bytes.Contains(data, append([]byte(legacy), 0)) {
+		t.Fatal("odd-length UID not NUL-padded")
+	}
+}

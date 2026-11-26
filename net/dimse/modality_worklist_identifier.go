@@ -24,6 +24,7 @@ type ParsedModalityWorklistIdentifier struct {
 	Query                   ModalityWorklistQuery
 	UnsupportedOptionalKeys []core.Tag
 
+	optionalKeys      []core.Tag
 	requestedTopLevel []core.Tag
 	requestedStep     []core.Tag
 }
@@ -31,6 +32,12 @@ type ParsedModalityWorklistIdentifier struct {
 // ParseModalityWorklistIdentifier validates and decodes the MWL profile
 // supported by this package. Values are detached from identifier.
 func ParseModalityWorklistIdentifier(identifier *object.Object) (ParsedModalityWorklistIdentifier, error) {
+	return ParseModalityWorklistIdentifierWithOptions(identifier, ModalityWorklistParseOptions{})
+}
+
+// ParseModalityWorklistIdentifierWithOptions is ParseModalityWorklistIdentifier
+// with the relaxations in options.
+func ParseModalityWorklistIdentifierWithOptions(identifier *object.Object, options ModalityWorklistParseOptions) (ParsedModalityWorklistIdentifier, error) {
 	if identifier == nil {
 		return ParsedModalityWorklistIdentifier{}, mwlIdentifierError(core.Tag{}, "missing Identifier")
 	}
@@ -106,7 +113,7 @@ func ParseModalityWorklistIdentifier(identifier *object.Object) (ParsedModalityW
 			parsed.Query.RequestedProcedureDescription = key
 			parsed.requestedTopLevel = append(parsed.requestedTopLevel, tag)
 		case tagMWLScheduledProcedureStepSequence:
-			step, requested, unsupported, err := parseMWLScheduledProcedureStep(identifier, element)
+			step, requested, unsupported, err := parseMWLScheduledProcedureStep(identifier, element, options)
 			if err != nil {
 				return ParsedModalityWorklistIdentifier{}, err
 			}
@@ -114,7 +121,17 @@ func ParseModalityWorklistIdentifier(identifier *object.Object) (ParsedModalityW
 			parsed.requestedStep = requested
 			parsed.UnsupportedOptionalKeys = append(parsed.UnsupportedOptionalKeys, unsupported...)
 		default:
-			return ParsedModalityWorklistIdentifier{}, mwlIdentifierError(tag, "attribute is outside supported MWL model")
+			if handled, err := parseMWLOptionalKey(&parsed, identifier, element, options); handled {
+				if err != nil {
+					return ParsedModalityWorklistIdentifier{}, err
+				}
+				continue
+			}
+			if err := acceptModalityWorklistReturnKey(element, modalityWorklistReturnKeys[tag], options, "attribute is outside supported MWL model"); err != nil {
+				return ParsedModalityWorklistIdentifier{}, err
+			}
+			parsed.requestedTopLevel = append(parsed.requestedTopLevel, tag)
+			parsed.UnsupportedOptionalKeys = append(parsed.UnsupportedOptionalKeys, tag)
 		}
 	}
 	if parsed.Query.TimezoneOffsetFromUTC != "" && !modalityWorklistQueryHasTemporalKey(parsed.Query) {
@@ -123,7 +140,7 @@ func ParseModalityWorklistIdentifier(identifier *object.Object) (ParsedModalityW
 	return parsed, nil
 }
 
-func parseMWLScheduledProcedureStep(identifier *object.Object, element core.Element) (*ModalityWorklistScheduledProcedureStep, []core.Tag, []core.Tag, error) {
+func parseMWLScheduledProcedureStep(identifier *object.Object, element core.Element, options ModalityWorklistParseOptions) (*ModalityWorklistScheduledProcedureStep, []core.Tag, []core.Tag, error) {
 	if element.VR() != core.VRSQ {
 		return nil, nil, nil, mwlIdentifierError(element.Tag(), "unexpected VR")
 	}
@@ -176,11 +193,19 @@ func parseMWLScheduledProcedureStep(identifier *object.Object, element core.Elem
 			if nested.VR() != core.VRSQ {
 				return nil, nil, nil, mwlIdentifierError(tag, "unexpected VR")
 			}
+			if err := acceptModalityWorklistReturnKey(nested, true, options, "protocol is return-only"); err != nil {
+				return nil, nil, nil, err
+			}
 			unsupported = append(unsupported, tag)
 			requested = append(requested, tag)
 			continue
 		default:
-			return nil, nil, nil, mwlIdentifierError(tag, "nested attribute is outside supported MWL model")
+			if err := acceptModalityWorklistReturnKey(nested, modalityWorklistStepReturnKeys[tag], options, "nested attribute is outside supported MWL model"); err != nil {
+				return nil, nil, nil, err
+			}
+			unsupported = append(unsupported, tag)
+			requested = append(requested, tag)
+			continue
 		}
 		if err != nil {
 			return nil, nil, nil, err
@@ -191,6 +216,9 @@ func parseMWLScheduledProcedureStep(identifier *object.Object, element core.Elem
 }
 
 func modalityWorklistPendingStatus(parsed ParsedModalityWorklistIdentifier, candidate *object.Object) uint16 {
+	if mwlOptionalReturnKeyMissing(parsed, candidate) {
+		return StatusPendingWarning
+	}
 	for _, unsupported := range parsed.UnsupportedOptionalKeys {
 		nested := false
 		for _, requested := range parsed.requestedStep {
@@ -236,6 +264,19 @@ func parseMWLKey(source *object.Object, tag core.Tag, wantVR core.VR, kind mwlMa
 	return key, nil
 }
 
+// acceptModalityWorklistReturnKey admits a return-only key: a Table K.6-1
+// attribute (standard) or, with AcceptUnknownReturnKeys, any other attribute,
+// requested with an empty value.
+func acceptModalityWorklistReturnKey(element core.Element, standard bool, options ModalityWorklistParseOptions, outsideReason string) error {
+	if !standard && !options.AcceptUnknownReturnKeys {
+		return mwlIdentifierError(element.Tag(), outsideReason)
+	}
+	if !modalityWorklistReturnKeyRequest(element) {
+		return mwlIdentifierError(element.Tag(), "matching on this return key is not supported")
+	}
+	return nil
+}
+
 func mwlIdentifierError(tag core.Tag, reason string) error {
 	if tag == (core.Tag{}) {
 		return fmt.Errorf("%w: %s", ErrModalityWorklistIdentifier, reason)
@@ -279,7 +320,13 @@ func projectModalityWorklistResultWithLimits(parsed ParsedModalityWorklistIdenti
 	}
 	for _, tag := range parsed.requestedTopLevel {
 		if element, ok := candidate.Get(tag); ok {
-			cloned, err := budget.cloneElement(element, 0)
+			var cloned core.Element
+			var err error
+			if key, found := mwlOptionalSequenceForTag(&parsed.Query, tag); found {
+				cloned, err = projectMWLSequenceKey(key, candidate, tag, &budget, 0)
+			} else {
+				cloned, err = budget.cloneElement(element, 0)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -421,7 +468,7 @@ func validateModalityWorklistStepDescriptionAlternative(item core.DataSet, chara
 
 func modalityWorklistResponseContainsTemporalAttribute(elements []core.Element) bool {
 	for _, element := range elements {
-		if element.Tag() == tagMWLScheduledProcedureStepStartTime {
+		if element.Tag() == tagMWLScheduledProcedureStepStartTime || element.Tag() == core.NewTag(0x0008, 0x0030) {
 			return true
 		}
 		if sequence, ok := element.Value.(core.SequenceValue); ok {
@@ -612,9 +659,17 @@ func validateModalityWorklistResultElementWithCharacterSet(element core.Element,
 		}
 	}
 	if required {
+		// Required means a non-empty value; the dictionary VM check above
+		// bounds the count, so Scheduled Station AE Title (VM 1-n) may carry
+		// several.
 		values := element.StringValues()
-		if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+		if len(values) == 0 {
 			return fmt.Errorf("%w", ErrModalityWorklistProvider)
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%w", ErrModalityWorklistProvider)
+			}
 		}
 	}
 	return nil
@@ -800,6 +855,11 @@ func modalityWorklistResultRule(tag core.Tag) (core.VR, bool, bool) {
 }
 
 func (parsed ParsedModalityWorklistIdentifier) modalityWorklistUnsupported(tag core.Tag) bool {
+	for _, optional := range parsed.optionalKeys {
+		if optional == tag {
+			return true
+		}
+	}
 	for _, unsupported := range parsed.UnsupportedOptionalKeys {
 		if unsupported == tag {
 			return true

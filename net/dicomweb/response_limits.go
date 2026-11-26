@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// ResponseDecodeErrorKind classifies structural WADO-RS response failures.
+// ResponseDecodeErrorKind classifies structural WADO response failures.
 type ResponseDecodeErrorKind string
 
 const (
@@ -22,6 +22,7 @@ const (
 	ResponseDecodeHeaderBytes        ResponseDecodeErrorKind = "header_bytes"
 	ResponseDecodeMultipartDepth     ResponseDecodeErrorKind = "multipart_depth"
 	ResponseDecodeMalformedMultipart ResponseDecodeErrorKind = "malformed_multipart"
+	ResponseDecodeTruncatedBody      ResponseDecodeErrorKind = "truncated_body"
 	ResponseDecodeTransferEncoding   ResponseDecodeErrorKind = "transfer_encoding"
 )
 
@@ -54,6 +55,8 @@ func (e *ResponseDecodeError) Error() string {
 		return fmt.Sprintf("DICOMweb multipart response exceeds depth %d", e.Limit)
 	case ResponseDecodeMalformedMultipart:
 		return "DICOMweb multipart response is malformed or truncated"
+	case ResponseDecodeTruncatedBody:
+		return "DICOMweb response body is truncated"
 	case ResponseDecodeTransferEncoding:
 		return "DICOMweb response part uses an unsupported Content-Transfer-Encoding"
 	default:
@@ -121,6 +124,7 @@ func maximumResponseBodyBytes(options Options) int64 {
 
 type responseMediaPolicy struct {
 	requireMultipart bool
+	plainSingleMedia bool
 	frames           bool
 	single           map[string]struct{}
 	parts            map[string]struct{}
@@ -186,7 +190,8 @@ func validateOuterResponseMediaType(contentType string, policy responseMediaPoli
 		}
 		return mediaType, params, nil
 	}
-	if policy.requireMultipart || !mediaAllowed(mediaType, policy.single, limits.allowedMedia) {
+	if policy.requireMultipart || (policy.plainSingleMedia && len(params) != 0) ||
+		!mediaAllowed(mediaType, policy.single, limits.allowedMedia) {
 		return "", nil, &ResponseDecodeError{Kind: ResponseDecodeUnexpectedMedia}
 	}
 	return mediaType, params, nil
@@ -311,7 +316,7 @@ func (r *responsePartLimitReader) Read(buffer []byte) (int, error) {
 			}
 			return 0, &ResponseDecodeError{Kind: ResponseDecodePartBytes, Limit: r.limit, Value: value}
 		}
-		return 0, err
+		return 0, responsePartReadError(err)
 	}
 	if int64(len(buffer)) > r.remaining {
 		buffer = buffer[:r.remaining]

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -35,7 +36,7 @@ func (c Client) Verify(ctx context.Context) (VerifyResult, error) {
 		return VerifyResult{}, err
 	}
 	started := time.Now()
-	resp, err := c.doGET(ctx, u, c.metadataAcceptHeader())
+	resp, err := c.doGETUncached(ctx, u, c.metadataAcceptHeader())
 	result := VerifyResult{Response: resp, Duration: time.Since(started), StartedAt: started.UTC()}
 	if err != nil {
 		return result, err
@@ -65,21 +66,29 @@ func (c Client) SearchStudies(ctx context.Context, params url.Values) ([]Dataset
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.doGET(ctx, u, c.metadataAcceptHeader())
+	datasets, _, err := c.searchAt(ctx, u)
+	return datasets, err
+}
+
+// searchAt performs one QIDO-RS request and also returns the response, whose
+// Warning headers drive pagination.
+func (c Client) searchAt(ctx context.Context, u *url.URL) ([]Dataset, Response, error) {
+	result, err := c.doGET(ctx, u, c.metadataAcceptHeader())
+	resp := result.Response
 	if err != nil {
-		return nil, err
+		return nil, resp, err
 	}
 	if resp.StatusCode == http.StatusNoContent {
-		return nil, nil
+		return nil, resp, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, statusError(resp)
+		return nil, resp, statusError(resp)
 	}
 	datasets, err := c.datasetsFromMetadataResponse(ctx, resp, false)
 	if err != nil {
-		return nil, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
+		return nil, resp, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
 	}
-	return datasets, nil
+	return datasets, resp, nil
 }
 
 // SearchSeries performs a QIDO-RS series search for one study and returns
@@ -92,21 +101,8 @@ func (c Client) SearchSeries(ctx context.Context, studyInstanceUID string, param
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.doGET(ctx, u, c.metadataAcceptHeader())
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusNoContent {
-		return nil, nil
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, statusError(resp)
-	}
-	datasets, err := c.datasetsFromMetadataResponse(ctx, resp, false)
-	if err != nil {
-		return nil, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
-	}
-	return datasets, nil
+	datasets, _, err := c.searchAt(ctx, u)
+	return datasets, err
 }
 
 // SearchInstances performs a QIDO-RS instance search for one series and
@@ -119,103 +115,69 @@ func (c Client) SearchInstances(ctx context.Context, studyInstanceUID, seriesIns
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.doGET(ctx, u, c.metadataAcceptHeader())
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusNoContent {
-		return nil, nil
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, statusError(resp)
-	}
-	datasets, err := c.datasetsFromMetadataResponse(ctx, resp, false)
-	if err != nil {
-		return nil, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
-	}
-	return datasets, nil
+	datasets, _, err := c.searchAt(ctx, u)
+	return datasets, err
 }
 
 // StudyMetadata retrieves WADO-RS study metadata and returns instance references.
 func (c Client) StudyMetadata(ctx context.Context, studyInstanceUID string) ([]InstanceRef, error) {
-	datasets, response, err := c.studyMetadataDatasets(ctx, studyInstanceUID)
-	if err != nil {
-		return nil, err
-	}
-	refs, err := instanceRefsFromDatasets(datasets, studyInstanceUID, "")
-	if err != nil {
-		return nil, newDICOMwebError(ErrorKindDecodeResponse, response.URL, response.StatusCode, err)
-	}
-	return refs, nil
+	result, err := c.studyMetadataDatasets(ctx, studyInstanceUID)
+	return result.refs, err
 }
 
 // StudyMetadataDatasets retrieves raw WADO-RS study metadata datasets.
 func (c Client) StudyMetadataDatasets(ctx context.Context, studyInstanceUID string) ([]Dataset, error) {
-	datasets, _, err := c.studyMetadataDatasets(ctx, studyInstanceUID)
-	return datasets, err
+	result, err := c.studyMetadataDatasets(ctx, studyInstanceUID)
+	return result.datasets, err
 }
 
-func (c Client) studyMetadataDatasets(ctx context.Context, studyInstanceUID string) ([]Dataset, Response, error) {
+// StudyMetadataDatasetsWithURL retrieves validated metadata datasets together
+// with the final request URL, including after redirects or a cache hit.
+// Use the URL with Endpoint.BulkDataURLFromMetadata and keep it out of logs,
+// since its path and query can contain sensitive values.
+func (c Client) StudyMetadataDatasetsWithURL(ctx context.Context, studyInstanceUID string) ([]Dataset, string, error) {
+	result, err := c.studyMetadataDatasets(ctx, studyInstanceUID)
+	return result.datasets, result.requestURL, err
+}
+
+type metadataResult struct {
+	datasets   []Dataset
+	refs       []InstanceRef
+	requestURL string
+}
+
+func (c Client) studyMetadataDatasets(ctx context.Context, studyInstanceUID string) (metadataResult, error) {
 	if err := c.validateMetadataResponseOptions(); err != nil {
-		return nil, Response{}, err
+		return metadataResult{}, err
 	}
 	u, err := c.Endpoint.StudyMetadataURL(studyInstanceUID)
 	if err != nil {
-		return nil, Response{}, err
+		return metadataResult{}, err
 	}
-	resp, err := c.doGET(ctx, u, c.metadataAcceptHeader())
-	if err != nil {
-		return nil, resp, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp, statusError(resp)
-	}
-	datasets, err := c.datasetsFromMetadataResponse(ctx, resp, true)
-	if err != nil {
-		return nil, resp, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
-	}
-	return datasets, resp, nil
+	return c.retrieveMetadata(ctx, u, InstanceRef{StudyInstanceUID: studyInstanceUID})
 }
 
 // SeriesMetadata retrieves WADO-RS series metadata and returns instance references.
 func (c Client) SeriesMetadata(ctx context.Context, studyInstanceUID, seriesInstanceUID string) ([]InstanceRef, error) {
-	datasets, response, err := c.seriesMetadataDatasets(ctx, studyInstanceUID, seriesInstanceUID)
-	if err != nil {
-		return nil, err
-	}
-	refs, err := instanceRefsFromDatasets(datasets, studyInstanceUID, seriesInstanceUID)
-	if err != nil {
-		return nil, newDICOMwebError(ErrorKindDecodeResponse, response.URL, response.StatusCode, err)
-	}
-	return refs, nil
+	result, err := c.seriesMetadataDatasets(ctx, studyInstanceUID, seriesInstanceUID)
+	return result.refs, err
 }
 
 // SeriesMetadataDatasets retrieves raw WADO-RS series metadata datasets.
 func (c Client) SeriesMetadataDatasets(ctx context.Context, studyInstanceUID, seriesInstanceUID string) ([]Dataset, error) {
-	datasets, _, err := c.seriesMetadataDatasets(ctx, studyInstanceUID, seriesInstanceUID)
-	return datasets, err
+	result, err := c.seriesMetadataDatasets(ctx, studyInstanceUID, seriesInstanceUID)
+	return result.datasets, err
 }
 
-func (c Client) seriesMetadataDatasets(ctx context.Context, studyInstanceUID, seriesInstanceUID string) ([]Dataset, Response, error) {
+func (c Client) seriesMetadataDatasets(ctx context.Context, studyInstanceUID, seriesInstanceUID string) (metadataResult, error) {
 	if err := c.validateMetadataResponseOptions(); err != nil {
-		return nil, Response{}, err
+		return metadataResult{}, err
 	}
 	u, err := c.Endpoint.SeriesMetadataURL(studyInstanceUID, seriesInstanceUID)
 	if err != nil {
-		return nil, Response{}, err
+		return metadataResult{}, err
 	}
-	resp, err := c.doGET(ctx, u, c.metadataAcceptHeader())
-	if err != nil {
-		return nil, resp, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp, statusError(resp)
-	}
-	datasets, err := c.datasetsFromMetadataResponse(ctx, resp, true)
-	if err != nil {
-		return nil, resp, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
-	}
-	return datasets, resp, nil
+	return c.retrieveMetadata(ctx, u, InstanceRef{StudyInstanceUID: studyInstanceUID, SeriesInstanceUID: seriesInstanceUID})
 }
 
 // InstanceMetadata retrieves raw WADO-RS metadata for one instance.
@@ -227,18 +189,32 @@ func (c Client) InstanceMetadata(ctx context.Context, ref InstanceRef) ([]Datase
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.doGET(ctx, u, c.metadataAcceptHeader())
+	result, err := c.retrieveMetadata(ctx, u, ref)
+	return result.datasets, err
+}
+
+func (c Client) retrieveMetadata(ctx context.Context, u *url.URL, scope InstanceRef) (metadataResult, error) {
+	result, err := c.doGET(ctx, u, c.metadataAcceptHeader())
 	if err != nil {
-		return nil, err
+		return metadataResult{}, err
 	}
+	resp := result.Response
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, statusError(resp)
+		return metadataResult{}, statusError(resp)
 	}
 	datasets, err := c.datasetsFromMetadataResponse(ctx, resp, true)
 	if err != nil {
-		return nil, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
+		return metadataResult{}, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
 	}
-	return datasets, nil
+	refs, err := instanceRefsFromDatasets(datasets, scope)
+	if err != nil {
+		return metadataResult{}, newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
+	}
+	requestURL := result.redirectedURL
+	if requestURL == "" {
+		requestURL = u.String()
+	}
+	return metadataResult{datasets: datasets, refs: refs, requestURL: requestURL}, nil
 }
 
 // RetrieveInstance retrieves a WADO-RS DICOM object as one or more object parts.
@@ -256,10 +232,11 @@ func (c Client) RetrieveInstanceWithOptions(ctx context.Context, ref InstanceRef
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.doGET(ctx, u, retrieveAcceptHeader(opts))
+	result, err := c.doGETAccepts(ctx, u, retrieveObjectAccepts(opts))
 	if err != nil {
 		return nil, err
 	}
+	resp := result.Response
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, statusError(resp)
 	}
@@ -307,7 +284,7 @@ func (c Client) retrieveStreamAt(ctx context.Context, u *url.URL, opts RetrieveO
 	if _, err := responseLimits(c.Options); err != nil {
 		return newDICOMwebError(ErrorKindRequestFailure, "", 0, err)
 	}
-	httpResp, cancel, err := c.doHTTP(ctx, http.MethodGet, u, nil, "", retrieveAcceptHeader(opts))
+	httpResp, cancel, err := c.doAcceptGET(ctx, u, retrieveObjectAccepts(opts))
 	if err != nil {
 		return err
 	}
@@ -366,7 +343,7 @@ func (c Client) RetrieveFramesStreamWithOptions(ctx context.Context, ref Instanc
 	if err != nil {
 		return err
 	}
-	httpResp, cancel, err := c.doHTTP(ctx, http.MethodGet, u, nil, "", retrieveFramesAcceptHeader(opts))
+	httpResp, cancel, err := c.doAcceptGET(ctx, u, retrieveFramesAccepts(opts))
 	if err != nil {
 		return err
 	}
@@ -425,14 +402,12 @@ func (c Client) streamObjectParts(resp Response, body io.Reader, policy response
 	if maxBodyBytes <= 0 {
 		maxBodyBytes = DefaultMaxBodyBytes
 	}
-	body = &responseBodyLimitReader{reader: body, remaining: maxBodyBytes, limit: maxBodyBytes, resp: resp}
+	body = &responseBodyLimitReader{reader: truncatedBodyReader{body}, remaining: maxBodyBytes, limit: maxBodyBytes, resp: resp}
 	if mediaType == "multipart/related" {
-		boundary := params["boundary"]
-		headerLimitedBody := newMultipartHeaderLimitReader(body, boundary, limits.maxHeaderBytes)
-		reader := multipart.NewReader(headerLimitedBody, boundary)
+		reader := newMultipartResponseReader(body, params["boundary"], limits.maxHeaderBytes)
 		partCount := 0
 		for {
-			part, err := reader.NextRawPart()
+			part, err := reader.nextPart()
 			if errors.Is(err, io.EOF) {
 				if partCount == 0 {
 					return newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode,
@@ -441,15 +416,15 @@ func (c Client) streamObjectParts(resp Response, body io.Reader, policy response
 				return nil
 			}
 			if err != nil {
-				if headerLimitedBody.Err() != nil {
-					return newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, headerLimitedBody.Err())
-				}
 				var clientErr *Error
 				if errors.As(err, &clientErr) {
 					return err
 				}
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return err
+				}
+				if transportReadFailure(err) {
+					return requestError(resp.URL, err)
 				}
 				return newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode,
 					multipartDecodeError(err))
@@ -481,13 +456,8 @@ func (c Client) streamObjectParts(resp Response, body io.Reader, policy response
 				return err
 			}
 			if _, err := io.Copy(io.Discard, limited); err != nil {
-				err = responsePartReadError(err)
-				if responseDecodeFailure(err) {
-					return newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
-				}
-				return err
+				return objectPartDrainError(resp, err)
 			}
-			_ = part.Close()
 		}
 	}
 	limited := newResponsePartLimitReader(body, limits.maxPartBytes)
@@ -506,45 +476,94 @@ func (c Client) streamObjectParts(resp Response, body io.Reader, policy response
 		return err
 	}
 	if _, err := io.Copy(io.Discard, limited); err != nil {
-		err = responsePartReadError(err)
-		if responseDecodeFailure(err) {
-			return newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
-		}
-		return err
+		return objectPartDrainError(resp, err)
 	}
 	return nil
 }
 
-func retrieveAcceptHeader(opts RetrieveOptions) string {
-	uids := normalizedTransferSyntaxUIDs(opts.TransferSyntaxUIDs)
-	if len(uids) == 0 {
-		return acceptDICOM
+// truncatedBodyReader reports an HTTP body that ended before its declared
+// Content-Length or final chunk, as net/http does when the connection closes
+// early, as ResponseDecodeTruncatedBody. A multipart body that is complete
+// but lacks its closing delimiter stays ResponseDecodeMalformedMultipart.
+type truncatedBodyReader struct{ io.Reader }
+
+func (body truncatedBodyReader) Read(buffer []byte) (int, error) {
+	n, err := body.Reader.Read(buffer)
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return n, &ResponseDecodeError{Kind: ResponseDecodeTruncatedBody}
 	}
-	values := make([]string, 0, len(uids)*2)
-	for _, uid := range uids {
-		values = append(values,
-			fmt.Sprintf(`multipart/related; type="application/dicom"; transfer-syntax=%s`, uid),
-			fmt.Sprintf("application/dicom; transfer-syntax=%s", uid),
-		)
-	}
-	return strings.Join(values, ", ")
+	return n, err
 }
 
-func retrieveFramesAcceptHeader(opts RetrieveOptions) string {
+// objectPartDrainError classifies a failure to read the rest of a part after
+// its handler returned.
+func objectPartDrainError(resp Response, err error) error {
+	err = responsePartReadError(err)
+	if responseDecodeFailure(err) {
+		return newDICOMwebError(ErrorKindDecodeResponse, resp.URL, resp.StatusCode, err)
+	}
+	if transportReadFailure(err) {
+		return requestError(resp.URL, err)
+	}
+	return err
+}
+
+// transportReadFailure reports a response body read that failed below HTTP,
+// such as a connection reset by the peer, as opposed to a body that arrived
+// but is malformed. The caller reports it as a request failure.
+func transportReadFailure(err error) bool {
+	var clientErr *Error
+	if errors.As(err, &clientErr) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, net.ErrClosed)
+}
+
+func retrieveObjectAccepts(opts RetrieveOptions) []string {
 	uids := normalizedTransferSyntaxUIDs(opts.TransferSyntaxUIDs)
 	if len(uids) == 0 {
-		return `multipart/related; type="application/octet-stream"`
+		return []string{acceptDICOM}
 	}
-	values := make([]string, 0, len(uids))
+	groups := make([]string, 0, len(uids))
+	for _, uid := range uids {
+		groups = append(groups, fmt.Sprintf(
+			`multipart/related; type="application/dicom"; transfer-syntax=%s, application/dicom; transfer-syntax=%s`,
+			uid, uid))
+	}
+	return acceptSuffixes(groups)
+}
+
+func retrieveFramesAccepts(opts RetrieveOptions) []string {
+	uids := normalizedTransferSyntaxUIDs(opts.TransferSyntaxUIDs)
+	if len(uids) == 0 {
+		return []string{`multipart/related; type="application/octet-stream"`}
+	}
+	groups := make([]string, 0, len(uids))
 	for _, uid := range uids {
 		mediaType := retrieveFrameMediaType(uid)
-		values = append(values, fmt.Sprintf(
+		groups = append(groups, fmt.Sprintf(
 			`multipart/related; type="%s"; transfer-syntax=%s`,
 			mediaType,
 			uid,
 		))
 	}
-	return strings.Join(values, ", ")
+	return acceptSuffixes(groups)
+}
+
+// acceptSuffixes keeps the multipart and single-part ranges for one syntax
+// together. All suffixes share the allocation for the complete field value.
+func acceptSuffixes(groups []string) []string {
+	const separator = ", "
+	accept := strings.Join(groups, separator)
+	suffixes := make([]string, len(groups))
+	for i, group := range groups {
+		suffixes[i] = accept
+		if i+1 < len(groups) {
+			accept = accept[len(group)+len(separator):]
+		}
+	}
+	return suffixes
 }
 
 func retrieveFrameMediaType(uid string) string {
@@ -611,6 +630,12 @@ func (c Client) storeInstancesAt(ctx context.Context, u *url.URL, instances []St
 		return StoreResult{Response: Response{URL: SafeURL(u.String())}}, err
 	}
 	defer body.Close()
+	return c.storeMultipartAt(ctx, u, body, contentType)
+}
+
+// storeMultipartAt posts a STOW-RS multipart body and decodes the DICOM JSON
+// store response.
+func (c Client) storeMultipartAt(ctx context.Context, u *url.URL, body io.Reader, contentType string) (StoreResult, error) {
 	resp, err := c.doPOST(ctx, u, body, contentType)
 	result := StoreResult{Response: resp}
 	if err != nil {
@@ -630,7 +655,48 @@ func (c Client) storeInstancesAt(ctx context.Context, u *url.URL, instances []St
 	return parsed, nil
 }
 
-func (c Client) doGET(ctx context.Context, u *url.URL, accept string) (Response, error) {
+// doGET performs a buffered GET, served from and stored in Options.Cache when
+// one is configured.
+func (c Client) doGET(ctx context.Context, u *url.URL, accept string) (bufferedGET, error) {
+	return c.doGETAccepts(ctx, u, []string{accept})
+}
+
+func (c Client) doGETAccepts(ctx context.Context, u *url.URL, accepts []string) (bufferedGET, error) {
+	if _, err := responseLimits(c.Options); err != nil {
+		return bufferedGET{}, newDICOMwebError(ErrorKindRequestFailure, "", 0, err)
+	}
+	cache := c.Options.Cache
+	var key responseCacheKey
+	if cache != nil {
+		originBound, err := c.redirectsRequireSameOrigin(c.usesBasicAuth())
+		if err != nil {
+			return bufferedGET{}, &Error{Kind: ErrorKindInvalidEndpoint, Err: err}
+		}
+		key = responseCacheKey{url: u.String(), accept: accepts[0], originBound: originBound}
+		if cached, ok := cache.get(key); ok {
+			return cached, nil
+		}
+	}
+	raw, cancel, err := c.doAcceptGET(ctx, u, accepts)
+	if err != nil {
+		return bufferedGET{}, err
+	}
+	resp, err := c.bufferResponse(u, raw, cancel)
+	result := bufferedGET{Response: resp}
+	if err != nil {
+		return result, err
+	}
+	if raw.Request != nil && raw.Request.URL != nil && *raw.Request.URL != *u {
+		received := *raw.Request.URL
+		received.Fragment, received.RawFragment = "", ""
+		result.redirectedURL = received.String()
+	}
+	cache.put(key, result)
+	return result, nil
+}
+
+// doGETUncached performs a buffered GET that always reaches the server.
+func (c Client) doGETUncached(ctx context.Context, u *url.URL, accept string) (Response, error) {
 	if _, err := responseLimits(c.Options); err != nil {
 		return Response{}, newDICOMwebError(ErrorKindRequestFailure, "", 0, err)
 	}
@@ -646,6 +712,10 @@ func (c Client) doRequest(ctx context.Context, method string, u *url.URL, body i
 	if err != nil {
 		return Response{}, err
 	}
+	return c.bufferResponse(u, httpResp, cancel)
+}
+
+func (c Client) bufferResponse(u *url.URL, httpResp *http.Response, cancel context.CancelFunc) (Response, error) {
 	defer func() {
 		_ = httpResp.Body.Close()
 		if cancel != nil {
@@ -664,13 +734,16 @@ func (c Client) doRequest(ctx context.Context, method string, u *url.URL, body i
 	}
 	if int64(len(data)) > maxBodyBytes {
 		return response, newDICOMwebError(ErrorKindRequestFailure, response.URL, response.StatusCode,
-			fmt.Errorf("response body exceeds %d bytes", maxBodyBytes))
+			fmt.Errorf("%w of %d bytes", ErrResponseBodyLimit, maxBodyBytes))
 	}
 	response.Body = data
 	return response, nil
 }
 
-func (c Client) doHTTP(ctx context.Context, method string, u *url.URL, body io.Reader, contentType, accept string) (*http.Response, context.CancelFunc, error) {
+// doHTTPAttempt performs one HTTP attempt (plus one bearer refresh after a
+// 401). The caller closes the response body and then calls the returned
+// cancel function.
+func (c Client) doHTTPAttempt(ctx context.Context, method string, u *url.URL, body io.Reader, contentType, accept string, options requestOptions) (*http.Response, context.CancelFunc, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -682,7 +755,7 @@ func (c Client) doHTTP(ctx context.Context, method string, u *url.URL, body io.R
 		reqCtx, cancel = context.WithTimeout(ctx, DefaultTimeout)
 	}
 
-	httpClient, err := c.httpClientForRequest(u)
+	httpClient, err := c.httpClientForRequest(u, options.sameOriginRedirect)
 	if err != nil {
 		if cancel != nil {
 			cancel()
@@ -698,6 +771,7 @@ func (c Client) doHTTP(ctx context.Context, method string, u *url.URL, body io.R
 		return nil, nil, err
 	}
 
+	maps.Copy(req.Header, options.headers)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		if cancel != nil {
@@ -737,6 +811,7 @@ func (c Client) doHTTP(ctx context.Context, method string, u *url.URL, body io.R
 			}
 			retry.ContentLength = req.ContentLength
 			retry.GetBody = req.GetBody
+			maps.Copy(retry.Header, options.headers)
 			resp, err = httpClient.Do(retry)
 			if err != nil {
 				if cancel != nil {
@@ -799,6 +874,10 @@ func responseFromHTTP(rawURL string, httpResp *http.Response) Response {
 	}
 }
 
+// ErrResponseBodyLimit reports a response body longer than Options.MaxBodyBytes
+// or than the limit of the request that read it.
+var ErrResponseBodyLimit = errors.New("dicom dicomweb: response body exceeds the limit")
+
 type responseBodyLimitReader struct {
 	reader    io.Reader
 	remaining int64
@@ -815,7 +894,7 @@ func (r *responseBodyLimitReader) Read(p []byte) (int, error) {
 		n, err := r.reader.Read(extra[:])
 		if n > 0 {
 			return 0, newDICOMwebError(ErrorKindRequestFailure, r.resp.URL, r.resp.StatusCode,
-				fmt.Errorf("response body exceeds %d bytes", r.limit))
+				fmt.Errorf("%w of %d bytes", ErrResponseBodyLimit, r.limit))
 		}
 		return 0, err
 	}
@@ -851,9 +930,9 @@ func isTimeout(err error) bool {
 }
 
 func stowMultipartReader(instances []StoreInstance) (io.ReadCloser, string, error) {
-	for _, instance := range instances {
+	for i, instance := range instances {
 		if !storeInstanceHasPayload(instance) {
-			return nil, "", fmt.Errorf("STOW-RS object %s is empty", firstNonEmpty(instance.Path, instance.SOPInstanceUID))
+			return nil, "", newStorePayloadError(i, instance, errStorePayloadEmpty)
 		}
 	}
 
@@ -862,8 +941,11 @@ func stowMultipartReader(instances []StoreInstance) (io.ReadCloser, string, erro
 	contentType := `multipart/related; type="application/dicom"; boundary=` + writer.Boundary()
 	go func() {
 		err := writeSTOWMultipart(writer, instances)
-		if closeErr := writer.Close(); err == nil {
-			err = closeErr
+		if err == nil {
+			// The closing boundary completes the request. A failed part
+			// leaves the body without it, so a server never takes a cut
+			// part for a complete one.
+			err = writer.Close()
 		}
 		if err != nil {
 			_ = pipeWriter.CloseWithError(err)
@@ -875,7 +957,7 @@ func stowMultipartReader(instances []StoreInstance) (io.ReadCloser, string, erro
 }
 
 func writeSTOWMultipart(writer *multipart.Writer, instances []StoreInstance) error {
-	for _, instance := range instances {
+	for i, instance := range instances {
 		header := textproto.MIMEHeader{}
 		header.Set("Content-Type", "application/dicom")
 		part, err := writer.CreatePart(header)
@@ -884,22 +966,65 @@ func writeSTOWMultipart(writer *multipart.Writer, instances []StoreInstance) err
 		}
 		payload, closePayload, err := storeInstancePayload(instance)
 		if err != nil {
-			return err
+			return newStorePayloadError(i, instance, err)
 		}
-		written, copyErr := io.Copy(part, payload)
+		// A read error is the payload's; a write error is the request's.
+		source := &storePayloadReader{reader: payload}
+		written, copyErr := io.Copy(part, source)
+		var closeErr error
 		if closePayload != nil {
-			if closeErr := closePayload.Close(); copyErr == nil {
-				copyErr = closeErr
-			}
+			closeErr = closePayload.Close()
 		}
-		if copyErr != nil {
+		switch {
+		case source.err != nil:
+			return newStorePayloadError(i, instance, source.err)
+		case copyErr != nil:
 			return copyErr
-		}
-		if written == 0 {
-			return fmt.Errorf("STOW-RS object %s is empty", firstNonEmpty(instance.Path, instance.SOPInstanceUID))
+		case closeErr != nil:
+			return newStorePayloadError(i, instance, closeErr)
+		case written == 0:
+			return newStorePayloadError(i, instance, errStorePayloadEmpty)
 		}
 	}
 	return nil
+}
+
+var errStorePayloadEmpty = errors.New("empty payload")
+
+// StorePayloadError reports a STOW-RS instance whose Part 10 payload could
+// not be produced: StoreInstance.Open failed, its reader failed or closed
+// with an error, or it was empty. The request carrying it was cut before it
+// was complete. Index is the instance's position in the request.
+type StorePayloadError struct {
+	Index          int
+	Path           string
+	SOPInstanceUID string
+	Err            error
+}
+
+func newStorePayloadError(index int, instance StoreInstance, err error) *StorePayloadError {
+	return &StorePayloadError{Index: index, Path: instance.Path, SOPInstanceUID: instance.SOPInstanceUID, Err: err}
+}
+
+func (e *StorePayloadError) Error() string {
+	return fmt.Sprintf("STOW-RS object %s: %v", firstNonEmpty(e.Path, e.SOPInstanceUID), e.Err)
+}
+
+func (e *StorePayloadError) Unwrap() error { return e.Err }
+
+// storePayloadReader keeps the read error of a payload apart from the write
+// errors of the request it is copied into.
+type storePayloadReader struct {
+	reader io.Reader
+	err    error
+}
+
+func (r *storePayloadReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err != nil && err != io.EOF {
+		r.err = err
+	}
+	return n, err
 }
 
 func storeInstanceHasPayload(instance StoreInstance) bool {
@@ -910,10 +1035,10 @@ func storeInstancePayload(instance StoreInstance) (io.Reader, io.Closer, error) 
 	if instance.Open != nil {
 		reader, err := instance.Open()
 		if err != nil {
-			return nil, nil, fmt.Errorf("open STOW-RS object %s: %w", firstNonEmpty(instance.Path, instance.SOPInstanceUID), err)
+			return nil, nil, fmt.Errorf("open: %w", err)
 		}
 		if reader == nil {
-			return nil, nil, fmt.Errorf("open STOW-RS object %s: returned nil reader", firstNonEmpty(instance.Path, instance.SOPInstanceUID))
+			return nil, nil, errors.New("open returned a nil reader")
 		}
 		return reader, reader, nil
 	}

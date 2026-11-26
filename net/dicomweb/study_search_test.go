@@ -1,6 +1,9 @@
 package dicomweb
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestStudySearchParamsBuildsQIDOStudySearch(t *testing.T) {
 	params, err := StudySearchParams(StudySearchCriteria{
@@ -35,6 +38,9 @@ func TestStudySearchParamsBuildsQIDOStudySearch(t *testing.T) {
 	if got := params.Get("limit"); got != "25" {
 		t.Fatalf("limit = %q", got)
 	}
+	if !slices.Contains(params["includefield"], "IssuerOfPatientID") {
+		t.Fatalf("includefield = %v, want IssuerOfPatientID so callers can scope Patient ID", params["includefield"])
+	}
 	if got := params["includefield"]; len(got) == 0 {
 		t.Fatal("StudySearchParams() did not include return fields")
 	}
@@ -56,6 +62,7 @@ func TestStudyMatchesFromDatasetsExtractsQIDOStudyFields(t *testing.T) {
 		"00081030": {VR: "LO", Value: []any{"Chest CT"}},
 		"00100010": {VR: "PN", Value: []any{map[string]any{"Alphabetic": "DOE^JANE"}}},
 		"00100020": {VR: "LO", Value: []any{"P123"}},
+		"00100021": {VR: "LO", Value: []any{"SITE_A"}},
 		"0020000D": {VR: "UI", Value: []any{"1.2.3.4"}},
 		"00201208": {VR: "IS", Value: []any{float64(7)}},
 		"00180015": {VR: "CS", Value: []any{"CHEST"}},
@@ -68,6 +75,9 @@ func TestStudyMatchesFromDatasetsExtractsQIDOStudyFields(t *testing.T) {
 	match := matches[0]
 	if match.PatientName != "DOE^JANE" || match.PatientID != "P123" || match.StudyInstanceUID != "1.2.3.4" {
 		t.Fatalf("match identifiers = %+v", match)
+	}
+	if match.IssuerOfPatientID != "SITE_A" {
+		t.Fatalf("issuer of patient ID = %q, want SITE_A", match.IssuerOfPatientID)
 	}
 	if match.Modalities != "CT\\MR" || match.ImageCount != "7" {
 		t.Fatalf("modalities/image count = %q/%q", match.Modalities, match.ImageCount)

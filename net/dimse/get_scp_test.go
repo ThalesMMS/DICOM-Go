@@ -3,6 +3,7 @@ package dimse
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,7 +75,45 @@ func TestServeStudyRootCGetRejectsPatientLevel(t *testing.T) {
 	if serverErr == nil {
 		t.Fatal("ServeStudyRootCGet() error = nil, want validation error")
 	}
-	assertCGetCounts(t, "final", final, StatusCGetUnableToProcess, 0, 0, 0, 0)
+	// PATIENT is not a level of the Study Root model: the Identifier does not
+	// fit the Information Model, A900 (Identifier does not match SOP Class)
+	// per PS3.4 C.4.3.1.4, not C000, which reports a failure of the SCP.
+	assertCGetCounts(t, "final", final, StatusCGetIdentifierDoesNotMatchSOPClass, 0, 0, 0, 0)
+	if final.ErrorComment != "Unsupported Query/Retrieve Level (0008,0052)" {
+		t.Fatalf("final Error Comment = %q, want the Query/Retrieve Level key", final.ErrorComment)
+	}
+}
+
+// A C-GET Identifier without a Query/Retrieve Level, or with a blank one, is
+// refused with A900 and an Error Comment naming the key (PS3.4 C.4.3.1.4).
+func TestServeStudyRootCGetRefusesIdentifierWithoutLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		level []core.Element
+	}{
+		{"missing level", nil},
+		{"blank level", []core.Element{{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0052), VR: core.VRCS}, Value: core.StringValue{"  "}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			identifier := append(tc.level, core.Element{Header: core.ElementHeader{Tag: core.NewTag(0x0020, 0x000D), VR: core.VRUI}, Value: core.StringValue{"1.2.3"}})
+			final, serverErr := runStudyRootCGetStatusTest(t, ctx,
+				CGetHandlerFunc(func(context.Context, CGetRequestContext) ([]CGetSubOperation, error) {
+					t.Error("handler should not be called without a QueryRetrieveLevel")
+					return nil, nil
+				}),
+				withCGetIdentifier(identifier),
+			)
+			if serverErr == nil || !strings.Contains(serverErr.Error(), "missing QueryRetrieveLevel") {
+				t.Fatalf("ServeStudyRootCGet() error = %v, want missing QueryRetrieveLevel", serverErr)
+			}
+			assertCGetCounts(t, "final", final, StatusCGetIdentifierDoesNotMatchSOPClass, 0, 0, 0, 0)
+			if final.ErrorComment != "Missing Query/Retrieve Level (0008,0052)" {
+				t.Fatalf("final Error Comment = %q, want the Query/Retrieve Level key", final.ErrorComment)
+			}
+		})
+	}
 }
 
 func TestServeStudyRootCGetMapsStoreFailureIntoFinalCounters(t *testing.T) {
@@ -301,9 +340,14 @@ func runStudyRootCGetStatusTest(t *testing.T, ctx context.Context, handler CGetH
 		if err != nil {
 			t.Fatalf("ReceiveCommandSet() error = %v", err)
 		}
-		final, err := ParseCGetResponse(command)
+		// PS3.4 C.4.3.1.4.2: the Failed SOP Instance UID List belongs in
+		// the response Identifier, never in the command set.
+		if _, ok := command.Get(FailedSOPInstanceUIDList); ok {
+			t.Fatalf("C-GET-RSP command set carries Failed SOP Instance UID List")
+		}
+		final, err := parseCGetResponseWithOptionalIdentifier(ctx, assoc, pc.ID, command)
 		if err != nil {
-			t.Fatalf("ParseCGetResponse() error = %v", err)
+			t.Fatalf("parseCGetResponseWithOptionalIdentifier() error = %v", err)
 		}
 		return final, <-serverDone
 	}

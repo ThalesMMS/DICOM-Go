@@ -15,12 +15,16 @@ import (
 var ErrCFindCanceled = errors.New("dicom dimse: C-FIND canceled")
 
 // CFindRequestContext is the decoded request passed to a C-FIND SCP handler.
+// ExtendedNegotiation holds the C-FIND options accepted for the request's SOP
+// Class on this association; a handler applies fuzzy semantic matching of
+// person names only when ExtendedNegotiation.FuzzySemanticMatching is set.
 type CFindRequestContext struct {
 	Request               CFindRequest
 	Identifier            *object.Object
 	QueryRetrieveLevel    string
 	PresentationContextID byte
 	IdentifierSyntax      transfer.Syntax
+	ExtendedNegotiation   CFindExtendedNegotiation
 }
 
 // CFindHandler provides matching Identifier datasets for a C-FIND request.
@@ -43,6 +47,11 @@ func (f CFindHandlerFunc) Find(ctx context.Context, req CFindRequestContext) ([]
 type CFindMatch struct {
 	Identifier *object.Object
 	Status     uint16
+	// BeforeSend optionally revalidates access to this match immediately
+	// before its pending response. A refusal ends the operation without
+	// sending this or any later Identifier. The callback can return a
+	// CFindSCPError to select the final failure status.
+	BeforeSend func(context.Context) error
 }
 
 // CFindMatchHandler is the optional status-aware extension to CFindHandler.
@@ -141,13 +150,7 @@ func SendCFindResponseWithContext(ctx context.Context, assoc *ul.Association, pc
 	} else {
 		rsp.CommandDataSetType = DataSetPresent
 	}
-	if err := SendCommandSetWithContext(ctx, assoc, pcID, rsp.CommandSet()); err != nil {
-		return err
-	}
-	if identifier == nil {
-		return nil
-	}
-	return SendDataSetWithContext(ctx, assoc, pcID, identifier, identifierSyntax)
+	return sendMessageDataSet(ctx, assoc, pcID, rsp.CommandSet(), identifier, identifierSyntax)
 }
 
 func ServeStudyRootCFind(ctx context.Context, assoc *ul.Association, pcID byte, handler CFindHandler) error {
@@ -182,6 +185,7 @@ func serveStudyRootCFindCommand(ctx context.Context, assoc *ul.Association, pcID
 	return serveCFindCommand(ctx, assoc, pcID, command, handler, cFindSCPModel{
 		Name:        "Study Root FIND",
 		SOPClassUID: StudyRootFindSOPClassUID,
+		Model:       QueryRetrieveModelStudyRoot,
 		Level:       studyRootCFindLevel,
 	})
 }
@@ -190,6 +194,7 @@ func servePatientRootCFindCommand(ctx context.Context, assoc *ul.Association, pc
 	return serveCFindCommand(ctx, assoc, pcID, command, handler, cFindSCPModel{
 		Name:        "Patient Root FIND",
 		SOPClassUID: PatientRootFindSOPClassUID,
+		Model:       QueryRetrieveModelPatientRoot,
 		Level:       patientRootCFindLevel,
 	})
 }
@@ -197,11 +202,12 @@ func servePatientRootCFindCommand(ctx context.Context, assoc *ul.Association, pc
 type cFindSCPModel struct {
 	Name        string
 	SOPClassUID string
+	Model       QueryRetrieveModel
 	Level       func(*object.Object) (string, error)
 }
 
 func serveCFindCommand(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object, handler CFindHandler, model cFindSCPModel) error {
-	syntax, err := acceptedTransferSyntax(assoc, pcID)
+	syntax, err := acceptedSCPTransferSyntax(ctx, assoc, pcID, model.SOPClassUID)
 	if err != nil {
 		return err
 	}
@@ -220,8 +226,21 @@ func serveCFindCommand(ctx context.Context, assoc *ul.Association, pcID byte, co
 	}
 	level, err := model.Level(identifier)
 	if err != nil {
-		_ = sendCFindFinal(ctx, assoc, pcID, *req, model.SOPClassUID, CFindStatusUnableToProcess, err.Error(), syntax)
-		return err
+		// A missing or unknown Query/Retrieve Level is a fault of this
+		// request, not of the association: the requestor gets the failure
+		// status and may send its next request. The Identifier does not fit
+		// the Information Model, which PS3.4 C.4.1.1.4 reports as A900
+		// (Identifier does not match SOP Class); C000 would suggest an
+		// internal failure worth retrying.
+		return sendCFindOperationError(ctx, assoc, pcID, *req, model.SOPClassUID, syntax,
+			NewCFindSCPError(CFindStatusIdentifierDoesNotMatchSOPClass, cFindLevelErrorComment(identifier), err))
+	}
+	negotiated := AcceptedCFindExtendedNegotiation(assoc, model.SOPClassUID)
+	if cFindIdentifierCheckEnabled(ctx) {
+		if err := ValidateCFindIdentifier(model.Model, level, identifier, negotiated.RelationalQueries); err != nil {
+			return sendCFindOperationError(ctx, assoc, pcID, *req, model.SOPClassUID, syntax,
+				NewCFindSCPError(CFindStatusIdentifierDoesNotMatchSOPClass, err.Error(), err))
+		}
 	}
 
 	monitor := startSCPCancelMonitor(ctx, assoc, pcID, req.MessageID, ErrCFindCanceled, false)
@@ -234,6 +253,7 @@ func serveCFindCommand(ctx context.Context, assoc *ul.Association, pcID byte, co
 			QueryRetrieveLevel:    level,
 			PresentationContextID: pcID,
 			IdentifierSyntax:      syntax,
+			ExtendedNegotiation:   negotiated,
 		}
 		matches, handlerErr := findMatches(handlerCtx, handler, requestContext)
 		if handlerErr != nil {
@@ -257,6 +277,9 @@ func serveCFindCommand(ctx context.Context, assoc *ul.Association, pcID byte, co
 			// C-CANCEL cannot interrupt it between the two wire messages. The
 			// outer runSCPHandler enforces cancel grace and aborts a blocked send.
 			if sendErr := sendWithSCPResponseContext(ctx, assoc, func(responseCtx context.Context) error {
+				if err := checkCFindSendAccess(handlerCtx, match.BeforeSend); err != nil {
+					return err
+				}
 				return SendCFindResponseWithContext(responseCtx, assoc, pcID, CFindResponse{
 					AffectedSOPClassUID:       model.SOPClassUID,
 					MessageIDBeingRespondedTo: req.MessageID,
@@ -292,10 +315,51 @@ func findMatches(ctx context.Context, handler CFindHandler, req CFindRequestCont
 	return matches, nil
 }
 
+func checkCFindSendAccess(ctx context.Context, check func(context.Context) error) (err error) {
+	if check == nil {
+		return nil
+	}
+	defer func() {
+		if recover() != nil {
+			err = ErrStoreAccessDenied
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return context.Cause(ctx)
+	}
+	checkErr := check(ctx)
+	if err := ctx.Err(); err != nil {
+		return context.Cause(ctx)
+	}
+	if checkErr == nil {
+		return nil
+	}
+	var statusErr *CFindSCPError
+	if errors.As(checkErr, &statusErr) && statusErr != nil && isCFindFailureStatus(statusErr.Status) {
+		return NewCFindSCPError(statusErr.Status, "access denied", ErrStoreAccessDenied)
+	}
+	return ErrStoreAccessDenied
+}
+
 func sendCFindOperationError(ctx context.Context, assoc *ul.Association, pcID byte, req CFindRequest, sopClassUID string, syntax transfer.Syntax, err error) error {
+	if errors.Is(err, ErrStoreAccessDenied) {
+		status := uint16(CFindStatusUnableToProcess)
+		var statusErr *CFindSCPError
+		if errors.As(err, &statusErr) && statusErr != nil && isCFindFailureStatus(statusErr.Status) {
+			status = statusErr.Status
+		}
+		if sendErr := sendCFindFinal(ctx, assoc, pcID, req, sopClassUID, status, "access denied", syntax); sendErr != nil {
+			return sendErr
+		}
+		return NewCFindSCPError(status, "access denied", ErrStoreAccessDenied)
+	}
 	status, comment := cFindSCPStatusForError(err)
 	_ = sendCFindFinal(ctx, assoc, pcID, req, sopClassUID, status, comment, syntax)
 	return err
+}
+
+func isCFindFailureStatus(status uint16) bool {
+	return status == CFindStatusOutOfResources || status == CFindStatusIdentifierDoesNotMatchSOPClass || status >= 0xC000 && status <= 0xCFFF
 }
 
 func studyRootCFindLevel(identifier *object.Object) (string, error) {
@@ -330,6 +394,26 @@ func patientRootCFindLevel(identifier *object.Object) (string, error) {
 	default:
 		return "", fmt.Errorf("dicom dimse: unsupported QueryRetrieveLevel %q", level)
 	}
+}
+
+// cFindLevelErrorComment names the key that makes an Identifier unusable for
+// the model's Query/Retrieve Level check.
+func cFindLevelErrorComment(identifier *object.Object) string {
+	return queryRetrieveLevelErrorComment(identifier, "C-FIND")
+}
+
+// queryRetrieveLevelErrorComment names the key that makes a C-FIND, C-MOVE
+// or C-GET Identifier unusable for the model's Query/Retrieve Level check.
+// It does not echo the requestor's value, which may exceed the Error
+// Comment's 64 characters.
+func queryRetrieveLevelErrorComment(identifier *object.Object, service string) string {
+	if identifier == nil {
+		return "Missing " + service + " Identifier"
+	}
+	if level, ok := identifier.GetString(core.NewTag(0x0008, 0x0052)); ok && strings.TrimSpace(level) != "" {
+		return "Unsupported Query/Retrieve Level (0008,0052)"
+	}
+	return "Missing Query/Retrieve Level (0008,0052)"
 }
 
 func cFindSCPStatusForError(err error) (uint16, string) {

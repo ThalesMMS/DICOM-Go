@@ -50,6 +50,7 @@ const (
 	OperationRetrieveRendered  Operation = "retrieve_rendered"
 	OperationRetrieveThumbnail Operation = "retrieve_thumbnail"
 	OperationRetrieveBulkData  Operation = "retrieve_bulk_data"
+	OperationRetrieveWADOURI   Operation = "retrieve_wado_uri"
 	OperationStoreInstances    Operation = "store_instances"
 	OperationUnknown           Operation = "unknown"
 )
@@ -96,6 +97,15 @@ type ServerLimits struct {
 	MaxRenderedPixels     int64
 	MaxConcurrentRequests int
 	MaxDuration           time.Duration
+	// MaxQueuedRequests bounds the requests that wait for one of the
+	// MaxConcurrentRequests slots instead of being refused at once, and
+	// MaxQueueWait bounds how long each waits. A request still waiting when
+	// MaxQueueWait elapses, or arriving with the queue full, receives 503
+	// with Retry-After. A waiting request holds no body or backend resource.
+	// Unlike the other limits, zero is not replaced by a default: zero in
+	// either field disables the queue and refuses excess requests at once.
+	MaxQueuedRequests int
+	MaxQueueWait      time.Duration
 }
 
 // DefaultServerLimits returns conservative finite limits suitable for an
@@ -137,12 +147,30 @@ type HTTPServerOptions struct {
 
 // ServerOptions configures an embeddable DICOMweb handler.
 type ServerOptions struct {
+	// Backend implements the Studies Service capabilities it supports
+	// (SearchBackend, MetadataBackend, ...) and optionally WorkitemBackend.
 	Backend any
+	// Workitems serves the UPS-RS workitem resources; when nil, Backend is
+	// used if it implements WorkitemBackend. Subscriptions additionally
+	// require WorkitemSubscriptionBackend.
+	Workitems WorkitemBackend
+	// WorkitemEvents serves the UPS-RS event channel
+	// (GET /subscribers/{aetitle} upgraded to WebSocket). Shutdown closes it.
+	WorkitemEvents *WorkitemEventHub
 	// Renderer resolves and renders WADO-RS rendered and thumbnail resources.
 	// It is separate from Backend so applications can compose storage and
 	// presentation implementations without coupling either to a UI.
 	Renderer Renderer
-	Limits   ServerLimits
+	// RetrieveTranscode opts WADO-RS object/frame retrieval into bounded,
+	// identity-preserving preparation through pixeldata.TranscodePath.
+	RetrieveTranscode *RetrieveTranscodePolicy
+	// EnableWADOURI enables the documented URI-service profile at /wado.
+	// It shares authentication, budgets and retrieval preparation with RS.
+	EnableWADOURI bool
+	// EnableBulkDataRanges allows a single byte range for direct bulk responses
+	// with a known Size and an explicit immutable ReaderAt supplied by Backend.
+	EnableBulkDataRanges bool
+	Limits               ServerLimits
 	// ServiceRoot is the externally visible mount path (for example,
 	// "/dicomweb"). It is used for same-origin URLs and Warning headers. Mount
 	// the handler with http.StripPrefix when it is non-empty.
@@ -152,6 +180,10 @@ type ServerOptions struct {
 	// rejected unless AllowUnauthenticated is explicitly true.
 	Authorize            Authorizer
 	AllowUnauthenticated bool
+	// AuthorizeReadLease optionally adds a revocable grant to each Studies
+	// Service read. A denial before response commitment gives HTTP 403.
+	// Once streaming, a denial aborts the response.
+	AuthorizeReadLease ReadLeaseAuthorizer
 
 	// Middleware may add deployment-specific authentication, CORS, tracing, or
 	// telemetry around the bounded core handler. No CORS policy is enabled by
@@ -275,6 +307,9 @@ type RetrieveRequest struct {
 	SeriesInstanceUID string
 	SOPInstanceUID    string
 	Accept            []MediaPreference
+	// prepared is set on the as-stored source request of prepared retrieval
+	// (ServerOptions.RetrieveTranscode); see AcceptsSource.
+	prepared *preparedNegotiation
 }
 
 // RetrievePart is one synchronous WADO-RS object stream. The server always
@@ -401,6 +436,11 @@ type BulkDataPart struct {
 	ContentType string
 	Reader      io.ReadCloser
 	Size        int64
+	// ReaderAt is optional random access to the exact same immutable logical
+	// representation as Reader, starting at value-relative offset zero. It is
+	// valid only until Reader is closed; Reader owns all backing resources.
+	// It is never inferred from Reader's type or from a physical file offset.
+	ReaderAt io.ReaderAt
 }
 
 // BulkDataBackend resolves authorized same-origin bulk data tokens.
@@ -479,7 +519,8 @@ func normalizeServerLimits(limits ServerLimits) (ServerLimits, error) {
 	defaults := DefaultServerLimits()
 	if limits.MaxRequestBytes < 0 || limits.MaxPartBytes < 0 || limits.MaxMetadataBytes < 0 || limits.MaxDecodedPartBytes < 0 || limits.MaxResponseBytes < 0 ||
 		limits.MaxRequestURIBytes < 0 || limits.MaxHeaderBytes < 0 || limits.MaxPartHeaderBytes < 0 || limits.MaxQueryValueBytes < 0 || limits.MaxUIDBytes < 0 || limits.MaxJSONValueBytes < 0 || limits.MaxJSONValues < 0 || limits.MaxJSONDepth < 0 || limits.MaxParts < 0 || limits.MaxQueryFields < 0 ||
-		limits.MaxResults < 0 || limits.MaxOffset < 0 || limits.MaxFrames < 0 || limits.MaxRenderedPixels < 0 || limits.MaxConcurrentRequests < 0 || limits.MaxDuration < 0 {
+		limits.MaxResults < 0 || limits.MaxOffset < 0 || limits.MaxFrames < 0 || limits.MaxRenderedPixels < 0 || limits.MaxConcurrentRequests < 0 || limits.MaxDuration < 0 ||
+		limits.MaxQueuedRequests < 0 || limits.MaxQueueWait < 0 {
 		return ServerLimits{}, ErrInvalidServerOptions
 	}
 	if limits.MaxRequestBytes == 0 {
@@ -545,6 +586,10 @@ func normalizeServerLimits(limits ServerLimits) (ServerLimits, error) {
 	if limits.MaxDuration == 0 {
 		limits.MaxDuration = defaults.MaxDuration
 	}
+	if limits.MaxQueuedRequests == 0 || limits.MaxQueueWait == 0 {
+		limits.MaxQueuedRequests, limits.MaxQueueWait = 0, 0
+	}
+	limits.MaxQueueWait = min(limits.MaxQueueWait, limits.MaxDuration)
 	if limits.MaxPartBytes > limits.MaxRequestBytes {
 		limits.MaxPartBytes = limits.MaxRequestBytes
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dictionary/std"
@@ -17,7 +18,7 @@ func EncodeCommandSet(elements []core.Element) ([]byte, error) {
 		if elem.Tag() == CommandGroupLength {
 			continue
 		}
-		withoutGroupLength = append(withoutGroupLength, elem)
+		withoutGroupLength = append(withoutGroupLength, commandUIDElement(elem))
 	}
 
 	obj := object.FromElements(withoutGroupLength, std.Dictionary)
@@ -47,4 +48,21 @@ func DecodeCommandSet(data []byte) (*object.Object, error) {
 		return nil, fmt.Errorf("dicom dimse: decode command set: %w", err)
 	}
 	return obj, nil
+}
+
+// commandUIDElement encodes a command UI element as raw, NUL-padded bytes.
+// Command UIDs repeat the identity of a dataset or service, which may be a
+// legacy value read from a file; forwarding such an object must not fail on
+// the copy. Authored dataset UIDs are still validated by the writer, and
+// receivers apply their own UID checks.
+func commandUIDElement(elem core.Element) core.Element {
+	values, ok := elem.Value.(core.StringValue)
+	if !ok || elem.Header.VR != core.VRUI {
+		return elem
+	}
+	raw := []byte(strings.Join(values, "\\"))
+	if len(raw)%2 != 0 {
+		raw = append(raw, 0)
+	}
+	return core.NewRawElement(elem.Tag(), core.VRUI, raw)
 }

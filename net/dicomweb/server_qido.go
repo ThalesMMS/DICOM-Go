@@ -30,6 +30,14 @@ func (s *Server) serveSearch(w *serverResponseWriter, r *http.Request, operation
 	if err != nil {
 		return 0, err
 	}
+	return s.runSearch(w, r, backend, request, representation)
+}
+
+// runSearch streams one validated search through the response spool and
+// writes the negotiated representation with pagination warnings.
+func (s *Server) runSearch(w *serverResponseWriter, r *http.Request, backend SearchBackend, request SearchRequest, representation metadataRepresentation) (int, error) {
+	w.Header().Set("Vary", "Accept")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	request.MaximumResults = s.limits.MaxResults
 	if request.LimitSet && request.Limit < request.MaximumResults {
 		request.MaximumResults = request.Limit
@@ -46,7 +54,7 @@ func (s *Server) serveSearch(w *serverResponseWriter, r *http.Request, operation
 	}()
 	truncated := false
 	result, err := safeSearch(backend, r.Context(), request, func(dataset Dataset) error {
-		if err := r.Context().Err(); err != nil {
+		if err := CheckReadLease(r.Context()); err != nil {
 			return err
 		}
 		if spool.count >= request.MaximumResults {

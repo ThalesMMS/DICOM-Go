@@ -3,6 +3,7 @@ package dimse
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -336,6 +337,31 @@ func TestSendCGetWithProgressCancellationReleasesOperationWhenConsumerStops(t *t
 }
 
 func TestSendCGetWithProgressContinuesAfterStoreFailure(t *testing.T) {
+	runCGetFailedStore(t, func(ctx context.Context) context.Context { return ctx }, StatusCGetUnableToProcess,
+		CGetStoreHandlerFunc(func(context.Context, CGetStoreRequestContext) (uint16, error) {
+			return StatusSuccess, errors.New("local store failed")
+		}))
+}
+
+// A data set above the requestor's limit is not handed to the store handler:
+// its sub-operation fails with Out of Resources and the retrieve goes on.
+func TestSendCGetWithProgressRefusesADataSetAboveItsLimit(t *testing.T) {
+	called := false
+	runCGetFailedStore(t, func(ctx context.Context) context.Context { return WithCGetMaxDataSetBytes(ctx, 8) }, StatusCStoreOutOfResources,
+		CGetStoreHandlerFunc(func(context.Context, CGetStoreRequestContext) (uint16, error) {
+			called = true
+			return StatusSuccess, nil
+		}))
+	if called {
+		t.Fatal("the store handler received a data set above the limit")
+	}
+}
+
+// runCGetFailedStore plays a C-GET with one sub-operation that the requestor
+// must answer with wantStoreStatus, and requires the retrieve to continue to
+// the provider's final response.
+func runCGetFailedStore(t *testing.T, operationContext func(context.Context) context.Context, wantStoreStatus uint16, handler CGetStoreHandler) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -395,8 +421,8 @@ func TestSendCGetWithProgressContinuesAfterStoreFailure(t *testing.T) {
 			serverDone <- err
 			return
 		}
-		if storeRsp.Status != StatusCGetUnableToProcess {
-			serverDone <- errors.New("server received unexpected C-STORE failure status")
+		if storeRsp.Status != wantStoreStatus {
+			serverDone <- fmt.Errorf("server received C-STORE status 0x%04X, want 0x%04X", storeRsp.Status, wantStoreStatus)
 			return
 		}
 		failed := uint16(1)
@@ -445,13 +471,11 @@ func TestSendCGetWithProgressContinuesAfterStoreFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcceptedContextForSOPClass() error = %v", err)
 	}
-	progress, err := SendCGetWithProgress(ctx, assoc, getPC.ID, CGetRequest{
+	progress, err := SendCGetWithProgress(operationContext(ctx), assoc, getPC.ID, CGetRequest{
 		AffectedSOPClassUID: StudyRootGetSOPClassUID,
 		MessageID:           1,
 		Priority:            0,
-	}, object.FromElements(cGetIdentifierElements(t), std.Dictionary), transfer.ImplicitVRLittleEndian, CGetStoreHandlerFunc(func(context.Context, CGetStoreRequestContext) (uint16, error) {
-		return StatusSuccess, errors.New("local store failed")
-	}))
+	}, object.FromElements(cGetIdentifierElements(t), std.Dictionary), transfer.ImplicitVRLittleEndian, handler)
 	if err != nil {
 		t.Fatalf("SendCGetWithProgress() error = %v", err)
 	}

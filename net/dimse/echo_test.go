@@ -19,8 +19,12 @@ func TestPeerMaxPDUWithHeaderCapsOutboundFragmentSize(t *testing.T) {
 		{name: "unspecified", assoc: &ul.Association{}, want: defaultWithHeader},
 		{name: "smaller peer limit", assoc: &ul.Association{PeerMaxPDU: 4096}, want: 4096 + int(ul.PDUHeaderSize)},
 		{name: "default peer limit", assoc: &ul.Association{PeerMaxPDU: ul.DefaultMaxPDU}, want: defaultWithHeader},
-		{name: "larger peer limit", assoc: &ul.Association{PeerMaxPDU: ul.DefaultMaxPDU + 1}, want: defaultWithHeader},
-		{name: "unlimited peer", assoc: &ul.Association{PeerMaxPDU: math.MaxUint32}, want: defaultWithHeader},
+		{name: "larger peer limit", assoc: &ul.Association{PeerMaxPDU: ul.DefaultMaxPDU + 1}, want: defaultWithHeader + 1},
+		// Peers that accept more get up to DefaultMaxSendPDU (128 KiB).
+		{name: "1 MiB peer", assoc: &ul.Association{PeerMaxPDU: 1 << 20}, want: int(ul.DefaultMaxSendPDU + ul.PDUHeaderSize)},
+		{name: "unlimited peer", assoc: &ul.Association{PeerMaxPDU: math.MaxUint32}, want: int(ul.DefaultMaxSendPDU + ul.PDUHeaderSize)},
+		// A peer maximum too small for a PDV header is raised to the floor.
+		{name: "tiny peer limit", assoc: &ul.Association{PeerMaxPDU: 3}, want: int(ul.PDVHeaderSize + 1 + ul.PDUHeaderSize)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

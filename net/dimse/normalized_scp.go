@@ -452,13 +452,8 @@ func receiveNormalizedRequestDataSet(ctx context.Context, assoc *ul.Association,
 func sendNormalizedSCPResponse(ctx context.Context, assoc *ul.Association, pcID byte, syntax transfer.Syntax, commandSet []core.Element, dataSet *object.Object, resultErr error) error {
 	responseCtx, cancel := scpResponseContext(ctx, assoc)
 	defer cancel()
-	if err := SendCommandSetWithContext(responseCtx, assoc, pcID, commandSet); err != nil {
+	if err := sendMessageDataSet(responseCtx, assoc, pcID, commandSet, dataSet, syntax); err != nil {
 		return err
-	}
-	if dataSet != nil {
-		if err := SendDataSetWithContext(responseCtx, assoc, pcID, dataSet, syntax); err != nil {
-			return err
-		}
 	}
 	return resultErr
 }

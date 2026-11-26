@@ -1,0 +1,7 @@
+# Scheduled Procedure Step Start Time open range ending at 12:00
+(0010,0010) PN []
+(0040,0100) SQ
+  (fffe,e000) na
+    (0040,0003) TM [-120000]
+  (fffe,e00d) na
+(fffe,e0dd) na

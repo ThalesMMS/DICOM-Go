@@ -2,12 +2,10 @@ package ups
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
-	"fmt"
-	"math/big"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +24,8 @@ type Service struct {
 	deliveryLimits       DeliveryLimits
 	refuseDeletionLocks  bool
 	fallbackReceivingAEs []string
+	eventSink            EventSink
+	wake                 chan struct{}
 }
 
 func NewService(store Store, options ServiceOptions) (*Service, error) {
@@ -79,6 +79,8 @@ func NewService(store Store, options ServiceOptions) (*Service, error) {
 		callbackCallingAE: options.CallbackCallingAE,
 		deliveryLimits:    deliveryLimits, refuseDeletionLocks: options.RefuseDeletionLocks,
 		fallbackReceivingAEs: fallbackReceivingAEs,
+		eventSink:            options.EventSink,
+		wake:                 make(chan struct{}, 1),
 	}, nil
 }
 
@@ -126,6 +128,7 @@ func (service *Service) Create(ctx context.Context, request CreateRequest) (Step
 	if result.Step == nil {
 		return Step{}, safeRepositoryError(ErrConflict)
 	}
+	service.WakeDeliveries()
 	return *result.Step, nil
 }
 
@@ -393,6 +396,9 @@ func (service *Service) updateStep(ctx context.Context, operation, sopInstanceUI
 		}
 		if result.Step == nil {
 			return Step{}, safeRepositoryError(ErrConflict)
+		}
+		if len(events) > 0 {
+			service.WakeDeliveries()
 		}
 		return *result.Step, nil
 	}
@@ -1206,9 +1212,7 @@ func dicomDateTime(value time.Time) string {
 }
 
 func internalTransactionUID(sopInstanceUID string, version uint64) string {
-	// A deterministic UUID-derived UID keeps retries of the same transition
-	// stable without colliding merely because two SOP UIDs have equal length.
-	// The 2.25 UUID root plus 128 hash bits remains below DICOM's 64-byte limit.
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%s#%d", core.NormalizeUID(sopInstanceUID), version)))
-	return "2.25." + new(big.Int).SetBytes(digest[:16]).String()
+	// A deterministic name-based UID keeps retries of the same transition
+	// stable; the parts are length-prefixed, so they cannot run together.
+	return core.NameUID("dicom-go/ups transaction", core.NormalizeUID(sopInstanceUID), strconv.FormatUint(version, 10))
 }

@@ -230,26 +230,35 @@ func (s *Server) stageStoreRequest(w http.ResponseWriter, r *http.Request, route
 			_ = part.Close()
 			return nil, cleanupStoreStaging(staged, nil, "", ErrResourceLimit)
 		}
-		temporary, err := os.CreateTemp(s.options.SpoolDirectory, ".dicomweb-stow-*")
+		temporary, err := s.createSpoolFile(".dicomweb-stow-*")
 		if err != nil {
 			_ = part.Close()
-			return nil, cleanupStoreStaging(staged, nil, "", newServerStatusError(http.StatusServiceUnavailable, "spool_failure", ErrBackend))
+			return nil, cleanupStoreStaging(staged, nil, "", spoolFailure())
 		}
 		temporaryPath := temporary.Name()
 		hash := sha256.New()
-		size, copyErr := copyBounded(r.Context(), io.MultiWriter(temporary, hash), part, s.limits.MaxPartBytes)
+		spool := &spoolWriter{file: temporary}
+		size, copyErr := copyBounded(r.Context(), io.MultiWriter(spool, hash), part, s.limits.MaxPartBytes)
 		partCloseErr := part.Close()
 		if copyErr != nil || partCloseErr != nil {
+			if spool.err != nil {
+				return nil, cleanupStoreStaging(staged, temporary, temporaryPath, spoolFailure())
+			}
 			if copyErr != nil {
 				return nil, cleanupStoreStaging(staged, temporary, temporaryPath, classifyMultipartError(copyErr))
 			}
 			return nil, cleanupStoreStaging(staged, temporary, temporaryPath, ErrBackend)
 		}
 		if _, err := temporary.Seek(0, io.SeekStart); err != nil {
-			return nil, cleanupStoreStaging(staged, temporary, temporaryPath, ErrBackend)
+			return nil, cleanupStoreStaging(staged, temporary, temporaryPath, spoolFailure())
 		}
 		info, err := temporary.Stat()
-		if err != nil || !info.Mode().IsRegular() || info.Size() != size {
+		if err != nil {
+			return nil, cleanupStoreStaging(staged, temporary, temporaryPath, spoolFailure())
+		}
+		// A spool that is not the regular file of the size written was
+		// tampered with or lost data: an integrity failure, not a full disk.
+		if !info.Mode().IsRegular() || info.Size() != size {
 			return nil, cleanupStoreStaging(staged, temporary, temporaryPath, ErrBackend)
 		}
 		var digest [32]byte
@@ -261,7 +270,7 @@ func (s *Server) stageStoreRequest(w http.ResponseWriter, r *http.Request, route
 			if inspectErr != nil {
 				return nil, cleanupStoreStaging(staged, temporary, temporaryPath, inspectErr)
 			}
-			return nil, cleanupStoreStaging(staged, temporary, temporaryPath, ErrBackend)
+			return nil, cleanupStoreStaging(staged, temporary, temporaryPath, spoolFailure())
 		}
 		staged = append(staged, candidate)
 	}
@@ -355,7 +364,7 @@ func cleanupStagedParts(parts []stagedStorePart) error {
 	return nil
 }
 
-func cleanupStoreStaging(parts []stagedStorePart, temporary *os.File, temporaryPath string, preferred error) error {
+func cleanupStoreStaging(parts []stagedStorePart, temporary spoolFile, temporaryPath string, preferred error) error {
 	failed := false
 	if temporary != nil {
 		if err := temporary.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
@@ -374,6 +383,53 @@ func cleanupStoreStaging(parts []stagedStorePart, temporary *os.File, temporaryP
 		return ErrBackend
 	}
 	return preferred
+}
+
+// spoolFile is a STOW-RS staging file as the handler uses it; *os.File is
+// the one the server creates.
+type spoolFile interface {
+	io.ReadWriteSeeker
+	io.Closer
+	Name() string
+	Stat() (os.FileInfo, error)
+	Sync() error
+}
+
+// createSpoolFile creates a STOW-RS spool file in the spool directory.
+func (s *Server) createSpoolFile(pattern string) (spoolFile, error) {
+	if s.createSpool != nil {
+		return s.createSpool(s.options.SpoolDirectory, pattern)
+	}
+	file, err := os.CreateTemp(s.options.SpoolDirectory, pattern)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+// spoolFailure is the error of a spool file the server cannot create, write,
+// flush, seek, stat or close, such as on a full disk: a temporary condition
+// of the server, answered with 503 and Retry-After, never a fault of the
+// request. A spool that is not the regular file of the size written is an
+// integrity failure instead, answered 500.
+func spoolFailure() error {
+	return newServerStatusError(http.StatusServiceUnavailable, "spool_failure", ErrBackend)
+}
+
+// spoolWriter writes to a spool file and keeps its first write error, so that
+// a copy into the spool that failed on the spool is told apart from one that
+// failed on the request it reads.
+type spoolWriter struct {
+	file io.Writer
+	err  error
+}
+
+func (w *spoolWriter) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	if err != nil && w.err == nil {
+		w.err = err
+	}
+	return n, err
 }
 
 func storeResponseDataset(outcomes []StoreOutcome, routeStudyUID string, s *Server) Dataset {

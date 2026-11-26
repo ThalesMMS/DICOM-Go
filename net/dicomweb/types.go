@@ -1,6 +1,7 @@
 package dicomweb
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,14 +34,30 @@ type Endpoint struct {
 	QIDOPath string
 	WADOPath string
 	STOWPath string
+	// WADOURIPath enables single-instance URI Service requests on this path.
+	WADOURIPath string
+	// UPSPath is the optional Worklist Service (UPS-RS) path below BaseURL.
+	UPSPath string
 }
 
 // Options configures HTTP transport, timeouts, response limits, and auth.
 type Options struct {
+	// HTTPClient sends the requests. Nil uses a shared client like
+	// http.DefaultClient whose dial connects again, up to three more times,
+	// when the source port the system chose cannot be used (#2011); a client
+	// supplied here keeps its own dial (see ul.SourcePortRetryDialContext).
 	HTTPClient   *http.Client `json:"-"`
 	Timeout      time.Duration
 	MaxBodyBytes int64
-	// ResponseLimits bounds WADO-RS response structure. Zero fields select
+	// WorkitemRequester is the AE Title sent as the "requester" query
+	// parameter of the UPS-RS Change Workitem State and Request
+	// Cancellation transactions (PS3.18 11.7 and 11.8). Empty omits the
+	// parameter; some origin servers refuse a request without it.
+	WorkitemRequester string `json:",omitempty"`
+	// RedirectPolicy can impose origin binding on ordinary HTTP requests.
+	// Basic authentication and BulkData always use the original origin.
+	RedirectPolicy RedirectPolicy `json:",omitempty"`
+	// ResponseLimits bounds WADO-RS and WADO-URI responses. Zero fields select
 	// finite defaults.
 	ResponseLimits ResponseLimits
 	// MetadataMediaTypes selects the ordered QIDO-RS and WADO-RS metadata
@@ -48,8 +65,9 @@ type Options struct {
 	// DICOM JSON-only behavior. DICOM XML responses use multipart/related as
 	// required by PS3.18.
 	MetadataMediaTypes []MetadataMediaType
-	// MaxMetadataParts bounds multipart DICOM XML response parts. Zero uses a
-	// finite default.
+	// MaxMetadataParts bounds metadata datasets in WADO-RS responses,
+	// multipart DICOM XML responses, and streaming QIDO-RS responses.
+	// Zero uses a finite default.
 	MaxMetadataParts int
 	// BasicUsername and BasicPassword are sent only over certificate-verified
 	// HTTPS. Basic authentication rejects plaintext endpoints, skip-verify TLS,
@@ -62,6 +80,12 @@ type Options struct {
 	// BearerTokenSource takes precedence over static bearer and basic
 	// credentials. Failure to obtain a token fails closed without downgrade.
 	BearerTokenSource BearerTokenSource `json:"-"`
+	// Retry, when set, retries bodiless requests with exponential backoff and
+	// jitter. Nil sends each request once.
+	Retry *RetryPolicy `json:"-"`
+	// Cache, when set, serves repeated buffered GET responses by URL and
+	// Accept header. Nil disables caching.
+	Cache *ResponseCache `json:"-"`
 }
 
 // MetadataMediaType identifies a supported QIDO-RS or WADO-RS metadata
@@ -77,7 +101,7 @@ const (
 // String reports configuration shape without exposing credentials.
 func (o Options) String() string {
 	return fmt.Sprintf(
-		"DICOMweb options (custom_http_client=%t, timeout=%s, max_body_bytes=%d, max_response_parts=%d, max_part_bytes=%d, max_part_header_bytes=%d, max_multipart_depth=%d, allowed_wado_media_types=%d, metadata_media_types=%d, max_metadata_parts=%d, basic_auth=%t, static_bearer=%t, dynamic_bearer=%t)",
+		"DICOMweb options (custom_http_client=%t, timeout=%s, max_body_bytes=%d, max_response_parts=%d, max_part_bytes=%d, max_part_header_bytes=%d, max_multipart_depth=%d, allowed_wado_media_types=%d, metadata_media_types=%d, max_metadata_parts=%d, basic_auth=%t, static_bearer=%t, dynamic_bearer=%t, retry=%t, cache=%t)",
 		o.HTTPClient != nil,
 		o.Timeout,
 		o.MaxBodyBytes,
@@ -91,10 +115,12 @@ func (o Options) String() string {
 		strings.TrimSpace(o.BasicUsername) != "",
 		strings.TrimSpace(o.BearerToken) != "",
 		o.BearerTokenSource != nil,
+		o.Retry != nil,
+		o.Cache != nil,
 	)
 }
 
-// ResponseLimits bounds client-side WADO-RS MIME parsing. AllowedMediaTypes
+// ResponseLimits bounds client-side WADO response parsing. AllowedMediaTypes
 // optionally narrows the standard operation-specific part media types; it
 // cannot enable a representation incompatible with the requested resource.
 type ResponseLimits struct {
@@ -148,8 +174,10 @@ type InstanceRef struct {
 // RetrieveOptions configures WADO-RS object retrieval.
 type RetrieveOptions struct {
 	// TransferSyntaxUIDs lists DICOM transfer syntax preferences for the WADO-RS
-	// Accept header. Use "*" to request the server's default/preserved transfer
-	// syntax as a fallback.
+	// Accept header. After HTTP 406, retrieval retries with the first preference
+	// removed until the server responds with another status or the preferences
+	// are exhausted. Use "*" explicitly to request the server's
+	// default/preserved transfer syntax as a fallback.
 	TransferSyntaxUIDs []string
 }
 
@@ -160,7 +188,7 @@ type ObjectPart struct {
 	Data              []byte
 }
 
-// ObjectPartStream is one WADO-RS DICOM object payload streamed from the HTTP response.
+// ObjectPartStream is one DICOM object payload streamed from the HTTP response.
 type ObjectPartStream struct {
 	ContentType       string
 	TransferSyntaxUID string
@@ -198,6 +226,11 @@ type StoreInstance struct {
 	// Open returns a fresh DICOM Part 10 payload reader. It is preferred over
 	// Reader so callers can open files lazily during multipart streaming.
 	Open func() (io.ReadCloser, error)
+	// Size is the length in bytes of the payload sent, which for Open is
+	// what its reader returns, not the length of a file it re-encodes. It
+	// only plans the requests of StoreInstancesBatched; zero is unknown
+	// (len(Data) for a Data payload).
+	Size int64
 }
 
 // StoreItem describes one SOP item reported in a STOW-RS response.
@@ -251,6 +284,9 @@ func (e *Error) Error() string {
 		}
 		return fmt.Sprintf("DICOMweb %s returned an HTTP error", target)
 	case ErrorKindAuthToken:
+		if errors.Is(e.Err, ErrBearerSignInRequired) {
+			return fmt.Sprintf("DICOMweb authentication for %s requires a new sign-in", target)
+		}
 		return fmt.Sprintf("DICOMweb authentication for %s could not obtain a bearer token", target)
 	case ErrorKindTimeout:
 		return fmt.Sprintf("DICOMweb %s timed out", target)

@@ -28,7 +28,13 @@ var (
 // for errors.Is. Report contains stable, value-free exclusion reasons.
 type Error struct{ Cause error }
 
-func (e *Error) Error() string { return "dicom: store transcode preparation failed" }
+func (e *Error) Error() string {
+	var verification *pixeldata.LossyVerificationError
+	if e != nil && errors.As(e.Cause, &verification) {
+		return "dicom: store transcode preparation failed: " + verification.Error()
+	}
+	return "dicom: store transcode preparation failed"
+}
 func (e *Error) Unwrap() error { return e.Cause }
 
 // Options explicitly selects one target. A zero Target delegates unchanged to
@@ -66,15 +72,20 @@ type Report struct {
 	Candidates                []Candidate
 	SelectedTransferSyntaxUID string
 	Negotiation               string
+	// LossyVerification contains aggregate stored-sample errors from the
+	// accepted new representation; VerificationFailure records a rejected one.
+	LossyVerification   *pixeldata.LossyVerificationReport
+	VerificationFailure *pixeldata.LossyVerificationError
 }
 
 type Source struct {
-	base   dimse.StoreSource
-	opts   Options
-	gate   chan struct{}
-	plan   *preparationPlan
-	mu     sync.Mutex
-	report Report
+	base            dimse.StoreSource
+	opts            Options
+	gate            chan struct{}
+	plan            *preparationPlan
+	preparedTracker func(*prepared)
+	mu              sync.Mutex
+	report          Report
 }
 
 var _ dimse.StoreSource = (*Source)(nil)
@@ -83,13 +94,18 @@ func NewSource(base dimse.StoreSource, opts Options) (*Source, error) {
 	if base == nil || opts.MaxSpoolBytes < 0 || opts.FallbackOriginal && opts.Transcode.AllowLossy {
 		return nil, ErrOptions
 	}
+	var err error
+	opts.Transcode, err = pixeldata.ResolveTranscodeVerificationOptions(opts.Transcode)
+	if err != nil {
+		return nil, err
+	}
 	if opts.Target.UID != "" {
 		syntax, ok := transfer.DefaultRegistry.Get(transfer.NormalizeUID(opts.Target.UID))
 		if !ok {
 			return nil, ErrOptions
 		}
 		opts.Target = syntax
-	} else if opts.FallbackOriginal || opts.Transcode.AllowLossy || opts.Transcode.ForceReencode {
+	} else if opts.FallbackOriginal || opts.Transcode.AllowLossy || opts.Transcode.ForceReencode || opts.Transcode.MaxPixelError != nil || opts.Transcode.AverageBlockSize != 0 {
 		return nil, ErrOptions
 	}
 	if opts.MaxSpoolBytes == 0 {
@@ -111,6 +127,14 @@ func (s *Source) Report() Report {
 	defer s.mu.Unlock()
 	r := s.report
 	r.Candidates = append([]Candidate(nil), r.Candidates...)
+	if r.LossyVerification != nil {
+		copy := *r.LossyVerification
+		r.LossyVerification = &copy
+	}
+	if r.VerificationFailure != nil {
+		copy := *r.VerificationFailure
+		r.VerificationFailure = &copy
+	}
 	return r
 }
 
@@ -225,9 +249,20 @@ func (s *Source) Open(ctx context.Context) (dimse.OpenedStoreSource, error) {
 			if err != nil {
 				return &Error{Cause: err}
 			}
+			if _, err := f.Seek(p.offsets[uid], io.SeekStart); err != nil {
+				return &Error{Cause: errors.Join(err, f.Close())}
+			}
 			s.mu.Lock()
 			s.report.SelectedTransferSyntaxUID = uid
 			s.report.Negotiation = "selected"
+			// This handle owns the bytes verified by its successful prepare,
+			// which may differ from Inspect or from another handle/retry. Bind
+			// its aggregate metric to writer selection and clear old failures.
+			s.report.VerificationFailure = nil
+			s.report.LossyVerification = nil
+			if uid == s.opts.Target.UID {
+				s.report.LossyVerification = report.LossyVerification
+			}
 			s.mu.Unlock()
 			_, copyErr := copyContext(contextOrBackground(writeCtx), dst, f)
 			if err := errors.Join(copyErr, f.Close()); err != nil {

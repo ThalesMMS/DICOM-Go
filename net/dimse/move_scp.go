@@ -27,6 +27,10 @@ type CMoveRequestContext struct {
 	QueryRetrieveLevel    string
 	PresentationContextID byte
 	IdentifierSyntax      transfer.Syntax
+	// ExtendedNegotiation holds the C-MOVE/C-GET options accepted for the
+	// request's SOP Class on this association (relational retrieval,
+	// Enhanced Multi-Frame Image Conversion); the zero value when none was.
+	ExtendedNegotiation CRetrieveExtendedNegotiation
 }
 
 // CMoveSubOperation represents one storage sub-operation opened by a C-MOVE
@@ -45,6 +49,8 @@ type CMoveSubOperationResult struct {
 
 // CMoveSubOperationDescriptor identifies one storage sub-operation without
 // prescribing how it is sent. Descriptors are yielded in declaration order.
+// AffectedSOPClassUID may be empty when the class is only learned from the
+// instance itself, as with an upstream that does not return it in C-FIND.
 type CMoveSubOperationDescriptor struct {
 	AffectedSOPClassUID    string
 	AffectedSOPInstanceUID string
@@ -54,7 +60,9 @@ type CMoveSubOperationDescriptor struct {
 // batch, for example through a reusable C-STORE association. Run must call
 // yield synchronously exactly once for each descriptor, in declaration order,
 // and stop when yield returns an error. The SCP copies SubOperations before
-// Run starts. The context is canceled on C-CANCEL.
+// Run starts. The context is canceled on C-CANCEL. A terminal result already
+// obtained must still be yielded once: the SCP records it before returning
+// cancellation, whereas an interrupted exchange without a result is not counted.
 type CMoveBatch struct {
 	SubOperations []CMoveSubOperationDescriptor
 	Run           func(context.Context, func(CMoveSubOperationResult) error) error
@@ -181,7 +189,7 @@ type cMoveSCPModel struct {
 }
 
 func serveCMoveCommand(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object, handler CMoveHandler, model cMoveSCPModel) error {
-	syntax, err := acceptedTransferSyntax(assoc, pcID)
+	syntax, err := acceptedSCPTransferSyntax(ctx, assoc, pcID, model.SOPClassUID)
 	if err != nil {
 		return err
 	}
@@ -200,12 +208,27 @@ func serveCMoveCommand(ctx context.Context, assoc *ul.Association, pcID byte, co
 	}
 	level, err := model.Level(identifier)
 	if err != nil {
-		_ = sendCMoveResponse(ctx, assoc, pcID, *req, model.SOPClassUID, StatusCMoveUnableToProcess, err.Error(), cMoveSubOperationCounts{})
-		return err
+		// The request is at fault, not the association. A missing or unknown
+		// Query/Retrieve Level does not fit the Information Model, which
+		// PS3.4 C.4.2.1.4 reports as A900 (Identifier does not match SOP
+		// Class); C000 would suggest an internal failure worth retrying.
+		status := StatusCMoveIdentifierDoesNotMatchSOPClass
+		comment := queryRetrieveLevelErrorComment(identifier, "C-MOVE")
+		if sendErr := sendCMoveResponse(ctx, assoc, pcID, *req, model.SOPClassUID, status, comment, cMoveSubOperationCounts{}); sendErr != nil {
+			return sendErr
+		}
+		return NewCMoveSCPError(status, comment, err)
 	}
 	if strings.TrimSpace(req.MoveDestination) == "" {
 		err := fmt.Errorf("dicom dimse: C-MOVE request MoveDestination is required")
 		_ = sendCMoveResponse(ctx, assoc, pcID, *req, model.SOPClassUID, StatusCMoveMoveDestinationUnknown, err.Error(), cMoveSubOperationCounts{})
+		return err
+	}
+	// A destination with control characters or backslash is no AE title
+	// (PS3.5 Table 6.2-1): it never reaches the application's lookup.
+	if invalid := ul.ValidateAETitle(req.MoveDestination); invalid != nil {
+		err := fmt.Errorf("dicom dimse: C-MOVE request MoveDestination: %w", invalid)
+		_ = sendCMoveResponse(ctx, assoc, pcID, *req, model.SOPClassUID, StatusCMoveMoveDestinationUnknown, "Move Destination is not a valid AE title", cMoveSubOperationCounts{})
 		return err
 	}
 
@@ -218,6 +241,7 @@ func serveCMoveCommand(ctx context.Context, assoc *ul.Association, pcID byte, co
 		QueryRetrieveLevel:    level,
 		PresentationContextID: pcID,
 		IdentifierSyntax:      syntax,
+		ExtendedNegotiation:   AcceptedCRetrieveExtendedNegotiation(assoc, model.SOPClassUID),
 	}
 	counts, err := runSCPHandler(operationCtx, assoc, scpControlsFromContext(ctx).CancelGrace, func(handlerCtx context.Context) (cMoveSubOperationCounts, error) {
 		if batchHandler, ok := handler.(CMoveBatchHandler); ok {
@@ -242,11 +266,14 @@ func serveCMoveCommand(ctx context.Context, assoc *ul.Association, pcID byte, co
 				return counts, operationErr
 			}
 			result := op.Store(handlerCtx)
+			if errors.Is(result.Err, ErrStoreAccessDenied) {
+				return counts, ErrStoreAccessDenied
+			}
 			if errors.Is(result.Err, ErrCMoveCanceled) || errors.Is(result.Err, context.Canceled) {
 				return counts, result.Err
 			}
 			counts.remaining--
-			countCMoveSubOperationResult(&counts, result)
+			countCMoveSubOperationResult(&counts, result, op.AffectedSOPInstanceUID)
 			if operationErr := monitor.OperationError(); operationErr != nil {
 				return counts, operationErr
 			}
@@ -293,22 +320,21 @@ func runCMoveBatch(handlerCtx, responseCtx context.Context, assoc *ul.Associatio
 			yieldErr = fmt.Errorf("%w: yield called after Run returned", ErrCMoveBatchContract)
 			return yieldErr
 		}
-		if operationErr := monitor.OperationError(); operationErr != nil {
-			yieldErr = operationErr
-			return yieldErr
-		}
 		if yielded >= len(descriptors) {
 			yieldErr = fmt.Errorf("%w: yielded more than %d sub-operations", ErrCMoveBatchContract, len(descriptors))
 			return yieldErr
 		}
-		if errors.Is(result.Err, ErrCMoveCanceled) || errors.Is(result.Err, context.Canceled) {
+		if errors.Is(result.Err, ErrCMoveCanceled) || errors.Is(result.Err, context.Canceled) || errors.Is(result.Err, context.DeadlineExceeded) || errors.Is(result.Err, ErrStoreAccessDenied) {
 			yieldErr = result.Err
 			return yieldErr
 		}
 
 		counts.remaining--
-		countCMoveSubOperationResult(&counts, result)
+		countCMoveSubOperationResult(&counts, result, descriptors[yielded].AffectedSOPInstanceUID)
 		yielded++
+		// The result describes a completed exchange, even if cancellation was
+		// observed between receiving its response and publishing this result.
+		// Record it once, then stop before any next sub-operation or Pending.
 		if operationErr := monitor.OperationError(); operationErr != nil {
 			yieldErr = operationErr
 			return yieldErr
@@ -332,7 +358,7 @@ func runCMoveBatch(handlerCtx, responseCtx context.Context, assoc *ul.Associatio
 
 	operationErr := monitor.OperationError()
 	err := errors.Join(runErr, resultYieldErr, operationErr)
-	interrupted := errors.Is(err, ErrCMoveCanceled) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	interrupted := errors.Is(err, ErrCMoveCanceled) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrStoreAccessDenied)
 	if !interrupted && resultYieldErr == nil && resultYielded != len(descriptors) {
 		err = errors.Join(err, fmt.Errorf("%w: Run yielded %d of %d sub-operations", ErrCMoveBatchContract, resultYielded, len(descriptors)))
 	}
@@ -340,6 +366,12 @@ func runCMoveBatch(handlerCtx, responseCtx context.Context, assoc *ul.Associatio
 }
 
 func sendCMoveOperationError(ctx context.Context, assoc *ul.Association, pcID byte, req CMoveRequest, sopClassUID string, counts cMoveSubOperationCounts, err error) error {
+	if errors.Is(err, ErrStoreAccessDenied) {
+		if sendErr := sendCMoveResponse(ctx, assoc, pcID, req, sopClassUID, StatusCMoveUnableToProcess, "access denied", counts); sendErr != nil {
+			return sendErr
+		}
+		return NewCMoveSCPError(StatusCMoveUnableToProcess, "access denied", ErrStoreAccessDenied)
+	}
 	status, comment := cMoveSCPStatusForError(err)
 	_ = sendCMoveResponse(ctx, assoc, pcID, req, sopClassUID, status, comment, counts)
 	return err
@@ -431,7 +463,7 @@ func validateCMoveBatch(descriptors []CMoveSubOperationDescriptor, run func(cont
 		return fmt.Errorf("%w: missing Run callback", ErrCMoveBatchContract)
 	}
 	for i, descriptor := range descriptors {
-		if !core.IsValidUID(descriptor.AffectedSOPClassUID) {
+		if descriptor.AffectedSOPClassUID != "" && !core.IsValidUID(descriptor.AffectedSOPClassUID) {
 			return fmt.Errorf("%w: sub-operation %d has invalid Affected SOP Class UID", ErrCMoveBatchContract, i)
 		}
 		if !core.IsValidUID(descriptor.AffectedSOPInstanceUID) {
@@ -441,18 +473,23 @@ func validateCMoveBatch(descriptors []CMoveSubOperationDescriptor, run func(cont
 	return nil
 }
 
-func countCMoveSubOperationResult(counts *cMoveSubOperationCounts, result CMoveSubOperationResult) {
+func countCMoveSubOperationResult(counts *cMoveSubOperationCounts, result CMoveSubOperationResult, sopInstanceUID string) {
 	if result.Err != nil {
 		counts.failed++
+		counts.failedSOPInstanceUIDs = append(counts.failedSOPInstanceUIDs, sopInstanceUID)
 		return
 	}
-	switch ClassifyCMoveStatus(result.Status) {
-	case CMoveStatusSuccess:
+	// Status is the C-STORE sub-operation's: its warnings (PS3.4 Table
+	// B.2-1, including 0001H, 0107H and 0116H) are warning sub-operations,
+	// not failures.
+	switch {
+	case result.Status == StatusSuccess:
 		counts.completed++
-	case CMoveStatusWarning:
+	case IsCStoreWarningStatus(result.Status):
 		counts.warning++
 	default:
 		counts.failed++
+		counts.failedSOPInstanceUIDs = append(counts.failedSOPInstanceUIDs, sopInstanceUID)
 	}
 }
 
@@ -461,16 +498,25 @@ func sendStudyRootCMoveResponse(assoc *ul.Association, pcID byte, req CMoveReque
 }
 
 func sendCMoveResponse(ctx context.Context, assoc *ul.Association, pcID byte, req CMoveRequest, sopClassUID string, status uint16, comment string, counts cMoveSubOperationCounts) error {
+	remaining := remainingSuboperationsPtr(status, counts.remaining)
+	if status == StatusCMoveCancel {
+		// PS3.4 C.4.2.3.1: Cancel Remaining, when present, counts only operations
+		// not initiated. Neither handler API reports wire initiation; uncompleted
+		// may include an already-started interrupted exchange. Omit this optional
+		// field rather than assert that total minus terminal results is uninitiated.
+		remaining = nil
+	}
 	return sendWithSCPResponseContext(ctx, assoc, func(responseCtx context.Context) error {
 		return SendCMoveResponseWithContext(responseCtx, assoc, pcID, CMoveResponse{
 			AffectedSOPClassUID:                 sopClassUID,
 			MessageIDBeingRespondedTo:           req.MessageID,
 			Status:                              status,
 			ErrorComment:                        comment,
-			NumberOfRemainingSuboperationsOrNil: remainingSuboperationsPtr(status, counts.remaining),
+			NumberOfRemainingSuboperationsOrNil: remaining,
 			NumberOfCompletedSuboperationsOrNil: uint16Ptr(counts.completed),
 			NumberOfFailedSuboperationsOrNil:    uint16Ptr(counts.failed),
 			NumberOfWarningSuboperationsOrNil:   uint16Ptr(counts.warning),
+			FailedSOPInstanceUIDListOrNil:       counts.failedSOPInstanceUIDs,
 		})
 	})
 }

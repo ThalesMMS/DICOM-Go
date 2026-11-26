@@ -2,7 +2,9 @@ package ul
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -10,6 +12,25 @@ import (
 
 	"github.com/ThalesMMS/dicom-go/net/telemetry"
 )
+
+func TestAssociationServerSaturatedTLSFailureClosesConnection(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer func() { _ = conn.Close() }()
+	defer func() { _ = peer.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	server := &AssociationServer{
+		ctx:     ctx,
+		options: AssociationServerOptions{Accept: AcceptOptions{TLSConfig: &tls.Config{}}},
+	}
+	if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	server.rejectSaturated(conn)
+	if _, err := peer.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("read after failed TLS negotiation = %v, want EOF", err)
+	}
+}
 
 func TestAssociationServerBackpressureBoundsSilentNegotiations(t *testing.T) {
 	listener, err := Listen(ListenOptions{Address: "127.0.0.1:0"})
@@ -255,6 +276,10 @@ func TestAssociationServerRecoversHandlerPanicAndAcceptsNextAssociation(t *testi
 	}
 	if got := server.Snapshot().HandlerPanics; got != 1 {
 		t.Fatalf("HandlerPanics = %d, want 1", got)
+	}
+	// The server counts the abort once the peer closed or ARTIM expired.
+	for deadline := time.Now().Add(DefaultARTIMTimeout + time.Second); server.Snapshot().Aborted != 1 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
 	}
 	if got := server.Snapshot().Aborted; got != 1 {
 		t.Fatalf("Aborted after handler panic = %d, want 1", got)

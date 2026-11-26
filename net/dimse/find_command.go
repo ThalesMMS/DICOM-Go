@@ -114,7 +114,7 @@ func ParseCFindResponse(obj *object.Object) (*CFindResponse, error) {
 		return nil, err
 	}
 	if field != CFindRSP {
-		return nil, fmt.Errorf("dicom dimse: command field 0x%04X, want C-FIND-RSP 0x%04X", field, CFindRSP)
+		return nil, protocolViolationf("dicom dimse: command field 0x%04X, want C-FIND-RSP 0x%04X", field, CFindRSP)
 	}
 	messageID, err := CommandUint16(obj, MessageIDBeingRespondedTo)
 	if err != nil {

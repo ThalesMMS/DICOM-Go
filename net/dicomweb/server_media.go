@@ -10,6 +10,32 @@ import (
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
+// Concrete frame media without a syntax parameter selects the PS3.18
+// Table 8.7.3-5 default. Wildcards leave the available encoding choice open.
+func defaultFrameSyntax(media string) string {
+	switch media {
+	case "application/octet-stream":
+		return transfer.ExplicitVRLittleEndian.UID
+	case "application/x-deflate":
+		return transfer.DeflatedImageFrameCompression.UID
+	case "image/jpeg":
+		return transfer.JPEGLosslessSV1.UID
+	case "image/dicom-rle":
+		return transfer.RLELossless.UID
+	case "image/jls":
+		return transfer.JPEGLSLossless.UID
+	case "image/jp2":
+		return transfer.JPEG2000LosslessOnly.UID
+	case "image/jpx":
+		return "1.2.840.10008.1.2.4.92"
+	case "image/jphc":
+		return "1.2.840.10008.1.2.4.201"
+	case "image/jxl":
+		return "1.2.840.10008.1.2.4.110"
+	}
+	return ""
+}
+
 func acceptsDICOMJSON(header string) bool {
 	if strings.TrimSpace(header) == "" {
 		return true
@@ -163,6 +189,17 @@ func splitAcceptValues(header string) []string {
 
 func mediaPreferenceAccepts(preferences []MediaPreference, contentType, transferSyntaxUID string) bool {
 	_, ok := matchingMediaPreference(preferences, contentType, transferSyntaxUID, false)
+	return ok
+}
+
+// AcceptsOriginal reports whether this request can deliver an existing Part
+// 10 object in its stored transfer syntax. A backend can check every member of
+// a collection before streaming its first part.
+func (request RetrieveRequest) AcceptsOriginal(transferSyntaxUID string) bool {
+	if !webServiceTransferSyntaxAllowed(transferSyntaxUID) {
+		return false
+	}
+	_, ok := matchingMediaPreference(request.Accept, "application/dicom", transferSyntaxUID, request.Level != RetrieveLevelInstance)
 	return ok
 }
 
@@ -348,4 +385,24 @@ func mediaTypeWithTransferSyntax(mediaType, transferSyntaxUID string) string {
 		return mediaType
 	}
 	return mime.FormatMediaType(mediaType, map[string]string{"transfer-syntax": strings.TrimSpace(transferSyntaxUID)})
+}
+
+// Preparation rejects unusable negotiation before retrieving/staging a source.
+// Codec availability still depends on that source's actual stored syntax.
+func preparedPreferencesSupported(preferences []MediaPreference, frames, multipartRequired bool) bool {
+	for _, p := range preferences {
+		if p.Quality <= 0 || (multipartRequired && !p.Multipart && p.MediaType != "*/*") {
+			continue
+		}
+		if p.TransferSyntaxUID != "" && p.TransferSyntaxUID != "*" && !webServiceTransferSyntaxAllowed(p.TransferSyntaxUID) {
+			continue
+		}
+		if !frames && (p.MediaType == "application/dicom" || p.MediaType == "application/*" || p.MediaType == "*/*") {
+			return true
+		}
+		if frames && (isFrameMediaType(p.MediaType) || p.MediaType == "image/*" || p.MediaType == "video/*" || p.MediaType == "*/*") {
+			return true
+		}
+	}
+	return false
 }

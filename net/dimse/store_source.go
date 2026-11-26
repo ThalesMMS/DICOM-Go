@@ -25,9 +25,14 @@ type StoreDescriptor struct {
 	TransferSyntaxUID          string
 	WritableTransferSyntaxUIDs []string
 	Size                       int64
-	Origin                     string
-	PixelDataHeader            core.ElementHeader
-	PixelDataHeaderSet         bool
+	// TransferSyntaxSizes optionally gives finite positive writer bounds for every
+	// advertised syntax. Size remains the original/source bound. Planning uses
+	// the smallest representation as admission only; the selected bound is checked
+	// again after negotiation, before Open or a command. Nil preserves legacy Size.
+	TransferSyntaxSizes map[string]int64
+	Origin              string
+	PixelDataHeader     core.ElementHeader
+	PixelDataHeaderSet  bool
 }
 
 // StoreSource is replayable: Inspect does not retain a handle and Open returns
@@ -37,12 +42,30 @@ type StoreSource interface {
 	Open(context.Context) (OpenedStoreSource, error)
 }
 
+// StoreTransferSyntaxSource optionally prepares only the representation selected
+// by an accepted presentation context. StoreSession selects before opening and
+// before sending C-STORE; legacy StoreSource implementations retain Open.
+// The opened descriptor must remain identical to Inspect's detached descriptor.
+type StoreTransferSyntaxSource interface {
+	StoreSource
+	OpenForTransferSyntax(context.Context, transfer.Syntax) (OpenedStoreSource, error)
+}
+
 // OpenedStoreSource is owned by the session until Close returns. WriteDataSet
 // writes dataset bytes only (no Part 10 preamble or File Meta Information).
 type OpenedStoreSource struct {
 	Descriptor   StoreDescriptor
 	WriteDataSet CStoreDataSetWriter
 	Close        func() error
+	// BeforeStore optionally revalidates authorization after preparation and
+	// before StoreSession or the C-GET SCP issues this attempt's C-STORE
+	// command. Refusal halts the operation without starting a command or
+	// exposing the check's error text. The callback must return promptly.
+	BeforeStore func(context.Context) error
+	// ReadMetadata optionally indexes the already opened payload, without reopening
+	// a caller path or materializing Pixel Data. It is valid until Close; callers
+	// supply bounded index options and must not race it with WriteDataSet or Close.
+	ReadMetadata func(context.Context, index.Options) (index.Result, error)
 }
 
 // StorePathSourceOptions configures bounded metadata inspection and Part 10
@@ -59,6 +82,7 @@ type pathStoreSource struct {
 	relative   string
 	options    StorePathSourceOptions
 	descriptor *StoreDescriptor
+	openSource func(context.Context) (*os.File, error)
 }
 
 // NewPathStoreSource creates a replayable Part 10 source. Path payloads are
@@ -93,6 +117,23 @@ func NewRootedPathStoreSource(root, relative string, options ...StorePathSourceO
 // planning while still reopening and revalidating the same path before send.
 // It is intended for archives that already persist trustworthy indexing data.
 func NewDescribedPathStoreSource(path string, descriptor StoreDescriptor, options ...StorePathSourceOptions) StoreSource {
+	return describedPathStoreSource(path, descriptor, options)
+}
+
+// NewDescribedFileStoreSource plans from detached metadata and consumes the
+// Part 10 descriptor returned by open. The caller can enforce source ownership
+// in open without reopening a path in the store session.
+func NewDescribedFileStoreSource(descriptor StoreDescriptor, open func(context.Context) (*os.File, error), options ...StorePathSourceOptions) StoreSource {
+	path := descriptor.Origin
+	if open == nil {
+		path = ""
+	}
+	source := describedPathStoreSource(path, descriptor, options)
+	source.openSource = open
+	return source
+}
+
+func describedPathStoreSource(path string, descriptor StoreDescriptor, options []StorePathSourceOptions) *pathStoreSource {
 	var opts StorePathSourceOptions
 	if len(options) > 0 {
 		opts = options[0]
@@ -104,13 +145,13 @@ func NewDescribedPathStoreSource(path string, descriptor StoreDescriptor, option
 }
 
 func (s *pathStoreSource) Inspect(ctx context.Context) (StoreDescriptor, error) {
-	if s == nil || strings.TrimSpace(s.path) == "" {
+	if s == nil || (s.openSource == nil && strings.TrimSpace(s.path) == "") {
 		return StoreDescriptor{}, ErrStoreInvalidSource
 	}
 	if s.descriptor != nil {
 		return normalizeStoreDescriptor(cloneStoreDescriptor(*s.descriptor))
 	}
-	file, info, err := s.openRegularPath()
+	file, info, err := s.openRegularPath(ctx)
 	if err != nil {
 		return StoreDescriptor{}, classifyStoreSourceError(ctx, err)
 	}
@@ -126,13 +167,13 @@ func (s *pathStoreSource) Inspect(ctx context.Context) (StoreDescriptor, error) 
 }
 
 func (s *pathStoreSource) Open(ctx context.Context) (OpenedStoreSource, error) {
-	if s == nil || strings.TrimSpace(s.path) == "" {
+	if s == nil || (s.openSource == nil && strings.TrimSpace(s.path) == "") {
 		return OpenedStoreSource{}, ErrStoreInvalidSource
 	}
 	if err := contextError(ctx); err != nil {
 		return OpenedStoreSource{}, err
 	}
-	file, info, err := s.openRegularPath()
+	file, info, err := s.openRegularPath(ctx)
 	if err != nil {
 		return OpenedStoreSource{}, classifyStoreSourceError(ctx, err)
 	}
@@ -161,6 +202,19 @@ func (s *pathStoreSource) Open(ctx context.Context) (OpenedStoreSource, error) {
 	closeOnError = false
 	return OpenedStoreSource{
 		Descriptor: descriptor,
+		ReadMetadata: func(readCtx context.Context, options index.Options) (index.Result, error) {
+			options = cloneStoreIndexOptions(options)
+			// This handle was validated as Part 10; a caller cannot reinterpret it
+			// as a raw data set by changing the observation options.
+			options.RawDataSet = nil
+			if options.Dictionary == nil {
+				options.Dictionary = s.options.IndexOptions.Dictionary
+			}
+			if options.FileMetaDictionary == nil {
+				options.FileMetaDictionary = s.options.IndexOptions.FileMetaDictionary
+			}
+			return index.ReadAt(readCtx, "", file, info.Size(), options)
+		},
 		WriteDataSet: func(writeCtx context.Context, destination io.Writer, syntax transfer.Syntax) error {
 			requestedUID := transfer.NormalizeUID(syntax.UID)
 			if !storeSyntaxUIDPresent(descriptor.WritableTransferSyntaxUIDs, requestedUID) {
@@ -170,7 +224,7 @@ func (s *pathStoreSource) Open(ctx context.Context) (OpenedStoreSource, error) {
 				if _, err := file.Seek(0, io.SeekStart); err != nil {
 					return ErrStoreInvalidSource
 				}
-				readOptions := storeReencodeReadOptions(info.Size(), s.options)
+				readOptions := storeReencodeReadOptions(info.Size(), transfer.NormalizeUID(descriptor.TransferSyntaxUID) == transfer.DeflatedExplicitVRLittleEndian.UID, s.options)
 				parsed, err := object.ReadFileWithOptions(file, readOptions)
 				if err != nil {
 					return classifyStoreSourceError(writeCtx, err)
@@ -190,7 +244,22 @@ func (s *pathStoreSource) Open(ctx context.Context) (OpenedStoreSource, error) {
 	}, nil
 }
 
-func (s *pathStoreSource) openRegularPath() (*os.File, os.FileInfo, error) {
+func (s *pathStoreSource) openRegularPath(ctx context.Context) (*os.File, os.FileInfo, error) {
+	if s.openSource != nil {
+		file, err := s.openSource(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if file == nil {
+			return nil, nil, ErrStoreInvalidSource
+		}
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			_ = file.Close()
+			return nil, nil, ErrStoreInvalidSource
+		}
+		return file, info, nil
+	}
 	if s.root == "" {
 		return openRegularStorePath(s.path)
 	}
@@ -209,7 +278,11 @@ func (s *pathStoreSource) openRegularPath() (*os.File, os.FileInfo, error) {
 	return file, info, nil
 }
 
-func storeReencodeReadOptions(size int64, options StorePathSourceOptions) object.ReadFileOptions {
+// storeDeflatedExpansionRatio bounds the inflated size of a Deflated source
+// during re-encoding, matching the pixeldata decompression expansion default.
+const storeDeflatedExpansionRatio = 1024
+
+func storeReencodeReadOptions(size int64, deflated bool, options StorePathSourceOptions) object.ReadFileOptions {
 	readOptions := options.ReadOptions
 	if readOptions.Dictionary == nil {
 		readOptions.Dictionary = options.IndexOptions.Dictionary
@@ -218,12 +291,24 @@ func storeReencodeReadOptions(size int64, options StorePathSourceOptions) object
 		readOptions.FileMetaDictionary = options.IndexOptions.FileMetaDictionary
 	}
 	if readOptions.MaxTotalBytes == 0 {
-		if size < math.MaxInt64 {
+		switch {
+		case deflated && size <= math.MaxInt64/storeDeflatedExpansionRatio:
+			// The parser counts inflated bytes, which legitimately exceed the
+			// file size; the ratio still refuses decompression bombs.
+			readOptions.MaxTotalBytes = size * storeDeflatedExpansionRatio
+		case size < math.MaxInt64:
 			readOptions.MaxTotalBytes = size + 1
 		}
 	}
 	if readOptions.MaxElementBytes == 0 {
-		readOptions.MaxElementBytes = 64 << 20
+		// No element is longer than the whole parse: a fixed ceiling would
+		// refuse a source whose Pixel Data alone exceeds it, though deferred
+		// values are never held in memory and held values are bounded by the
+		// parse anyway.
+		readOptions.MaxElementBytes = readOptions.MaxTotalBytes
+		if readOptions.MaxElementBytes <= 0 {
+			readOptions.MaxElementBytes = 64 << 20
+		}
 	}
 	if readOptions.MaxSequenceDepth == 0 {
 		readOptions.MaxSequenceDepth = index.DefaultOptions().Limits.MaxSequenceDepth
@@ -237,7 +322,12 @@ func storeReencodeReadOptions(size int64, options StorePathSourceOptions) object
 	if readOptions.InlineValueBytesThreshold == 0 {
 		readOptions.InlineValueBytesThreshold = 1 << 20
 	}
-	readOptions.DeferPixelData = true
+	// Deferred replay needs seekable raw offsets, which an inflated stream does
+	// not have; Deflated sources are materialized within the inflation budget.
+	readOptions.DeferPixelData = !deflated
+	if deflated {
+		readOptions.DeferWaveformData = false
+	}
 	return readOptions
 }
 
@@ -490,6 +580,23 @@ func normalizeStoreDescriptor(descriptor StoreDescriptor) (StoreDescriptor, erro
 		writable = append(writable, descriptor.TransferSyntaxUID)
 	}
 	descriptor.WritableTransferSyntaxUIDs = writable
+	if descriptor.TransferSyntaxSizes != nil {
+		bounds := make(map[string]int64, len(descriptor.TransferSyntaxSizes))
+		for key, bound := range descriptor.TransferSyntaxSizes {
+			uid := transfer.NormalizeUID(key)
+			if bound <= 0 || !storeSyntaxUIDPresent(writable, uid) {
+				return StoreDescriptor{}, ErrStoreInvalidSource
+			}
+			if _, duplicate := bounds[uid]; duplicate {
+				return StoreDescriptor{}, ErrStoreInvalidSource
+			}
+			bounds[uid] = bound
+		}
+		if len(bounds) != len(writable) || (descriptor.Size > 0 && bounds[descriptor.TransferSyntaxUID] != 0 && bounds[descriptor.TransferSyntaxUID] != descriptor.Size) {
+			return StoreDescriptor{}, ErrStoreInvalidSource
+		}
+		descriptor.TransferSyntaxSizes = bounds
+	}
 	if err := validateStorePixelHeader(descriptor); err != nil {
 		return StoreDescriptor{}, err
 	}
@@ -500,6 +607,13 @@ func validStoreUID(value string) bool { return core.IsValidUID(value) }
 
 func cloneStoreDescriptor(descriptor StoreDescriptor) StoreDescriptor {
 	descriptor.WritableTransferSyntaxUIDs = append([]string(nil), descriptor.WritableTransferSyntaxUIDs...)
+	if descriptor.TransferSyntaxSizes != nil {
+		bounds := make(map[string]int64, len(descriptor.TransferSyntaxSizes))
+		for uid, bound := range descriptor.TransferSyntaxSizes {
+			bounds[uid] = bound
+		}
+		descriptor.TransferSyntaxSizes = bounds
+	}
 	return descriptor
 }
 

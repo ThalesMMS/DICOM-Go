@@ -3,12 +3,11 @@
 package dimse
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/sys/unix"
+	"github.com/ThalesMMS/dicom-go/internal/nofollow"
 )
 
 func openStorePathNoFollow(path string) (*os.File, error) {
@@ -24,38 +23,14 @@ func openStorePathNoFollow(path string) (*os.File, error) {
 	return openStoreAbsolutePathNoFollow(absPath)
 }
 
+// openStoreAbsolutePathNoFollow opens absPath through nofollow, which refuses
+// every symbolic link except root-owned system ones such as macOS /var.
 func openStoreAbsolutePathNoFollow(absPath string) (*os.File, error) {
 	relative := strings.TrimPrefix(filepath.Clean(absPath), string(filepath.Separator))
 	if relative == "" || relative == "." {
 		return nil, ErrStoreInvalidSource
 	}
-	currentFD, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = unix.Close(currentFD) }()
-	parts := strings.Split(relative, string(filepath.Separator))
-	for index, part := range parts {
-		flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
-		if index < len(parts)-1 {
-			flags |= unix.O_DIRECTORY
-		}
-		nextFD, openErr := unix.Openat(currentFD, part, flags, 0)
-		if openErr != nil {
-			return nil, openErr
-		}
-		if closeErr := unix.Close(currentFD); closeErr != nil {
-			_ = unix.Close(nextFD)
-			return nil, closeErr
-		}
-		currentFD = nextFD
-	}
-	file := os.NewFile(uintptr(currentFD), absPath)
-	if file == nil {
-		return nil, errors.New("dicom dimse: create source from descriptor")
-	}
-	currentFD = -1
-	return file, nil
+	return nofollow.OpenFile(absPath)
 }
 
 func openStoreRootedPathNoFollow(root, relative string) (*os.File, error) {

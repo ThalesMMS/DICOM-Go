@@ -217,7 +217,7 @@ func receiveDispatcherCommandOrRelease(ctx context.Context, assoc *ul.Associatio
 		return pcID, command, false, nil
 	}
 	if _, ok := control.(*ul.ReleaseRQ); !ok {
-		return 0, nil, false, fmt.Errorf("%w: got %T while waiting for P-DATA-TF or A-RELEASE-RQ", ul.ErrUnexpectedPDU, control)
+		return 0, nil, false, ul.UnexpectedPDUError(control, "waiting for P-DATA-TF or A-RELEASE-RQ")
 	}
 	err = assoc.Send(ctx, &ul.ReleaseRP{})
 	ctxErr := ctx.Err()
@@ -260,7 +260,7 @@ func receiveDIMSECommandOrControl(ctx context.Context, assoc *ul.Association) (b
 			pdata, ok := pdu.(*ul.PDataTF)
 			if !ok {
 				if havePCID || len(buf) != 0 {
-					return 0, nil, 0, nil, fmt.Errorf("%w: got %T during fragmented DIMSE command", ul.ErrUnexpectedPDU, pdu)
+					return 0, nil, 0, nil, ul.UnexpectedPDUError(pdu, "receiving a fragmented DIMSE command")
 				}
 				return 0, nil, 0, pdu, nil
 			}

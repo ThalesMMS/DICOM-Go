@@ -147,6 +147,34 @@ func (e Endpoint) StoreStudyURL(studyInstanceUID string) (*url.URL, error) {
 }
 
 func (e Endpoint) serviceURL(servicePath string, parts []string, params url.Values) (*url.URL, error) {
+	u, err := e.serviceBase()
+	if err != nil {
+		return nil, err
+	}
+	u.Path = joinURLPath(u.Path, servicePath, escapedResource(parts...))
+	u.RawQuery = params.Encode()
+	return u, nil
+}
+
+// serviceRootURL builds a URL for a resource beside /studies, such as
+// /series or /instances. A base or service path that already ends in
+// /studies, which serviceURL accepts for study resources, names the root
+// above it.
+func (e Endpoint) serviceRootURL(servicePath string, parts []string, params url.Values) (*url.URL, error) {
+	u, err := e.serviceBase()
+	if err != nil {
+		return nil, err
+	}
+	root := joinURLPath(u.Path, servicePath, "")
+	if last := path.Base(root); strings.EqualFold(last, "studies") {
+		root = path.Dir(root)
+	}
+	u.Path = joinURLPath(root, "", escapedResource(parts...))
+	u.RawQuery = params.Encode()
+	return u, nil
+}
+
+func (e Endpoint) serviceBase() (*url.URL, error) {
 	rawBase := strings.TrimSpace(e.BaseURL)
 	if rawBase == "" {
 		return nil, &Error{Kind: ErrorKindInvalidEndpoint, Err: fmt.Errorf("base URL cannot be empty")}
@@ -170,8 +198,6 @@ func (e Endpoint) serviceURL(servicePath string, parts []string, params url.Valu
 	if u.Fragment != "" || u.RawFragment != "" {
 		return nil, &Error{Kind: ErrorKindInvalidEndpoint, Err: fmt.Errorf("base URL must not include a fragment")}
 	}
-	u.Path = joinURLPath(u.Path, servicePath, escapedResource(parts...))
-	u.RawQuery = params.Encode()
 	return u, nil
 }
 

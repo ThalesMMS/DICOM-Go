@@ -1,6 +1,7 @@
 package dicomweb
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dicomjson"
-	"github.com/ThalesMMS/dicom-go/dictionary/std"
 )
 
 type responseDatasetValidation struct {
@@ -24,20 +24,91 @@ func (s *Server) validateResponseDataset(ctx context.Context, dataset Dataset) e
 }
 
 func (s *Server) encodeResponseDataset(ctx context.Context, dataset Dataset) ([]byte, error) {
-	if err := s.validateResponseDataset(ctx, dataset); err != nil {
+	var buffer bytes.Buffer
+	if err := s.writeResponseDataset(ctx, &buffer, dataset); err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(dataset)
+	return buffer.Bytes(), nil
+}
+
+// writeResponseDataset validates while writing into private staged output.
+// No DICOM object or full JSON reparse is needed for VR-aware validation.
+func (s *Server) writeResponseDataset(ctx context.Context, out io.Writer, dataset Dataset) error {
+	state := responseDatasetValidation{}
+	err := dicomjson.EncodeDatasetContext(ctx, out, dataset, dicomjson.DatasetOptions{
+		MaxValues: s.limits.MaxJSONValues,
+		Limits:    dicomjson.Limits{MaxJSONBytes: s.limits.MaxResponseBytes, MaxInlineBinaryBytes: int64(s.limits.MaxJSONValueBytes), MaxTotalBinaryBytes: s.limits.MaxResponseBytes, MaxSequenceDepth: s.limits.MaxJSONDepth},
+		ValidateElement: func(tag string, element Element, depth int) error {
+			return s.validateResponseElement(ctx, tag, element, depth+1, &state)
+		},
+	})
+	return classifyMetadataConversionError(err)
+}
+
+func (s *Server) validateResponseElement(ctx context.Context, tag string, element Element, depth int, state *responseDatasetValidation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if depth > s.limits.MaxJSONDepth {
+		return ErrResourceLimit
+	}
+	state.values++
+	state.estimated += int64(len(tag) + len(element.VR) + len(element.InlineBinary) + len(element.BulkDataURI) + 32)
+	if state.values > s.limits.MaxJSONValues || len(element.InlineBinary) > s.limits.MaxJSONValueBytes || len(element.BulkDataURI) > s.limits.MaxJSONValueBytes || state.estimated > s.limits.MaxResponseBytes {
+		return ErrResourceLimit
+	}
+	if len(tag) != 8 || tag != strings.ToUpper(tag) {
+		return ErrBackend
+	}
+	parsedTag, err := core.ParseTag(tag)
+	if err != nil || parsedTag.Group == 0x0002 {
+		return ErrBackend
+	}
+	vr, err := core.ParseVR(element.VR)
 	if err != nil {
-		return nil, ErrBackend
+		return ErrBackend
 	}
-	if int64(len(data)) > s.limits.MaxResponseBytes {
-		return nil, ErrResourceLimit
+	if element.InlineBinary != "" {
+		decoder := base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(element.InlineBinary))
+		if _, err := io.Copy(io.Discard, decoder); err != nil {
+			return ErrBackend
+		}
 	}
-	if _, err := dicomjson.Unmarshal(data, std.Dictionary); err != nil {
-		return nil, ErrBackend
+	if element.BulkDataURI != "" {
+		parsed, err := url.Parse(element.BulkDataURI)
+		if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return ErrBackend
+		}
+		if _, err := bulkDataToken(parsed.Path, parsed.RawPath, s.servicePath("/bulkdata/")); err != nil {
+			return ErrBackend
+		}
 	}
-	return data, nil
+	for _, value := range element.Value {
+		state.values++
+		if state.values > s.limits.MaxJSONValues {
+			return ErrResourceLimit
+		}
+		if vr == core.VRSQ {
+			switch value.(type) {
+			case Dataset, map[string]Element, map[string]any:
+			default:
+				return ErrBackend
+			}
+			continue
+		}
+		size, ok := responseJSONScalarSize(value)
+		if !ok {
+			return ErrBackend
+		}
+		if size > s.limits.MaxJSONValueBytes {
+			return ErrResourceLimit
+		}
+		state.estimated += int64(size)*6 + 8
+		if state.estimated > s.limits.MaxResponseBytes {
+			return ErrResourceLimit
+		}
+	}
+	return nil
 }
 
 func (s *Server) validateResponseDatasetAtDepth(ctx context.Context, dataset Dataset, depth int, state *responseDatasetValidation) error {

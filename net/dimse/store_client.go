@@ -253,15 +253,10 @@ func (c *StoreClient) storeEncodedWithOptionsOperation(ctx context.Context, writ
 		PresentationContext: pc,
 		TransferSyntax:      syntax,
 	}
-	if err := SendCStoreRequestWithContext(ctx, c.Assoc, pc.ID, req); err != nil {
+	if err := sendMessageWithContext(ctx, c.Assoc, pc.ID, req.CommandSet(), syntax, func(writer io.Writer) error {
+		return writeDataSet(ctx, writer, syntax)
+	}); err != nil {
 		return result, newOperationError("C-STORE", err, true)
-	}
-	writer := NewPDataWriterWithContext(dataSetWriteContext(ctx), c.Assoc, pc.ID, false, peerMaxPDUWithHeader(c.Assoc))
-	if err := writeDataSet(ctx, writer, syntax); err != nil {
-		return result, newOperationError("C-STORE", fmt.Errorf("send dataset: %w", err), true)
-	}
-	if err := writer.Finish(); err != nil {
-		return result, newOperationError("C-STORE", fmt.Errorf("finish dataset P-DATA: %w", err), true)
 	}
 	if receiveResponse == nil {
 		receiveResponse = ReceiveCStoreResponseWithContext

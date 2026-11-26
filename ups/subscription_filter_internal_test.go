@@ -162,3 +162,15 @@ func (ctx *cancelAfterChecksContext) Err() error {
 	}
 	return nil
 }
+func TestUPSFilteredWatchRejectsUndecodableMatchingText(t *testing.T) {
+	request := NewDataSet(
+		StringElement(TagReceivingAE, core.VRAE, "WATCHER"),
+		StringElement(TagDeletionLock, core.VRLO, "TRUE"),
+		StringElement(TagSpecificCharacterSet, core.VRCS, "ISO_IR 192"),
+		core.NewRawElement(TagPatientName, core.VRPN, []byte("GARC\xcdA* ")),
+	)
+	_, _, _, err := parseSubscriptionInformation(request, true)
+	if !errors.Is(err, ErrInvalidDataSet) {
+		t.Fatalf("parse error = %v, want ErrInvalidDataSet", err)
+	}
+}

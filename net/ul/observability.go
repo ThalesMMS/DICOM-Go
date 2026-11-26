@@ -298,6 +298,11 @@ func (s *operationalState) emit(event telemetry.Event) {
 	event.Elapsed = event.Time.Sub(s.started)
 	event.AssociationID = s.id
 	event.Role = s.role
+	// SOP Class and transfer syntax UIDs can come from the peer (an
+	// accept-any SCP, a command's Affected SOP Class UID); observers get
+	// them with control characters escaped.
+	event.AbstractSyntaxUID = telemetry.EscapePeerString(event.AbstractSyntaxUID)
+	event.TransferSyntaxUID = telemetry.EscapePeerString(event.TransferSyntaxUID)
 	s.mu.RLock()
 	event.LocalAETitle = s.localAETitle
 	event.RemoteAETitle = s.remoteAETitle
@@ -338,8 +343,8 @@ func (s *operationalState) setAETitles(called, calling string) {
 		remote = calling
 	}
 	s.mu.Lock()
-	s.localAETitle = s.endpointPolicy.AETitle(local)
-	s.remoteAETitle = s.endpointPolicy.AETitle(remote)
+	s.localAETitle = s.endpointPolicy.AETitle(NormalizeAETitle(local))
+	s.remoteAETitle = s.endpointPolicy.AETitle(NormalizeAETitle(remote))
 	s.mu.Unlock()
 }
 
@@ -591,15 +596,15 @@ func (s *operationalState) observePDUWithByteCount(direction telemetry.Direction
 	s.captureRawPDU(direction, pdu, actualLength, encoded)
 }
 
+// observeAssociationMetadata records the AE titles from the A-ASSOCIATE-RQ,
+// which both roles see (the requestor writes it, the acceptor reads it). The
+// A-ASSOCIATE-AC echo is ignored: PS3.8 9.3.3 says its AE title fields are not
+// tested, so a requestor never adopts titles the acceptor wrote there.
 func (s *operationalState) observeAssociationMetadata(pdu PDU) {
 	switch value := pdu.(type) {
 	case *AssociationRQ:
 		s.setAETitles(value.CalledAETitle, value.CallingAETitle)
 	case AssociationRQ:
-		s.setAETitles(value.CalledAETitle, value.CallingAETitle)
-	case *AssociationAC:
-		s.setAETitles(value.CalledAETitle, value.CallingAETitle)
-	case AssociationAC:
 		s.setAETitles(value.CalledAETitle, value.CallingAETitle)
 	}
 }
@@ -811,15 +816,15 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func readAssociationPDUObserved(ctx context.Context, conn net.Conn, maxPDU uint32, state *operationalState) (PDU, error) {
+func readAssociationPDUObserved(ctx context.Context, conn net.Conn, maxPDU, maxAssociationPDU uint32, state *operationalState) (PDU, error) {
 	if !state.enabled() {
-		return readAssociationPDU(ctx, conn, maxPDU)
+		return readAssociationPDU(ctx, conn, maxPDU, maxAssociationPDU)
 	}
 	reader := &countingReader{r: conn}
 	var pdu PDU
 	err := withConnReadDeadline(ctx, conn, func() error {
 		var readErr error
-		pdu, readErr = ReadPDU(reader, maxPDU)
+		pdu, readErr = ReadPDUWithAssociationLimit(reader, maxPDU, maxAssociationPDU)
 		return readErr
 	})
 	if err != nil {
@@ -880,4 +885,14 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 		w.captured = append(w.captured, p[:remaining]...)
 	}
 	return n, err
+}
+
+// The requestor's logical peer remains the destination, even through a tunnel.
+func (s *operationalState) setLogicalRemoteAddress(address string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.remoteAddress = s.endpointPolicy.Address(address)
+	s.mu.Unlock()
 }

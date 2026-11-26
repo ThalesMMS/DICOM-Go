@@ -26,6 +26,149 @@ type descriptorStoreSource struct {
 	err        error
 }
 
+func TestStoreSessionCancelPublishesOnlyCorrelatedTerminalProgress(t *testing.T) {
+	for _, mode := range []string{"success", "warning", "failure", "success-no-progress", "mismatched-response", "no-response"} {
+		t.Run(mode, func(t *testing.T) {
+			serverCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			storeCtx, cancelStore := context.WithCancel(serverCtx)
+			defer cancelStore()
+			fixture := readIntegrationFixture(t)
+			descriptor, err := descriptorFromFile(fixture, 1, "", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := &trackingStoreSource{descriptor: descriptor, dataSet: fixture.Dataset}
+			second := &trackingStoreSource{descriptor: descriptor, dataSet: fixture.Dataset}
+			listener, err := ul.Listen(ul.ListenOptions{Address: "127.0.0.1:0", Context: serverCtx})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			status := uint16(StatusSuccess)
+			if mode == "warning" {
+				status = 0xB007
+			}
+			if mode == "failure" {
+				status = StatusCStoreOutOfResources
+			}
+			confirmed := mode != "mismatched-response" && mode != "no-response"
+			done := make(chan error, 1)
+			go func() {
+				assoc, err := listener.AcceptAssociation(ul.AcceptOptions{AETitle: "STORESCP", Context: serverCtx, SupportedAbstractSyntaxes: []string{dicomtest.TestSOPClassUID}, SupportedTransferSyntaxes: []string{transfer.ExplicitVRLittleEndian.UID}})
+				if err != nil {
+					done <- err
+					return
+				}
+				defer assoc.Close()
+				pcID, request, err := ReceiveCStoreRequestAny(assoc)
+				if err == nil {
+					_, err = ReceiveDataSet(assoc, pcID, transfer.ExplicitVRLittleEndian)
+				}
+				if err != nil {
+					done <- err
+					return
+				}
+				if mode == "no-response" {
+					cancelStore()
+				} else {
+					messageID := request.MessageID
+					if mode == "mismatched-response" {
+						messageID++
+					}
+					err = SendCStoreResponse(assoc, pcID, CStoreResponse{AffectedSOPClassUID: request.AffectedSOPClassUID, MessageIDBeingRespondedTo: messageID, AffectedSOPInstanceUID: request.AffectedSOPInstanceUID, Status: status})
+					if err != nil {
+						done <- err
+						return
+					}
+				}
+				if confirmed {
+					done <- respondToStoreRelease(assoc)
+				} else {
+					_, err := assoc.ReadPDU()
+					if !errors.Is(err, ul.ErrAssociationAborted) {
+						done <- fmt.Errorf("uncertain teardown=%v, want Abort", err)
+						return
+					}
+					done <- nil
+				}
+			}()
+			var progress []StoreProgress
+			responseCalls := 0
+			session, err := NewStoreSession(listener.Addr().String(), StoreSessionOptions{
+				DialOptions: ul.DialOptions{CalledAETitle: "STORESCP", CallingAETitle: "STORESCU"}, ContinueOnError: true,
+				OnStoreResponse: func(context.Context, StoreProgress) {
+					responseCalls++
+					// The terminal exchange has returned before cancellation becomes
+					// observable, without relying on scheduler timing.
+					cancelStore()
+				},
+				OnProgress: func(ctx context.Context, p StoreProgress) error {
+					if !errors.Is(ctx.Err(), context.Canceled) {
+						t.Errorf("terminal callback context=%v, want canceled", ctx.Err())
+					}
+					progress = append(progress, p)
+					return nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "success-no-progress" {
+				// Last item of the last association: there is no subsequent loop
+				// iteration that could notice cancellation for a nil callback.
+				session.options.OnProgress = nil
+			}
+			defer session.Abort(context.Background())
+			sources := []StoreSource{first, second}
+			if mode == "success-no-progress" {
+				sources = sources[:1]
+			}
+			result, err := session.StoreBatch(storeCtx, sources)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("StoreBatch error=%v, want canceled", err)
+			}
+			if first.openCount != 1 || first.closeCount != 1 || second.openCount != 0 || second.closeCount != 0 {
+				t.Fatalf("opens/closes=%d/%d,%d/%d, next source must stay unopened", first.openCount, first.closeCount, second.openCount, second.closeCount)
+			}
+			if len(sources) == 2 && (result.Canceled != 1 || result.Items[1].Outcome != StoreOutcomeCanceled) {
+				t.Fatalf("future item=%+v canceled=%d", result.Items[1], result.Canceled)
+			}
+			if confirmed {
+				wantProgress := 1
+				if mode == "success-no-progress" {
+					wantProgress = 0
+				}
+				if len(progress) != wantProgress || responseCalls != 1 {
+					t.Fatalf("progress/response calls=%d/%d want1/1", len(progress), responseCalls)
+				}
+				if wantProgress != 0 {
+					p := progress[0]
+					if p.SourceIndex != 0 || p.Completed != 1 || p.Total != 2 || !p.StatusSet || p.Status != status || p.Outcome != result.Items[0].Outcome {
+						t.Fatalf("progress=%+v item=%+v", p, result.Items[0])
+					}
+				}
+				if result.Unknown != 0 || result.Succeeded+result.Failed != 1 {
+					t.Fatalf("confirmed counts=%+v", result)
+				}
+				if (mode == "warning") != (result.Warnings == 1) || (mode == "failure") != (result.Failed == 1) {
+					t.Fatalf("remote status counts=%+v", result)
+				}
+			} else if len(progress) != 0 || result.Unknown != 1 || result.Items[0].Outcome != StoreOutcomeUnknown || result.Succeeded != 0 || result.Failed != 0 {
+				t.Fatalf("uncertain progress=%+v result=%+v; no terminal response may be synthesized", progress, result)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-serverCtx.Done():
+				t.Fatal("destination did not finish")
+			}
+		})
+	}
+}
+
 func (s descriptorStoreSource) Inspect(context.Context) (StoreDescriptor, error) {
 	return s.descriptor, s.err
 }
@@ -981,9 +1124,10 @@ func TestStoreSessionDisableReconnectPreventsUncertainRetry(t *testing.T) {
 }
 
 type cancelingStoreSource struct {
-	descriptor StoreDescriptor
-	cancel     context.CancelFunc
-	closed     int
+	bytesBeforeCancel int
+	descriptor        StoreDescriptor
+	cancel            context.CancelFunc
+	closed            int
 }
 
 func (s *cancelingStoreSource) Inspect(context.Context) (StoreDescriptor, error) {
@@ -993,7 +1137,12 @@ func (s *cancelingStoreSource) Inspect(context.Context) (StoreDescriptor, error)
 func (s *cancelingStoreSource) Open(context.Context) (OpenedStoreSource, error) {
 	return OpenedStoreSource{
 		Descriptor: cloneStoreDescriptor(s.descriptor),
-		WriteDataSet: func(ctx context.Context, _ io.Writer, _ transfer.Syntax) error {
+		WriteDataSet: func(ctx context.Context, w io.Writer, _ transfer.Syntax) error {
+			if s.bytesBeforeCancel > 0 {
+				if _, err := w.Write(bytes.Repeat([]byte{0x5a}, s.bytesBeforeCancel)); err != nil {
+					return err
+				}
+			}
 			s.cancel()
 			return ctx.Err()
 		},
@@ -1002,63 +1151,75 @@ func (s *cancelingStoreSource) Open(context.Context) (OpenedStoreSource, error) 
 }
 
 func TestStoreSessionCancellationDuringPayloadAbortsAndCloses(t *testing.T) {
-	serverCtx, stopServer := context.WithTimeout(context.Background(), 5*time.Second)
-	defer stopServer()
-	storeCtx, cancelStore := context.WithCancel(context.Background())
-	descriptor := testStoreDescriptor(dicomtest.TestSOPClassUID, dicomtest.TestSOPInstanceUID, transfer.ExplicitVRLittleEndian.UID)
-	source := &cancelingStoreSource{descriptor: descriptor, cancel: cancelStore}
+	for _, bytesBeforeCancel := range []int{0, 16 << 10} {
+		t.Run(fmt.Sprintf("staged-bytes-%d", bytesBeforeCancel), func(t *testing.T) {
+			serverCtx, stopServer := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stopServer()
+			storeCtx, cancelStore := context.WithCancel(context.Background())
+			descriptor := testStoreDescriptor(dicomtest.TestSOPClassUID, dicomtest.TestSOPInstanceUID, transfer.ExplicitVRLittleEndian.UID)
+			source := &cancelingStoreSource{descriptor: descriptor, cancel: cancelStore, bytesBeforeCancel: bytesBeforeCancel}
 
-	listener, err := ul.Listen(ul.ListenOptions{Address: "127.0.0.1:0", Context: serverCtx})
-	if err != nil {
-		t.Fatalf("Listen() error = %v", err)
-	}
-	defer func() { _ = listener.Close() }()
-	serverDone := make(chan error, 1)
-	go func() {
-		assoc, err := listener.AcceptAssociation(ul.AcceptOptions{
-			AETitle: "STORESCP", Context: serverCtx,
-			SupportedAbstractSyntaxes: []string{dicomtest.TestSOPClassUID},
-			SupportedTransferSyntaxes: []string{transfer.ExplicitVRLittleEndian.UID},
-		})
-		if err != nil {
-			serverDone <- err
-			return
-		}
-		defer func() { _ = assoc.Close() }()
-		if _, _, err := ReceiveCStoreRequestAny(assoc); err != nil {
-			serverDone <- err
-			return
-		}
-		pdu, err := assoc.ReadPDU()
-		if errors.Is(err, ul.ErrAssociationAborted) {
-			err = nil
-		}
-		if err == nil {
-			if pdu != nil {
-				if _, ok := pdu.(*ul.AbortRQ); !ok {
-					err = fmt.Errorf("got %T, want A-ABORT", pdu)
-				}
+			listener, err := ul.Listen(ul.ListenOptions{Address: "127.0.0.1:0", Context: serverCtx})
+			if err != nil {
+				t.Fatalf("Listen() error = %v", err)
 			}
-		}
-		serverDone <- err
-	}()
+			defer func() { _ = listener.Close() }()
+			serverDone := make(chan error, 1)
+			go func() {
+				assoc, err := listener.AcceptAssociation(ul.AcceptOptions{
+					AETitle: "STORESCP", Context: serverCtx,
+					SupportedAbstractSyntaxes: []string{dicomtest.TestSOPClassUID},
+					SupportedTransferSyntaxes: []string{transfer.ExplicitVRLittleEndian.UID},
+				})
+				if err != nil {
+					serverDone <- err
+					return
+				}
+				defer func() { _ = assoc.Close() }()
+				pcID, _, err := ReceiveCStoreRequestAny(assoc)
+				if bytesBeforeCancel == 0 {
+					// Packing retains the final command until dataset bytes are ready.
+					// Cancellation here aborts an uncertain attempt without a command.
+					if !errors.Is(err, ul.ErrAssociationAborted) {
+						serverDone <- fmt.Errorf("staging cancel error=%v, want abort", err)
+						return
+					}
+					serverDone <- nil
+					return
+				}
+				if err != nil {
+					serverDone <- err
+					return
+				}
+				// Consume the real first mixed PDU carry-over, then require abort before
+				// a final dataset fragment rather than assuming a command-only PDU.
+				n, err := io.Copy(io.Discard, newTypedPDataReader(assoc, pcID, false))
+				if n == 0 || !errors.Is(err, ul.ErrAssociationAborted) {
+					serverDone <- fmt.Errorf("wire payload cancel bytes=%d error=%v, want positive bytes then abort", n, err)
+					return
+				}
+				err = nil
+				serverDone <- err
+			}()
 
-	session, err := NewStoreSession(listener.Addr().String(), StoreSessionOptions{
-		DialOptions:     ul.DialOptions{CalledAETitle: "STORESCP", CallingAETitle: "STORESCU"},
-		ContinueOnError: true,
-	})
-	if err != nil {
-		t.Fatalf("NewStoreSession() error = %v", err)
-	}
-	result, err := session.StoreBatch(storeCtx, []StoreSource{source})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("StoreBatch() error = %v, want context.Canceled", err)
-	}
-	if result.Items[0].Outcome != StoreOutcomeUnknown || source.closed != 1 {
-		t.Fatalf("result=%#v closed=%d, want unknown/1", result.Items[0], source.closed)
-	}
-	if err := <-serverDone; err != nil {
-		t.Fatalf("SCP error = %v", err)
+			session, err := NewStoreSession(listener.Addr().String(), StoreSessionOptions{
+				DialOptions:     ul.DialOptions{CalledAETitle: "STORESCP", CallingAETitle: "STORESCU"},
+				ContinueOnError: true,
+			})
+			if err != nil {
+				t.Fatalf("NewStoreSession() error = %v", err)
+			}
+			result, err := session.StoreBatch(storeCtx, []StoreSource{source})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("StoreBatch() error = %v, want context.Canceled", err)
+			}
+			if result.Items[0].Outcome != StoreOutcomeUnknown || source.closed != 1 {
+				t.Fatalf("result=%#v closed=%d, want unknown/1", result.Items[0], source.closed)
+			}
+			if err := <-serverDone; err != nil {
+				t.Fatalf("SCP error = %v", err)
+			}
+		})
 	}
 }
 

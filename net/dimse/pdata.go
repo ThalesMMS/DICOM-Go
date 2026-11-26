@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/ThalesMMS/dicom-go/net/ul"
+	"github.com/ThalesMMS/dicom-go/object"
+	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
 // MaxCommandSetBytes bounds one reassembled DIMSE command set across all PDVs.
@@ -25,7 +28,14 @@ type PDataWriter struct {
 	isCommand bool
 	maxPDU    int
 	buf       []byte
+	written   int64
 	finished  bool
+	// A complete-message writer may retain the final command fragment until
+	// the first dataset fragment is ready. Public dataset-only writers leave
+	// these fields unset.
+	commandPrefix []byte
+	commandSent   func()
+	firstContext  context.Context
 }
 
 func NewPDataWriter(assoc *ul.Association, pcID byte, isCommand bool, maxPDU int) *PDataWriter {
@@ -51,15 +61,19 @@ func (w *PDataWriter) Write(p []byte) (int, error) {
 	if w.finished {
 		return 0, fmt.Errorf("dicom dimse: write after P-DATA finish")
 	}
-	payloadMax := w.maxPayload()
+	if w.buf == nil {
+		w.buf = getPDataBuffer(w.maxPayload())
+	}
 	written := 0
 	for len(p) > 0 {
+		payloadMax := w.maxPayload()
 		space := payloadMax - len(w.buf)
 		if space <= 0 {
 			if err := w.flush(false); err != nil {
 				return written, err
 			}
-			space = payloadMax
+			// The command prefix consumes space only in the first envelope.
+			space = w.maxPayload()
 		}
 		if space > len(p) {
 			space = len(p)
@@ -67,8 +81,25 @@ func (w *PDataWriter) Write(p []byte) (int, error) {
 		w.buf = append(w.buf, p[:space]...)
 		p = p[space:]
 		written += space
+		w.written += int64(space)
 	}
 	return written, nil
+}
+
+// finishDataSet ends a data set's P-DATA stream. Every PDV must have an even
+// length (PS3.8 E.1; DCMTK aborts on an odd fragment), and only the last
+// one can be odd because the others are cut at an even payload size. A data
+// set in Deflated Explicit VR Little Endian is a deflate bitstream that PS3.5
+// A.5 pads with a single trailing NULL byte when odd; object.WriteDataSet
+// emits that pad, and this adds it for bitstreams copied verbatim from a
+// source that lacks it.
+func (w *PDataWriter) finishDataSet(syntax transfer.Syntax) error {
+	if w != nil && !w.finished && syntax.Deflated && w.written%2 != 0 {
+		if _, err := w.Write([]byte{0}); err != nil {
+			return err
+		}
+	}
+	return w.Finish()
 }
 
 func (w *PDataWriter) Finish() error {
@@ -79,7 +110,21 @@ func (w *PDataWriter) Finish() error {
 		return nil
 	}
 	w.finished = true
-	return w.flush(true)
+	err := w.flush(true)
+	w.discard()
+	return err
+}
+
+// discard releases staging without publishing an incomplete message.
+func (w *PDataWriter) discard() {
+	if w == nil {
+		return
+	}
+	putPDataBuffer(w.buf)
+	putPDataBuffer(w.commandPrefix)
+	w.buf, w.commandPrefix = nil, nil
+	w.commandSent, w.firstContext = nil, nil
+	w.finished = true
 }
 
 func (w *PDataWriter) flush(isLast bool) error {
@@ -90,15 +135,28 @@ func (w *PDataWriter) flush(isLast bool) error {
 		return nil
 	}
 	data := w.buf
-	pdu := &ul.PDataTF{Values: []ul.PDataValue{{
+	value := ul.PDataValue{
 		PresentationContextID: w.pcID,
 		IsCommand:             w.isCommand,
 		IsLast:                isLast,
 		Data:                  data,
-	}}}
+	}
+	pdu := &ul.PDataTF{}
+	ctx := w.ctx
+	if w.commandPrefix != nil {
+		pdu.Values = []ul.PDataValue{{
+			PresentationContextID: w.pcID,
+			IsCommand:             true,
+			IsLast:                true,
+			Data:                  w.commandPrefix,
+		}, value}
+		ctx = w.firstContext
+	} else {
+		pdu.Values = []ul.PDataValue{value}
+	}
 	var err error
-	if w.ctx != nil {
-		err = w.assoc.Send(w.ctx, pdu)
+	if ctx != nil {
+		err = w.assoc.Send(ctx, pdu)
 	} else {
 		err = w.assoc.WritePDU(pdu)
 	}
@@ -106,6 +164,14 @@ func (w *PDataWriter) flush(isLast bool) error {
 	// body before returning, so the writer can safely reclaim this backing array
 	// without a defensive full-payload clone.
 	w.buf = data[:0]
+	if w.commandPrefix != nil {
+		putPDataBuffer(w.commandPrefix)
+		w.commandPrefix = nil
+		if err == nil && w.commandSent != nil {
+			w.commandSent()
+		}
+		w.commandSent, w.firstContext = nil, nil
+	}
 	return err
 }
 
@@ -115,10 +181,53 @@ func (w *PDataWriter) maxPayload() int {
 		maxPDU = int(ul.DefaultMaxPDU + ul.PDUHeaderSize)
 	}
 	payloadMax := maxPDU - int(ul.PDUHeaderSize+ul.PDVHeaderSize)
+	if w.commandPrefix != nil {
+		payloadMax -= int(ul.PDVHeaderSize) + len(w.commandPrefix)
+	}
 	if payloadMax < 1 {
 		return 1
 	}
+	// PDV values keep an even length, as DCMTK sends them, unless the peer's
+	// maximum leaves room for a single byte.
+	if payloadMax > 1 {
+		payloadMax &^= 1
+	}
 	return payloadMax
+}
+
+// pDataBuffers recycles P-DATA staging buffers, which reach 128 KiB with
+// the default send limit.
+var pDataBuffers sync.Pool
+
+func getPDataBuffer(size int) []byte {
+	if pooled, ok := pDataBuffers.Get().(*[]byte); ok && cap(*pooled) >= size {
+		return (*pooled)[:0]
+	}
+	return make([]byte, 0, size)
+}
+
+func putPDataBuffer(buf []byte) {
+	if cap(buf) == 0 || cap(buf) > 1<<20 {
+		return
+	}
+	buf = buf[:0]
+	pDataBuffers.Put(&buf)
+}
+
+// readPDataDataSet parses one DIMSE data set from reader. A Deflated data set
+// ends at its final deflate block, which can precede the last P-DATA fragment:
+// the PS3.5 A.5 NULL pad, or an empty last PDV, may follow it (DCMTK likewise
+// ignores bytes after the end of the stream). Those are consumed up to the
+// last fragment so they are not read as the start of the next message.
+func readPDataDataSet(reader *PDataReader, syntax transfer.Syntax, opts object.ReadFileOptions) (*object.Object, error) {
+	dataset, err := object.ReadDataSetWithOptions(reader, syntax, opts)
+	if err != nil || !syntax.Deflated {
+		return dataset, err
+	}
+	if err := drainPDataReader(reader); err != nil {
+		return nil, fmt.Errorf("dicom dimse: read past the end of the deflated data set: %w", err)
+	}
+	return dataset, nil
 }
 
 type PDataReader struct {
@@ -139,6 +248,31 @@ func NewPDataReader(assoc *ul.Association, pcID byte) *PDataReader {
 	return &PDataReader{assoc: assoc, pcID: pcID}
 }
 
+// NewPDataReaderWithPrefix returns a reader of one data set whose first
+// bytes were already taken off the association, such as data set PDVs that
+// arrived in the same P-DATA-TF as the command. last reports that the
+// prefix ended with the last fragment, so nothing more is read from the
+// association. Further PDVs must carry data set (not command) bytes on pcID.
+func NewPDataReaderWithPrefix(assoc *ul.Association, pcID byte, prefix []byte, last bool) *PDataReader {
+	reader := newTypedPDataReader(assoc, pcID, false)
+	reader.appendFragment(prefix)
+	reader.receivedBytes = len(prefix)
+	reader.lastReceived = last
+	return reader
+}
+
+// ReadPDataDataSet parses one DIMSE data set from reader, as the library's
+// SCPs and SCUs do. A Deflated data set ends at its final deflate block, which
+// can precede the last P-DATA fragment; the PS3.5 A.5 pad byte or an empty
+// last PDV that may follow is consumed, so it is not read as the start of the
+// next message. Other transfer syntaxes stop at the end of the data set.
+func ReadPDataDataSet(reader *PDataReader, syntax transfer.Syntax, opts object.ReadFileOptions) (*object.Object, error) {
+	if reader == nil {
+		return nil, fmt.Errorf("dicom dimse: nil PDataReader")
+	}
+	return readPDataDataSet(reader, syntax, opts)
+}
+
 func newTypedPDataReader(assoc *ul.Association, pcID byte, isCommand bool) *PDataReader {
 	return &PDataReader{assoc: assoc, pcID: pcID, expectedType: &isCommand}
 }
@@ -157,6 +291,11 @@ func (r *PDataReader) Read(p []byte) (int, error) {
 	for r.bufferedLen() == 0 && !r.lastReceived {
 		r.resetConsumedBuffer()
 		if err := r.readNextPData(); err != nil {
+			// Only the last-fragment flag ends a message. A transport EOF before
+			// it is a truncated message, never a clean end of the data set.
+			if errors.Is(err, io.EOF) {
+				return 0, fmt.Errorf("dicom dimse: association ended before the last P-DATA fragment: %w (%v)", io.ErrUnexpectedEOF, err)
+			}
 			return 0, err
 		}
 	}
@@ -298,7 +437,7 @@ func receivePDataValues(ctx context.Context, assoc *ul.Association) ([]ul.PDataV
 	}
 	pdata, ok := pdu.(*ul.PDataTF)
 	if !ok {
-		return nil, fmt.Errorf("%w: got %T while waiting for P-DATA-TF", ul.ErrUnexpectedPDU, pdu)
+		return nil, ul.UnexpectedPDUError(pdu, "waiting for P-DATA-TF")
 	}
 	return pdata.Values, nil
 }

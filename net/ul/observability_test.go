@@ -429,7 +429,7 @@ func TestInboundAssociationRejectionEmitsSCULifecycleEvent(t *testing.T) {
 	rj := &AssociationRJ{Result: AssociateRJResultTransient, Source: AssociateRJSourceServiceProviderPresentation, Reason: AssociateRJReasonLocalLimitExceeded}
 	writeDone := make(chan error, 1)
 	go func() { writeDone <- writeAssociationPDU(context.Background(), server, rj) }()
-	if _, err := readAssociationPDUObserved(context.Background(), client, DefaultMaxPDU, state); err != nil {
+	if _, err := readAssociationPDUObserved(context.Background(), client, DefaultMaxPDU, 0, state); err != nil {
 		t.Fatalf("readAssociationPDUObserved() error = %v", err)
 	}
 	if err := <-writeDone; err != nil {

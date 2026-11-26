@@ -23,13 +23,6 @@ func nonPatientRetrieveModel(sop string) (NonPatientModel, bool) {
 // the application's existing handler; no catalog is installed globally.
 func serveNonPatientCGet(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object, model NonPatientModel, base CGetHandler) error {
 	storage, _, _, sop, _ := model.SOPClasses()
-	pc, err := AcceptedContextByID(assoc, pcID)
-	if err != nil {
-		return err
-	}
-	if pc.AbstractSyntaxUID != sop {
-		return ErrNonPatientIdentifier
-	}
 	handler := CGetHandlerFunc(func(ctx context.Context, request CGetRequestContext) ([]CGetSubOperation, error) {
 		uids, err := model.RetrieveUIDs(request.Identifier)
 		if err != nil {
@@ -142,13 +135,6 @@ func (handler nonPatientMoveBatchHandler) PrepareCMoveBatch(ctx context.Context,
 
 func serveNonPatientCMove(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object, model NonPatientModel, base CMoveHandler) error {
 	_, _, sop, _, _ := model.SOPClasses()
-	pc, err := AcceptedContextByID(assoc, pcID)
-	if err != nil {
-		return err
-	}
-	if pc.AbstractSyntaxUID != sop {
-		return ErrNonPatientIdentifier
-	}
 	adapter := nonPatientMoveHandler{model: model, base: base}
 	var handler CMoveHandler = adapter
 	if batch, ok := base.(CMoveBatchHandler); ok {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -46,7 +47,7 @@ type CGetResponse struct {
 
 func (r CGetResponse) CommandSet() []core.Element {
 	datasetType := NoDataSet
-	if r.Identifier != nil && cGetResponseStatusAllowsIdentifier(r.Status) {
+	if r.identifier() != nil && cGetResponseStatusAllowsIdentifier(r.Status) {
 		datasetType = DataSetPresent
 	}
 	elements := []core.Element{
@@ -68,9 +69,6 @@ func (r CGetResponse) CommandSet() []core.Element {
 	if r.NumberOfWarningSuboperationsOrNil != nil {
 		elements = append(elements, newUSCommandElement(NumberOfWarningSuboperations, *r.NumberOfWarningSuboperationsOrNil))
 	}
-	if len(r.FailedSOPInstanceUIDListOrNil) > 0 {
-		elements = append(elements, newUIListElement(FailedSOPInstanceUIDList, r.FailedSOPInstanceUIDListOrNil))
-	}
 	if r.ErrorComment != "" {
 		elements = append(elements, core.Element{
 			Header: core.ElementHeader{Tag: ErrorComment, VR: core.VRLO},
@@ -78,6 +76,12 @@ func (r CGetResponse) CommandSet() []core.Element {
 		})
 	}
 	return elements
+}
+
+// identifier returns the Identifier sent with the response, including the
+// Failed SOP Instance UID List when one is set.
+func (r CGetResponse) identifier() *object.Object {
+	return retrieveResponseIdentifier(r.Identifier, r.Status, r.FailedSOPInstanceUIDListOrNil)
 }
 
 func ParseCGetRequest(obj *object.Object) (*CGetRequest, error) {
@@ -117,9 +121,11 @@ func ParseCGetResponse(obj *object.Object) (*CGetResponse, error) {
 		return nil, err
 	}
 	if field != CGetRSP {
-		return nil, fmt.Errorf("dicom dimse: command field 0x%04X, want C-GET-RSP 0x%04X", field, CGetRSP)
+		return nil, protocolViolationf("dicom dimse: command field 0x%04X, want C-GET-RSP 0x%04X", field, CGetRSP)
 	}
-	sopClassUID, err := commandUID(obj, AffectedSOPClassUID)
+	// Affected SOP Class UID is optional in a response (PS3.7 Table 9.1-3
+	// and 9.1-4); dcm4che omits it when a retrieve fails.
+	sopClassUID, _, err := optionalCommandUID(obj, AffectedSOPClassUID)
 	if err != nil {
 		return nil, err
 	}
@@ -226,14 +232,15 @@ func SendCGetResponseWithContext(ctx context.Context, assoc *ul.Association, pcI
 	if err := SendCommandSetWithContext(ctx, assoc, pcID, rsp.CommandSet()); err != nil {
 		return err
 	}
-	if rsp.Identifier == nil {
+	identifier := rsp.identifier()
+	if identifier == nil || !cGetResponseStatusAllowsIdentifier(rsp.Status) {
 		return nil
 	}
 	syntax, err := acceptedTransferSyntax(assoc, pcID)
 	if err != nil {
 		return err
 	}
-	return SendDataSetWithContext(ctx, assoc, pcID, rsp.Identifier, syntax)
+	return SendDataSetWithContext(ctx, assoc, pcID, identifier, syntax)
 }
 
 type CGetProgress struct {
@@ -251,6 +258,10 @@ type CGetStoreRequestContext struct {
 	DataSetSyntax         transfer.Syntax
 }
 
+// CGetStoreHandler stores the C-STORE sub-operations of a C-GET. Its context
+// carries the values of the C-GET's context but not its cancellation: a
+// sub-operation whose data set has arrived completes, and its status is sent,
+// before a cancellation ends the C-GET.
 type CGetStoreHandler interface {
 	Store(context.Context, CGetStoreRequestContext) (uint16, error)
 }
@@ -317,11 +328,14 @@ func SendCGetWithProgress(ctx context.Context, assoc *ul.Association, pcID byte,
 	go func() {
 		defer close(out)
 		defer releaseOperation()
+		// Every terminal event reaches the reader through
+		// deliverRetrieveTerminal, in place of a pending response the reader
+		// has not read once the context has ended (#2004).
 		for {
 			select {
 			case <-ctx.Done():
 				abortCGetAssociation(assoc)
-				emitCGetProgress(ctx, out, CGetProgress{Final: true, Err: ctx.Err()})
+				deliverRetrieveTerminal(ctx, out, CGetProgress{Final: true, Err: ctx.Err()})
 				return
 			default:
 			}
@@ -330,36 +344,52 @@ func SendCGetWithProgress(ctx context.Context, assoc *ul.Association, pcID byte,
 				if ctx.Err() != nil {
 					abortCGetAssociation(assoc)
 				}
-				emitCGetProgress(ctx, out, CGetProgress{Final: true, Err: err})
+				deliverRetrieveTerminal(ctx, out, CGetProgress{Final: true, Err: err})
 				return
 			}
 			field, err := CommandUint16(command, CommandField)
 			if err != nil {
-				emitCGetProgress(ctx, out, CGetProgress{Final: true, Err: err})
+				deliverRetrieveTerminal(ctx, out, CGetProgress{Final: true, Err: err})
 				return
 			}
 			switch field {
 			case CStoreRQ:
 				if err := handleCGetStoreRequest(ctx, assoc, commandPCID, command, storeHandler); err != nil {
-					emitCGetProgress(ctx, out, CGetProgress{Final: true, Err: err})
+					// A cancellation inside a sub-operation ends like one
+					// between messages: the provider is told with an A-ABORT.
+					if ctx.Err() != nil {
+						abortCGetAssociation(assoc)
+					}
+					deliverRetrieveTerminal(ctx, out, CGetProgress{Final: true, Err: err})
 					return
 				}
 			case CGetRSP:
 				rsp, err := parseCGetResponseWithOptionalIdentifier(ctx, assoc, commandPCID, command)
 				if err != nil {
-					emitCGetProgress(ctx, out, CGetProgress{Final: true, Err: err})
+					if ctx.Err() != nil {
+						abortCGetAssociation(assoc)
+					}
+					deliverRetrieveTerminal(ctx, out, CGetProgress{Final: true, Err: err})
 					return
 				}
 				cls := ClassifyCMoveStatus(rsp.Status)
-				final := cls != CMoveStatusPending
-				if !emitCGetProgress(ctx, out, CGetProgress{Response: rsp, Identifier: rsp.Identifier, Final: final, StatusClass: cls}) {
+				event := CGetProgress{Response: rsp, Identifier: rsp.Identifier, Final: cls != CMoveStatusPending, StatusClass: cls}
+				if event.Final {
+					// The operation is over: its final response is handed
+					// over even when the context ends meanwhile, with no abort
+					// in place of a release.
+					deliverRetrieveTerminal(ctx, out, event)
 					return
 				}
-				if final {
+				if !emitCGetProgress(ctx, out, event) {
+					// Canceled while the reader had not taken the previous
+					// event: abort as for a cancellation between messages.
+					abortCGetAssociation(assoc)
+					deliverRetrieveTerminal(ctx, out, CGetProgress{Final: true, Err: ctx.Err()})
 					return
 				}
 			default:
-				emitCGetProgress(ctx, out, CGetProgress{Final: true, Err: fmt.Errorf("dicom dimse: C-GET received command field 0x%04X", field)})
+				deliverRetrieveTerminal(ctx, out, CGetProgress{Final: true, Err: protocolViolationf("dicom dimse: C-GET received command field 0x%04X", field)})
 				return
 			}
 		}
@@ -379,6 +409,7 @@ func emitCGetProgress(ctx context.Context, out chan<- CGetProgress, progress CGe
 		return true
 	default:
 	}
+	retrieveHandOverBlocked()
 	select {
 	case <-ctx.Done():
 		return false
@@ -387,29 +418,115 @@ func emitCGetProgress(ctx context.Context, out chan<- CGetProgress, progress CGe
 	}
 }
 
+type cGetMaxDataSetBytesKey struct{}
+
+// WithCGetMaxDataSetBytes bounds the data set of each C-STORE sub-operation a
+// C-GET requestor reads into memory. A larger data set is drained and its
+// sub-operation answered with Out of Resources, without calling the store
+// handler; a data set that keeps arriving past the drain budget ends the
+// retrieve with ErrRejectedDataSetDrainLimit. Zero or less sets no bound.
+func WithCGetMaxDataSetBytes(ctx context.Context, maxBytes int64) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if maxBytes <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, cGetMaxDataSetBytesKey{}, maxBytes)
+}
+
+func cGetMaxDataSetBytes(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	maxBytes, _ := ctx.Value(cGetMaxDataSetBytesKey{}).(int64)
+	return maxBytes
+}
+
+// receiveSpooledCGetDataSet is receiveDataSetWithContextAndLimit for a C-GET
+// requestor with WithCGetSpoolDir: the data set goes to a spool file as it
+// arrives and its large values stay there. A data set over maxBytes, or one
+// the spool cannot hold, is drained.
+func receiveSpooledCGetDataSet(ctx context.Context, assoc *ul.Association, pcID byte, syntax transfer.Syntax, dir string, maxBytes int64) (*object.Object, func(), error) {
+	ctx = dataSetReadContext(ctx, assoc)
+	reader := newTypedPDataReaderWithContext(ctx, assoc, pcID, false)
+	dataset, release, err := spoolDataSet(reader, syntax, spoolTarget{dir: dir, onRemoveError: cGetSpoolRemoveError(ctx)}, object.ReadFileOptions{
+		MaxElementBytes: maxBytes,
+		MaxTotalBytes:   maxBytes,
+	})
+	if err != nil {
+		if shouldDrainDataSetPDataOnError(err) {
+			if drainErr := drainPDataReader(reader); drainErr != nil {
+				return nil, release, fmt.Errorf("dicom dimse: drain rejected dataset: %w", drainErr)
+			}
+		}
+		return nil, release, fmt.Errorf("dicom dimse: receive dataset: %w", err)
+	}
+	return dataset, release, nil
+}
+
 func handleCGetStoreRequest(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object, storeHandler CGetStoreHandler) error {
 	req, err := ParseCStoreRequest(command)
 	if err != nil {
 		return err
 	}
-	syntax, err := acceptedTransferSyntax(assoc, pcID)
+	pc, err := AcceptedContextByID(assoc, pcID)
 	if err != nil {
 		return err
 	}
-	dataset, err := receiveDataSetWithContext(ctx, assoc, pcID, syntax)
+	syntax, err := TransferSyntaxForAcceptedContext(pc)
 	if err != nil {
 		return err
 	}
-	status, handlerErr := storeHandler.Store(ctx, CGetStoreRequestContext{
-		Request:               *req,
-		DataSet:               dataset,
-		PresentationContextID: pcID,
-		DataSetSyntax:         syntax,
-	})
+	var dataset *object.Object
+	if spoolDir := cGetSpoolDir(ctx); spoolDir != "" {
+		var release func()
+		dataset, release, err = receiveSpooledCGetDataSet(ctx, assoc, pcID, syntax, spoolDir, cGetMaxDataSetBytes(ctx))
+		defer release()
+	} else {
+		dataset, err = receiveDataSetWithContextAndLimit(ctx, assoc, pcID, syntax, cGetMaxDataSetBytes(ctx))
+	}
+	if err != nil && storageDataSetErrorStatus(err) != StatusCStoreOutOfResources {
+		return err
+	}
+	var status uint16
+	var handlerErr error
+	if err != nil {
+		// The data set passed a resource limit and was drained to its end:
+		// this sub-operation fails and the retrieve goes on.
+		status = StatusCStoreOutOfResources
+	} else if identityErr := ValidateCStoreDataSet(req.AffectedSOPClassUID, req.AffectedSOPInstanceUID, pc, dataset); identityErr != nil {
+		status = StatusCStoreDataSetDoesNotMatch
+	} else if encodingErr := dataset.CheckPixelDataEncoding(syntax); encodingErr != nil {
+		status, handlerErr = StatusCStoreCannotUnderstand, encodingErr
+	} else {
+		// The data set is in: this sub-operation is performed even when the
+		// C-GET is canceled meanwhile, and answered with its real storage
+		// status (#1994). A C-GET cancellation (PS3.4 C.4.3) stops the
+		// C-STORE sub-operations still to come; the C-STORE statuses (PS3.4
+		// B.2.3) have no Cancel, and a Failure such as C000 (Cannot
+		// understand) would claim a defect of an intact object and make the
+		// provider count it failed. The handler's context keeps the values
+		// of ctx but not its cancellation; the cancellation takes effect
+		// once the response is sent.
+		status, handlerErr = storeHandler.Store(context.WithoutCancel(ctx), CGetStoreRequestContext{
+			Request:               *req,
+			DataSet:               dataset,
+			PresentationContextID: pcID,
+			DataSetSyntax:         syntax,
+		})
+	}
 	if handlerErr != nil && status == StatusSuccess {
 		status = StatusCGetUnableToProcess
 	}
-	if err := SendCStoreResponse(assoc, pcID, CStoreResponse{
+	// The response is written without the cancellation and the deadline of
+	// ctx and of the association's context, which may be the same: they
+	// would keep the real status from the provider, or cut the response
+	// inside its PDU, with the A-ABORT that follows inside it (#2004). The
+	// write still ends cGetStoreResponseGrace after either of them ends.
+	respondCtx, stopRespond := cGetStoreResponseContext(ctx, assoc)
+	defer stopRespond()
+	if err := SendCStoreResponseWithContext(respondCtx, assoc, pcID, CStoreResponse{
 		AffectedSOPClassUID:       req.AffectedSOPClassUID,
 		MessageIDBeingRespondedTo: req.MessageID,
 		AffectedSOPInstanceUID:    req.AffectedSOPInstanceUID,
@@ -418,6 +535,45 @@ func handleCGetStoreRequest(ctx context.Context, assoc *ul.Association, pcID byt
 		return err
 	}
 	return nil
+}
+
+// cGetStoreResponseGrace bounds the write of the response of a performed
+// C-GET sub-operation once the operation's or the association's context has
+// ended.
+const cGetStoreResponseGrace = time.Second
+
+// cGetStoreResponseContext returns a context with the values of ctx, and its
+// release. It ends cGetStoreResponseGrace after the first of ctx and the
+// association's context ends, counted from the call when one has already
+// ended.
+func cGetStoreResponseContext(ctx context.Context, assoc *ul.Association) (context.Context, context.CancelFunc) {
+	respond, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	var mu sync.Mutex
+	var grace *time.Timer
+	released := false
+	startGrace := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !released && grace == nil {
+			grace = time.AfterFunc(cGetStoreResponseGrace, cancel)
+		}
+	}
+	stops := []func() bool{context.AfterFunc(ctx, startGrace)}
+	if assoc != nil && assoc.Context != nil && assoc.Context != ctx {
+		stops = append(stops, context.AfterFunc(assoc.Context, startGrace))
+	}
+	return respond, func() {
+		for _, stop := range stops {
+			stop()
+		}
+		mu.Lock()
+		released = true
+		if grace != nil {
+			grace.Stop()
+		}
+		mu.Unlock()
+		cancel()
+	}
 }
 
 func parseCGetResponseWithOptionalIdentifier(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object) (*CGetResponse, error) {
@@ -435,6 +591,9 @@ func parseCGetResponseWithOptionalIdentifier(ctx context.Context, assoc *ul.Asso
 	rsp.Identifier, err = receiveIdentifierDataSetWithContext(ctx, assoc, pcID, syntax)
 	if err != nil {
 		return nil, err
+	}
+	if failed, ok := failedSOPInstanceUIDsFromIdentifier(rsp.Identifier); ok {
+		rsp.FailedSOPInstanceUIDListOrNil = failed
 	}
 	return rsp, nil
 }

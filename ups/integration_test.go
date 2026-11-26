@@ -30,7 +30,7 @@ func TestUPSClientPushPullWatchRoundTrip(t *testing.T) {
 	serverOptions := service.NormalizedOptions(local)
 	serverDone := make(chan error, 1)
 	go func() {
-		for _, pcID := range []byte{1, 3, 5, 5} {
+		for _, pcID := range []byte{1, 3, 5, 5, 5, 5} {
 			command, err := dimse.ReceiveCommandSet(local, pcID)
 			if err != nil {
 				serverDone <- err
@@ -62,6 +62,16 @@ func TestUPSClientPushPullWatchRoundTrip(t *testing.T) {
 	}
 	if state, ok := result.DataSet.GetString(ups.TagProcedureStepState); !ok || state != string(ups.StateInProgress) {
 		t.Fatalf("state = %q, present %t", state, ok)
+	}
+	all, err := client.Get(ctx, ups.WatchSOPClassUID, uid, nil)
+	if err != nil || all.Status != ups.StatusSuccess || all.DataSet == nil {
+		t.Fatalf("Get all = %#v, %v", all, err)
+	}
+	if _, present := all.DataSet.Get(ups.TagTransactionUID); present {
+		t.Fatal("Get all exposed the UPS Transaction UID after claim")
+	}
+	if explicit, err := client.Get(ctx, ups.WatchSOPClassUID, uid, []core.Tag{ups.TagTransactionUID}); err == nil || explicit.Status != ups.StatusNoSuchAttribute || explicit.DataSet != nil {
+		t.Fatalf("Get requested lock = dataset present %t, status %04X, error %v", explicit.DataSet != nil, explicit.Status, err)
 	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)

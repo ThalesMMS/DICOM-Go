@@ -7,6 +7,21 @@ const (
 	// failure status used when a Storage Commitment SCP cannot accept an
 	// N-ACTION request.
 	StatusStorageCommitmentProcessingFailure uint16 = 0x0110
+	// StatusStorageCommitmentResourceLimitation is the N-ACTION failure
+	// status for a request the SCP cannot take on because a configured
+	// resource bound is reached (PS3.7 10.1.4.1.10).
+	StatusStorageCommitmentResourceLimitation uint16 = 0x0213
+)
+
+// Failure Reason (0008,1197) values of the Storage Commitment Result event
+// information (PS3.3 C.14.1.1, 2026d). They are not DIMSE statuses.
+const (
+	StorageCommitmentFailureReasonProcessingFailure       uint16 = 0x0110
+	StorageCommitmentFailureReasonNoSuchSOPInstance       uint16 = 0x0112
+	StorageCommitmentFailureReasonClassInstanceConflict   uint16 = 0x0119
+	StorageCommitmentFailureReasonSOPClassNotSupported    uint16 = 0x0122
+	StorageCommitmentFailureReasonDuplicateTransactionUID uint16 = 0x0131
+	StorageCommitmentFailureReasonResourceLimitation      uint16 = 0x0213
 )
 
 // StorageCommitmentStatus represents the high-level class of a Storage

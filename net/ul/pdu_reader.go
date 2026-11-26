@@ -3,6 +3,7 @@ package ul
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -10,9 +11,31 @@ import (
 	dicomenc "github.com/ThalesMMS/dicom-go/encoding"
 )
 
-const maxAssociationPDU = 16 << 20
+// DefaultMaxAssociationPDU bounds A-ASSOCIATE-RQ and A-ASSOCIATE-AC PDUs,
+// which arrive before any authentication; DCMTK uses the same 1 MB default
+// (dcmAssociatePDUSizeLimit). P-DATA-TF stays governed by the negotiated
+// Maximum Length.
+const DefaultMaxAssociationPDU uint32 = 1 << 20
 
+// resolveMaxAssociationPDU resolves a MaxAssociationPDU option: zero is
+// DefaultMaxAssociationPDU.
+func resolveMaxAssociationPDU(configured uint32) uint32 {
+	if configured == 0 {
+		return DefaultMaxAssociationPDU
+	}
+	return configured
+}
+
+// ReadPDU reads one PDU whose body may not exceed maxPDULength, or
+// DefaultMaxAssociationPDU for an A-ASSOCIATE-RQ or -AC.
 func ReadPDU(r io.Reader, maxPDULength uint32) (PDU, error) {
+	return ReadPDUWithAssociationLimit(r, maxPDULength, DefaultMaxAssociationPDU)
+}
+
+// ReadPDUWithAssociationLimit is ReadPDU with an explicit bound for
+// A-ASSOCIATE-RQ and -AC bodies (zero is DefaultMaxAssociationPDU). The body
+// is read in bounded steps, so a declared length alone does not allocate it.
+func ReadPDUWithAssociationLimit(r io.Reader, maxPDULength, maxAssociationPDU uint32) (PDU, error) {
 	if maxPDULength < MinimumPDUSize {
 		return nil, fmt.Errorf("%w: max PDU length %d is smaller than %d", ErrInvalidPDUSize, maxPDULength, MinimumPDUSize)
 	}
@@ -27,15 +50,51 @@ func ReadPDU(r io.Reader, maxPDULength uint32) (PDU, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dicom ul: read PDU length: %w", err)
 	}
-	if err := validateReadPDULength(pduType, pduLength, maxPDULength); err != nil {
+	if err := validateReadPDULength(pduType, pduLength, maxPDULength, resolveMaxAssociationPDU(maxAssociationPDU)); err != nil {
 		return nil, err
 	}
 
-	data := make([]byte, pduLength)
-	if _, err := io.ReadFull(r, data); err != nil {
+	data, err := readPDUBody(r, int(pduLength))
+	if err != nil {
 		return nil, fmt.Errorf("dicom ul: read PDU body: %w", err)
 	}
+	return parsePDUBody(pduType, data)
+}
 
+// readPDUBody reads length bytes, growing the buffer at most pduReadGrowth
+// (or its own size) ahead of the bytes that arrived.
+func readPDUBody(r io.Reader, length int) ([]byte, error) {
+	data := make([]byte, 0, min(length, pduReadGrowth))
+	for len(data) < length {
+		if len(data) == cap(data) {
+			grown := make([]byte, len(data), min(length, len(data)+max(len(data), pduReadGrowth)))
+			copy(grown, data)
+			data = grown
+		}
+		n, err := io.ReadFull(r, data[len(data):cap(data)])
+		data = data[:len(data)+n]
+		if err != nil {
+			if errors.Is(err, io.EOF) && len(data) > 0 {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+	}
+	return data, nil
+}
+
+// parsePDUBody decodes a PDU body. P-DATA values and unknown PDUs copy their
+// bytes, so the caller may reuse data after a P-DATA-TF or unknown PDU. A
+// failed decode returns a nil PDU, never a typed nil pointer.
+func parsePDUBody(pduType PDUType, data []byte) (PDU, error) {
+	pdu, err := decodePDUBody(pduType, data)
+	if err != nil {
+		return nil, err
+	}
+	return pdu, nil
+}
+
+func decodePDUBody(pduType PDUType, data []byte) (PDU, error) {
 	switch pduType {
 	case PDUAssociateRQ:
 		return readAssociationRQ(data)
@@ -56,7 +115,7 @@ func ReadPDU(r io.Reader, maxPDULength uint32) (PDU, error) {
 	}
 }
 
-func validateReadPDULength(pduType PDUType, pduLength, maxPDULength uint32) error {
+func validateReadPDULength(pduType PDUType, pduLength, maxPDULength, maxAssociationPDU uint32) error {
 	limit := maxPDULength
 	if pduType == PDUAssociateRQ || pduType == PDUAssociateAC {
 		limit = maxAssociationPDU
@@ -136,7 +195,9 @@ func readAssociationFixed(data []byte) (protocolVersion uint16, calledAETitle st
 	if _, err = r.Seek(32, io.SeekCurrent); err != nil {
 		return 0, "", "", nil, err
 	}
-	return protocolVersion, strings.TrimSpace(string(calledBytes[:])), strings.TrimSpace(string(callingBytes[:])), data[68:], nil
+	// Padding (spaces, or the NUL bytes some peers use) is removed here; the
+	// acceptor validates what remains before it compares or admits it.
+	return protocolVersion, NormalizeAETitle(string(calledBytes[:])), NormalizeAETitle(string(callingBytes[:])), data[68:], nil
 }
 
 func readAssociationRJ(data []byte) (*AssociationRJ, error) {
@@ -215,7 +276,7 @@ func readVariableItems(data []byte, forAC bool) (appContext string, presContexts
 		}
 		return appContext, results, userVars, nil
 	}
-	if err := validatePresentationContextIDsProposed(proposed); err != nil {
+	if err := validatePresentationContextIDsProposed(proposed, validPeerPresentationContextID); err != nil {
 		return "", nil, nil, err
 	}
 	return appContext, proposed, userVars, nil
@@ -230,7 +291,7 @@ func readPresentationContextProposed(data []byte) (*PresentationContextProposed,
 		return nil, fmt.Errorf("%w: presentation context request fixed fields", ErrInvalidPDUItem)
 	}
 	pc := &PresentationContextProposed{ID: data[0]}
-	if !validPresentationContextID(pc.ID) {
+	if !validPeerPresentationContextID(pc.ID) {
 		return nil, fmt.Errorf("%w: %d", ErrInvalidPCID, pc.ID)
 	}
 	r := bytes.NewReader(data[4:])
@@ -265,7 +326,7 @@ func readPresentationContextResult(data []byte) (*PresentationContextResult, err
 		return nil, fmt.Errorf("%w: presentation context accept fixed fields", ErrInvalidPDUItem)
 	}
 	pc := &PresentationContextResult{ID: data[0], Result: data[2]}
-	if !validPresentationContextID(pc.ID) {
+	if !validPeerPresentationContextID(pc.ID) {
 		return nil, fmt.Errorf("%w: %d", ErrInvalidPCID, pc.ID)
 	}
 	if pc.Result > PresentationContextTransferSyntaxesNotSupported {
@@ -293,15 +354,36 @@ func readPresentationContextResult(data []byte) (*PresentationContextResult, err
 	return pc, nil
 }
 
+// singleUserInformationItems are the User Information sub-items that may
+// appear at most once; role selection and extended negotiation repeat per SOP
+// Class.
+var singleUserInformationItems = map[byte]bool{
+	SubItemMaxLength:                 true,
+	SubItemImplementationClassUID:    true,
+	SubItemAsynchronousOperations:    true,
+	SubItemImplementationVersionName: true,
+	SubItemUserIdentity:              true,
+	SubItemUserIdentityResponse:      true,
+}
+
 func readUserInformation(data []byte) ([]UserVariableItem, error) {
 	r := bytes.NewReader(data)
 	dec := dicomenc.NewBasicDecoder(binary.BigEndian)
 	var items []UserVariableItem
-	asyncSeen := false
+	seen := make(map[byte]bool, 6)
 	for r.Len() > 0 {
 		itemType, item, err := readItem(r)
 		if err != nil {
 			return nil, err
+		}
+		// PS3.7 Annex D allows each of these sub-items once; a repeat would
+		// leave the negotiated value ambiguous (DCMTK tparseassoc covers a
+		// duplicated User Identity item).
+		if singleUserInformationItems[itemType] {
+			if seen[itemType] {
+				return nil, fmt.Errorf("%w: duplicate user information sub-item 0x%02X", ErrInvalidUserItem, itemType)
+			}
+			seen[itemType] = true
 		}
 		switch itemType {
 		case SubItemMaxLength:
@@ -318,10 +400,6 @@ func readUserInformation(data []byte) ([]UserVariableItem, error) {
 		case SubItemImplementationVersionName:
 			items = append(items, ImplementationVersionNameItem{Name: strings.TrimSpace(string(item))})
 		case SubItemAsynchronousOperations:
-			if asyncSeen {
-				return nil, fmt.Errorf("%w: duplicate asynchronous operations window", ErrInvalidUserItem)
-			}
-			asyncSeen = true
 			if len(item) != 4 {
 				return nil, fmt.Errorf("%w: asynchronous operations window item length %d", ErrInvalidUserItem, len(item))
 			}
@@ -349,6 +427,12 @@ func readUserInformation(data []byte) ([]UserVariableItem, error) {
 				SopClassUID: strings.TrimSpace(string(item[2 : 2+int(sopLen)])),
 				Data:        append([]byte(nil), item[2+int(sopLen):]...),
 			})
+		case SubItemSopClassCommonExtendedNegotiation:
+			common, err := readSopClassCommonExtendedNegotiation(item)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, common)
 		case SubItemRoleSelection:
 			role, err := readRoleSelection(item)
 			if err != nil {
@@ -471,7 +555,7 @@ func readPDataTF(data []byte) (*PDataTF, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !validPresentationContextID(pcID) {
+		if !validPeerPresentationContextID(pcID) {
 			return nil, fmt.Errorf("%w: %d", ErrInvalidPCID, pcID)
 		}
 		flags, err := r.ReadByte()

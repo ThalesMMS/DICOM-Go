@@ -1,6 +1,7 @@
 package dimse
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -99,6 +100,31 @@ func AcceptedContextByID(assoc *ul.Association, pcID byte) (ul.AcceptedContext, 
 		}
 	}
 	return ul.AcceptedContext{}, fmt.Errorf("dicom dimse: no accepted presentation context %d", pcID)
+}
+
+// requireSCPPresentationContext checks the abstract syntax before consuming a
+// request's dataset or invoking application code. Abort a misrouted command
+// instead of sending a response on a context that cannot carry its service.
+func requireSCPPresentationContext(ctx context.Context, assoc *ul.Association, pcID byte, sopClassUID string) (ul.AcceptedContext, error) {
+	pc, err := AcceptedContextByID(assoc, pcID)
+	if err != nil {
+		return ul.AcceptedContext{}, err
+	}
+	if pc.AbstractSyntaxUID != sopClassUID {
+		err := fmt.Errorf("%w: context %d is for %q, want %q", ErrPresentationContextMismatch, pcID, pc.AbstractSyntaxUID, sopClassUID)
+		return ul.AcceptedContext{}, errors.Join(err, sendWithSCPResponseContext(ctx, assoc, func(responseCtx context.Context) error {
+			return assoc.AbortWithContext(responseCtx, ul.AbortReasonNotSpecified)
+		}))
+	}
+	return pc, nil
+}
+
+func acceptedSCPTransferSyntax(ctx context.Context, assoc *ul.Association, pcID byte, sopClassUID string) (transfer.Syntax, error) {
+	pc, err := requireSCPPresentationContext(ctx, assoc, pcID, sopClassUID)
+	if err != nil {
+		return transfer.Syntax{}, err
+	}
+	return TransferSyntaxForAcceptedContext(pc)
 }
 
 // AcceptedTransferSyntax returns the transfer syntax accepted for a presentation

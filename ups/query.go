@@ -14,6 +14,7 @@ import (
 	"github.com/ThalesMMS/dicom-go/net/dimse"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/object"
+	"github.com/ThalesMMS/dicom-go/validation"
 )
 
 var ErrQueryIdentifier = errors.New("dicom ups: query Identifier invalid")
@@ -34,6 +35,23 @@ func Match(values ...string) QueryKey {
 }
 
 func ReturnKey() QueryKey { return Match() }
+
+// MatchDateTimeRange builds a DT range whose inclusive bounds use their
+// declared precision. An empty bound is open. Two empty bounds return a
+// universal return key.
+func MatchDateTimeRange(from, through string) (QueryKey, error) {
+	from, through = strings.TrimSpace(from), strings.TrimSpace(through)
+	if from == "" && through == "" {
+		return ReturnKey(), nil
+	}
+	lower, lowerOK := parseTemporalValue(core.VRDT, from, "")
+	upper, upperOK := parseTemporalValue(core.VRDT, through, "")
+	if from != "" && !lowerOK || through != "" && !upperOK ||
+		lowerOK && upperOK && lower.start.After(upper.end) {
+		return QueryKey{}, ErrQueryIdentifier
+	}
+	return Match(from + "-" + through), nil
+}
 
 // Query contains the UPS keys selected by tag. Keys are cloned by builders.
 // Sequence keys are currently supported as universal return keys only.
@@ -92,7 +110,7 @@ func BuildQueryIdentifier(query Query) (*object.Object, error) {
 			elements = append(elements, StringElement(tag, entry.VR, key.Values...))
 		}
 	}
-	return NewDataSet(elements...), nil
+	return NewDataSet(withQueryCharacterSet(elements)...), nil
 }
 
 func ParseQueryIdentifier(identifier *object.Object) (ParsedQuery, error) {
@@ -101,7 +119,7 @@ func ParseQueryIdentifier(identifier *object.Object) (ParsedQuery, error) {
 	}
 	parsed := ParsedQuery{Keys: make(map[core.Tag]QueryKey), order: make([]core.Tag, 0, identifier.Len())}
 	for _, element := range identifier.Elements() {
-		if _, duplicate := parsed.Keys[element.Tag()]; duplicate {
+		if identifier.HasDuplicateParsedTag(element.Tag()) {
 			return ParsedQuery{}, ErrQueryIdentifier
 		}
 		entry, allowed := queryEntry(element.Tag())
@@ -115,7 +133,11 @@ func ParseQueryIdentifier(identifier *object.Object) (ParsedQuery, error) {
 				return ParsedQuery{}, ErrQueryIdentifier
 			}
 		} else {
-			key.Values = append([]string(nil), element.StringValues()...)
+			var err error
+			key.Values, err = identifier.LookupStrings(element.Tag())
+			if err != nil {
+				return ParsedQuery{}, ErrQueryIdentifier
+			}
 			if len(key.Values) == 1 && key.Values[0] == "" {
 				key.Values = nil
 			}
@@ -123,8 +145,10 @@ func ParseQueryIdentifier(identifier *object.Object) (ParsedQuery, error) {
 		if element.Tag() == TagTimezoneOffsetFromUTC && (len(key.Values) != 1 || !validUPSTimezoneOffset(key.Values[0])) {
 			return ParsedQuery{}, ErrQueryIdentifier
 		}
-		if element.Tag() == TagSpecificCharacterSet && (len(key.Values) != 1 || strings.TrimSpace(key.Values[0]) == "") {
-			return ParsedQuery{}, ErrQueryIdentifier
+		if element.Tag() == TagSpecificCharacterSet {
+			if _, err := identifier.CharacterSet(); err != nil || len(key.Values) != 1 || strings.TrimSpace(key.Values[0]) == "" {
+				return ParsedQuery{}, ErrQueryIdentifier
+			}
 		}
 		parsed.Keys[element.Tag()] = key
 		parsed.order = append(parsed.order, element.Tag())
@@ -146,7 +170,11 @@ func validUPSTimezoneOffset(value string) bool {
 	}
 	hours := int(value[1]-'0')*10 + int(value[2]-'0')
 	minutes := int(value[3]-'0')*10 + int(value[4]-'0')
-	return minutes < 60 && (hours < 14 || hours == 14 && minutes == 0)
+	maxHours := 14
+	if value[0] == '-' {
+		maxHours = 12
+	}
+	return minutes < 60 && (hours < maxHours || hours == maxHours && minutes == 0)
 }
 
 type QuerySCPOptions struct {
@@ -260,6 +288,7 @@ func queryMatchesStep(query ParsedQuery, step Step) bool {
 	if value, present := dataSetString(step.Attributes, TagTimezoneOffsetFromUTC); present {
 		candidateTimezone = value
 	}
+	candidate := stepQueryMatcher{attributes: step.Attributes}
 	for tag, key := range query.Keys {
 		if tag == TagSpecificCharacterSet || tag == TagTimezoneOffsetFromUTC {
 			continue
@@ -267,8 +296,104 @@ func queryMatchesStep(query ParsedQuery, step Step) bool {
 		if len(key.Values) == 0 {
 			continue
 		}
-		element, found := dataSetElement(step.Attributes, tag)
-		if !found || !queryValuesMatch(element, key.Values, queryTimezone, candidateTimezone) {
+		if !candidate.matches(tag, key.Values, queryTimezone, candidateTimezone) {
+			return false
+		}
+	}
+	return true
+}
+
+// stepQueryMatcher opens a text scope only when a predicate reads an encoded
+// textual attribute, and reuses that scope across the step's predicates.
+type stepQueryMatcher struct {
+	attributes core.DataSet
+	textScope  *object.Object
+}
+
+func (candidate *stepQueryMatcher) matches(tag core.Tag, requested []string, queryTimezone, candidateTimezone string) bool {
+	element, found := dataSetElement(candidate.attributes, tag)
+	if !found {
+		return false
+	}
+	var values []string
+	if _, raw := element.Value.(core.RawValue); raw && element.VR().UsesSpecificCharacterSet() {
+		if candidate.textScope == nil {
+			candidate.textScope = object.FromDataSet(candidate.attributes, std.Dictionary)
+		}
+		var err error
+		values, err = candidate.textScope.LookupStrings(tag)
+		if err != nil {
+			return false
+		}
+	} else {
+		values = element.StringValues()
+	}
+	return queryValuesMatch(element.VR(), requested, values, queryTimezone, candidateTimezone)
+}
+
+// MatchesIdentifier checks a pending response against the parsed C-FIND keys.
+// Every matching key must have a valid, nonempty response value. Return-only
+// keys may be absent or empty, including in FF01 pending responses. If present,
+// their value must have the expected VR and shape. Extra attributes other
+// than the charset and timezone declarations are ignored.
+func (query ParsedQuery) MatchesIdentifier(identifier *object.Object) bool {
+	if identifier == nil || !query.HasMatchingKey() || identifier.HasDuplicateParsedTag(TagSpecificCharacterSet) {
+		return false
+	}
+	if charset, present := identifier.Get(TagSpecificCharacterSet); present && charset.VR() != core.VRCS {
+		return false
+	}
+	if _, err := identifier.CharacterSet(); err != nil {
+		return false
+	}
+	queryTimezone := queryTimezoneOffset(query)
+	candidateTimezone := ""
+	if timezone, present := identifier.Get(TagTimezoneOffsetFromUTC); present {
+		values, err := identifier.LookupStrings(TagTimezoneOffsetFromUTC)
+		if timezone.VR() != core.VRSH || identifier.HasDuplicateParsedTag(TagTimezoneOffsetFromUTC) || err != nil || len(values) > 1 {
+			return false
+		}
+		// A zero-length value declares no offset: dcm4chee-arc returns the
+		// attribute empty in every pending response.
+		if len(values) == 1 && values[0] != "" {
+			if !validUPSTimezoneOffset(values[0]) {
+				return false
+			}
+			candidateTimezone = values[0]
+		}
+	}
+	for tag, key := range query.Keys {
+		if !key.Present || tag == TagSpecificCharacterSet || tag == TagTimezoneOffsetFromUTC {
+			continue
+		}
+		element, present := identifier.Get(tag)
+		if !present && len(key.Values) == 0 {
+			continue
+		}
+		entry, allowed := queryEntry(tag)
+		if !present || !allowed || element.VR() != entry.VR || identifier.HasDuplicateParsedTag(tag) {
+			return false
+		}
+		if entry.VR == core.VRSQ {
+			if _, ok := element.Value.(core.SequenceValue); !ok || len(key.Values) != 0 {
+				return false
+			}
+			continue
+		}
+		values, err := identifier.LookupStrings(tag)
+		if err != nil || len(values) > 1 {
+			return false
+		}
+		if len(values) == 0 || values[0] == "" {
+			if len(key.Values) != 0 {
+				return false
+			}
+			continue
+		}
+		if _, err := validation.ValidateElement(nil, StringElement(tag, entry.VR, values[0]), validation.Options{Mode: validation.ModeStrict, StopFirst: true}); err != nil {
+			return false
+		}
+		if len(key.Values) != 0 && !queryValuesMatch(entry.VR, key.Values, values, queryTimezone, candidateTimezone) {
 			return false
 		}
 	}
@@ -283,14 +408,10 @@ func queryTimezoneOffset(query ParsedQuery) string {
 	return ""
 }
 
-func queryValuesMatch(element core.Element, requested []string, queryTimezone, candidateTimezone string) bool {
-	candidates := element.StringValues()
-	if len(candidates) == 0 {
-		return false
-	}
+func queryValuesMatch(vr core.VR, requested, candidates []string, queryTimezone, candidateTimezone string) bool {
 	for _, request := range requested {
 		for _, candidate := range candidates {
-			if queryValueMatchWithTimezone(element.VR(), request, candidate, queryTimezone, candidateTimezone) {
+			if queryValueMatchWithTimezone(vr, request, candidate, queryTimezone, candidateTimezone) {
 				return true
 			}
 		}
@@ -308,9 +429,14 @@ func queryValueMatchWithTimezone(vr core.VR, request, candidate, queryTimezone, 
 		if !candidateOK {
 			return false
 		}
-		if lower, upper, ok := parseTemporalRange(vr, request, queryTimezone); ok {
+		switch lower, upper, readings := parseTemporalRange(vr, request, queryTimezone); {
+		case readings == 1:
 			return (lower == nil || !candidateValue.end.Before(lower.start)) &&
 				(upper == nil || !candidateValue.start.After(upper.end))
+		case readings > 1 || strings.Count(request, "-") > maxTemporalRangeHyphens:
+			// Ambiguous, or more '-' than a range of two values with negative
+			// offsets holds.
+			return false
 		}
 		requestValue, requestOK := parseTemporalValue(vr, request, queryTimezone)
 		if !requestOK {
@@ -335,6 +461,7 @@ type temporalValue struct {
 func parseTemporalValue(vr core.VR, value, defaultTimezone string) (temporalValue, bool) {
 	var start time.Time
 	var precision dcmtime.PrecisionLevel
+	leap := false
 	switch vr {
 	case core.VRDA:
 		parsed, err := dcmtime.ParseDate(value)
@@ -347,7 +474,7 @@ func parseTemporalValue(vr core.VR, value, defaultTimezone string) (temporalValu
 		if err != nil {
 			return temporalValue{}, false
 		}
-		start, precision = parsed.Time, parsed.Precision
+		start, precision, leap = parsed.Time, parsed.Precision, parsed.LeapSecond
 		if defaultTimezone != "" {
 			offset, ok := timezoneOffsetSeconds(defaultTimezone)
 			if !ok {
@@ -360,24 +487,44 @@ func parseTemporalValue(vr core.VR, value, defaultTimezone string) (temporalValu
 		if err != nil {
 			return temporalValue{}, false
 		}
-		start, precision = parsed.Time, parsed.Precision
+		start, precision, leap = parsed.Time, parsed.Precision, parsed.LeapSecond
 		if parsed.NoOffset && defaultTimezone != "" {
 			offset, ok := timezoneOffsetSeconds(defaultTimezone)
 			if !ok {
 				return temporalValue{}, false
 			}
-			start = time.Date(start.Year(), start.Month(), start.Day(), start.Hour(), start.Minute(), start.Second(), start.Nanosecond(), time.FixedZone("", offset)).UTC()
-		} else {
-			start = start.UTC()
+			start = time.Date(start.Year(), start.Month(), start.Day(), start.Hour(), start.Minute(), start.Second(), start.Nanosecond(), time.FixedZone("", offset))
 		}
 	default:
 		return temporalValue{}, false
 	}
+	if leap {
+		// dcmtime holds a leap second (SS=60) as the last instant of its
+		// minute; it covers only that instant, so it stays inside its minute.
+		return temporalValue{start: start, end: start}, true
+	}
+	// Calendar precision ends at the next boundary in the value's local zone.
 	end := temporalPrecisionEnd(start, precision, vr)
 	return temporalValue{start: start, end: end}, true
 }
 
-func parseTemporalRange(vr core.VR, value, defaultTimezone string) (*temporalValue, *temporalValue, bool) {
+// maxTemporalRangeHyphens is the most '-' characters a range matching key can
+// hold: a negative UTC offset on each DT bound and the range separator.
+const maxTemporalRangeHyphens = 3
+
+// parseTemporalRange reads a range matching key (PS3.4 C.2.2.2.5) and reports
+// how many readings as a range it has. A DT value may end in a negative UTC
+// offset (&ZZXX, PS3.5 6.2), so a '-' is the range separator only where it
+// splits the key into valid bounds with the lower not after the upper. With
+// no such '-' the key is a single value, and with more than one it is
+// ambiguous; the bounds are returned only for exactly one reading. This is
+// the rule qrmatch applies.
+func parseTemporalRange(vr core.VR, value, defaultTimezone string) (*temporalValue, *temporalValue, int) {
+	if strings.Count(value, "-") > maxTemporalRangeHyphens {
+		return nil, nil, 0
+	}
+	var foundLower, foundUpper *temporalValue
+	readings := 0
 	for index := 0; index < len(value); index++ {
 		if value[index] != '-' {
 			continue
@@ -398,11 +545,19 @@ func parseTemporalRange(vr core.VR, value, defaultTimezone string) (*temporalVal
 			}
 			upper = &parsed
 		}
-		if lower != nil || upper != nil {
-			return lower, upper, true
+		if lower == nil && upper == nil {
+			continue
 		}
+		if lower != nil && upper != nil && lower.start.After(upper.end) {
+			continue
+		}
+		foundLower, foundUpper = lower, upper
+		readings++
 	}
-	return nil, nil, false
+	if readings != 1 {
+		return nil, nil, readings
+	}
+	return foundLower, foundUpper, 1
 }
 
 func timezoneOffsetSeconds(value string) (int, bool) {
@@ -446,6 +601,12 @@ func temporalPrecisionEnd(start time.Time, precision dcmtime.PrecisionLevel, vr 
 		exclusive = start.Add(10 * time.Microsecond)
 	default:
 		exclusive = start.Add(time.Microsecond)
+	}
+	if precision <= dcmtime.PrecisionSeconds {
+		// DICOM resolves seconds to the microsecond. Ending these windows at
+		// their last microsecond keeps a leap second, which dcmtime holds at
+		// hh:mm:59.999999999, out of second 59 but inside its minute.
+		return exclusive.Add(-time.Microsecond)
 	}
 	return exclusive.Add(-time.Nanosecond)
 }
@@ -503,6 +664,13 @@ func projectQueryResult(query ParsedQuery, step Step) (*object.Object, bool) {
 		}
 	}
 	return NewDataSet(elements...), warning
+}
+
+func withQueryCharacterSet(elements []core.Element) []core.Element {
+	if !containsTag(elements, TagSpecificCharacterSet) && queryElementsNeedCharacterSet(elements) {
+		return append([]core.Element{StringElement(TagSpecificCharacterSet, core.VRCS, "ISO_IR 192")}, elements...)
+	}
+	return elements
 }
 
 func queryElementsNeedCharacterSet(elements []core.Element) bool {

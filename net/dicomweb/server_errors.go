@@ -26,6 +26,11 @@ func writeServerError(w *serverResponseWriter, err error) {
 	if status == statusClientClosedRequest {
 		message = "request canceled"
 	}
+	// Every 503 is a temporary condition (busy, spool or channel capacity):
+	// tell the client when to try again.
+	if status == http.StatusServiceUnavailable && w.Header().Get("Retry-After") == "" {
+		w.Header().Set("Retry-After", "1")
+	}
 	http.Error(w, message, status)
 }
 
@@ -68,6 +73,8 @@ func errorCodeForServer(err error) string {
 		return statusErr.code
 	}
 	switch {
+	case errors.Is(err, ErrReadLeaseDenied):
+		return "read_lease_denied"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):
@@ -88,6 +95,9 @@ func errorCodeForServer(err error) string {
 func classifyBackendError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, ErrReadLeaseDenied) {
+		return ErrReadLeaseDenied
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrResourceLimit) || errors.Is(err, ErrInvalidRequest) {
 		return err

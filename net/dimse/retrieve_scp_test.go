@@ -779,6 +779,11 @@ func cMoveCountValue(v *uint16) uint16 {
 
 func runStudyRootCMoveStatusTest(t *testing.T, ctx context.Context, handler CMoveHandler) (uint16, error) {
 	t.Helper()
+	return runStudyRootCMoveStatusTestTo(t, ctx, handler, "STOREAE")
+}
+
+func runStudyRootCMoveStatusTestTo(t *testing.T, ctx context.Context, handler CMoveHandler, moveDestination string) (uint16, error) {
+	t.Helper()
 
 	listener, err := ul.Listen(ul.ListenOptions{Address: "127.0.0.1:0", Context: ctx})
 	if err != nil {
@@ -830,7 +835,7 @@ func runStudyRootCMoveStatusTest(t *testing.T, ctx context.Context, handler CMov
 		AffectedSOPClassUID: StudyRootMoveSOPClassUID,
 		MessageID:           1,
 		Priority:            0,
-		MoveDestination:     "STOREAE",
+		MoveDestination:     moveDestination,
 	}, object.FromElements(identifierElems, std.Dictionary), transfer.ImplicitVRLittleEndian)
 	if err != nil {
 		t.Fatalf("SendCMove() error = %v", err)

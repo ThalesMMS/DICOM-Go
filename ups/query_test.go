@@ -98,11 +98,83 @@ func TestQueryWithoutMatchingKeyReturnsZeroMatches(t *testing.T) {
 	}
 }
 
+func TestParsedUPSQueryMatchesDateTimePrecisionAndOffset(t *testing.T) {
+	for _, tc := range []struct {
+		name, from, through, candidate string
+		matches                        bool
+	}{
+		{"blank lower", "   ", "20260831123000+0000", "20260830123000+0000", true},
+		{"blank upper", "20260829123000+0000", "\t", "20260830123000+0000", true},
+		{"partial month in local time", "20260330", "202603+0300", "20260331200000+0000", true},
+		{"outside partial month", "20260330", "202603+0300", "20260331210000+0000", false},
+		{"negative offset range", "2026083012-0300", "2026083012-0300", "20260830154500+0000", true},
+		{"negative offset lower bound", "2026083012-0300", "", "20260830144500+0000", false},
+		{"negative offset upper bound", "", "2026083012-0300", "20260830154500+0000", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, err := ups.MatchDateTimeRange(tc.from, tc.through)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wireIdentifier, err := ups.BuildQueryIdentifier(ups.Query{Keys: map[core.Tag]ups.QueryKey{
+				ups.TagScheduledProcedureStepStartDateTime: key,
+				ups.TagWorklistLabel:                       ups.ReturnKey(),
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			query, err := ups.ParseQueryIdentifier(wireIdentifier)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := ups.NewDataSet(ups.StringElement(ups.TagScheduledProcedureStepStartDateTime, core.VRDT, tc.candidate))
+			if got := query.MatchesIdentifier(response); got != tc.matches {
+				t.Fatalf("MatchesIdentifier = %t, want %t", got, tc.matches)
+			}
+		})
+	}
+	if _, err := ups.MatchDateTimeRange("202608301400", "2026083012"); !errors.Is(err, ups.ErrQueryIdentifier) {
+		t.Fatalf("inverted matching range error = %v", err)
+	}
+}
+
 func createScheduledStep(t *testing.T, service *ups.Service, uid, patientName string) {
 	t.Helper()
 	attributes := scheduledAttributes(t)
 	attributes.Put(ups.StringElement(ups.TagPatientName, core.VRPN, patientName))
 	if _, err := service.Create(context.Background(), ups.CreateRequest{SOPInstanceUID: uid, Attributes: attributes}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParsedUPSQueryAcceptsEmptyTimezoneAndCharacterSet(t *testing.T) {
+	wireIdentifier, err := ups.BuildQueryIdentifier(ups.Query{Keys: map[core.Tag]ups.QueryKey{
+		ups.TagProcedureStepState: ups.Match("SCHEDULED"),
+		ups.TagWorklistLabel:      ups.ReturnKey(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, err := ups.ParseQueryIdentifier(wireIdentifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := func(timezone ...string) *object.Object {
+		return ups.NewDataSet(
+			ups.StringElement(ups.TagSpecificCharacterSet, core.VRCS),
+			ups.StringElement(ups.TagTimezoneOffsetFromUTC, core.VRSH, timezone...),
+			ups.StringElement(ups.TagProcedureStepState, core.VRCS, "SCHEDULED"),
+		)
+	}
+	// The pending responses of dcm4chee-arc 5.35.2 carry both attributes
+	// with zero length.
+	if !query.MatchesIdentifier(response()) || !query.MatchesIdentifier(response("")) {
+		t.Fatal("a response with an empty Timezone Offset From UTC was refused")
+	}
+	if !query.MatchesIdentifier(response("+0100")) {
+		t.Fatal("a response with a valid Timezone Offset From UTC was refused")
+	}
+	if query.MatchesIdentifier(response("UTC")) || query.MatchesIdentifier(response("+0100", "+0200")) {
+		t.Fatal("a response with an invalid Timezone Offset From UTC was accepted")
 	}
 }

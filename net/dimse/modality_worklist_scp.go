@@ -34,6 +34,10 @@ type ModalityWorklistRequest struct {
 	RawIdentifier         *object.Object
 	PresentationContextID byte
 	IdentifierSyntax      transfer.Syntax
+	// CallingAETitle and CalledAETitle identify the association, for
+	// providers that serve one worklist per AE Title.
+	CallingAETitle string
+	CalledAETitle  string
 }
 
 // ModalityWorklistYield synchronously validates, projects, and sends one
@@ -96,6 +100,15 @@ func (router *modalityWorklistCFindRouter) serveModalityWorklist(ctx context.Con
 // ModalityWorklistSCPOptions bounds one MWL C-FIND operation. Zero values use
 // finite defaults.
 type ModalityWorklistSCPOptions struct {
+	// Parse relaxes the Identifier profile, for example to accept return keys
+	// outside PS3.4 Table K.6-1 as DCMTK wlmscpfs does.
+	Parse ModalityWorklistParseOptions
+	// AllowUniversalQuery passes an Identifier without a non-universal
+	// matching key to the handler, which then decides (PS3.4 universal
+	// matching; see InMemoryModalityWorklistOptions). By default the SCP
+	// answers such a query with no matches, so it cannot enumerate the
+	// worklist.
+	AllowUniversalQuery   bool
 	MaxMatches            int
 	MaxIdentifierBytes    int64
 	MaxIdentifierElements int
@@ -164,14 +177,7 @@ func ServeModalityWorklistCFindWithOptions(ctx context.Context, assoc *ul.Associ
 }
 
 func serveModalityWorklistCFindCommand(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object, handler ModalityWorklistHandler, options ModalityWorklistSCPOptions) error {
-	pc, err := AcceptedContextByID(assoc, pcID)
-	if err != nil {
-		return err
-	}
-	if pc.AbstractSyntaxUID != ModalityWorklistFindSOPClassUID {
-		return fmt.Errorf("dicom dimse: MWL presentation context has incompatible abstract syntax")
-	}
-	syntax, err := TransferSyntaxForAcceptedContext(pc)
+	syntax, err := acceptedSCPTransferSyntax(ctx, assoc, pcID, ModalityWorklistFindSOPClassUID)
 	if err != nil {
 		return err
 	}
@@ -207,14 +213,20 @@ func serveModalityWorklistCFindCommand(ctx context.Context, assoc *ul.Associatio
 		}
 		return err
 	}
-	identifier, err := ParseModalityWorklistIdentifier(rawIdentifier)
+	identifier, err := ParseModalityWorklistIdentifierWithOptions(rawIdentifier, options.Parse)
 	if err != nil {
+		if isModalityWorklistLimitError(err) {
+			if sendErr := sendModalityWorklistFinal(ctx, assoc, pcID, *request, CFindStatusOutOfResources, "Out of resources", syntax); sendErr != nil {
+				return sendErr
+			}
+			return ErrModalityWorklistResourceLimit
+		}
 		if sendErr := sendModalityWorklistFinal(ctx, assoc, pcID, *request, 0xA900, "Identifier does not match SOP Class", syntax); sendErr != nil {
 			return sendErr
 		}
 		return err
 	}
-	if !modalityWorklistHasMatchingKey(identifier.Query) {
+	if !options.AllowUniversalQuery && !modalityWorklistHasMatchingKey(identifier.Query) {
 		return sendModalityWorklistFinal(ctx, assoc, pcID, *request, StatusSuccess, "", syntax)
 	}
 
@@ -259,6 +271,8 @@ func serveModalityWorklistCFindCommand(ctx context.Context, assoc *ul.Associatio
 				RawIdentifier:         rawIdentifier,
 				PresentationContextID: pcID,
 				IdentifierSyntax:      syntax,
+				CallingAETitle:        assoc.CallingAETitle,
+				CalledAETitle:         assoc.CalledAETitle,
 			}, emitter.emit)
 		}()
 		return struct{}{}, err
@@ -312,7 +326,7 @@ func (emitter *modalityWorklistEmitter) close() {
 
 func receiveModalityWorklistIdentifier(ctx context.Context, assoc *ul.Association, pcID byte, syntax transfer.Syntax, options ModalityWorklistSCPOptions) (*object.Object, error) {
 	reader := newTypedPDataReaderWithContext(dataSetReadContext(ctx, assoc), assoc, pcID, false)
-	identifier, err := object.ReadDataSetWithOptions(reader, syntax, object.ReadFileOptions{
+	identifier, err := readPDataDataSet(reader, syntax, object.ReadFileOptions{
 		MaxElementBytes:  options.MaxIdentifierBytes,
 		MaxTotalBytes:    options.MaxIdentifierBytes,
 		MaxSequenceDepth: options.MaxIdentifierDepth,
@@ -407,6 +421,9 @@ func (writer *modalityWorklistLimitWriter) Write(value []byte) (int, error) {
 var _ io.Writer = (*modalityWorklistLimitWriter)(nil)
 
 func modalityWorklistHasMatchingKey(query ModalityWorklistQuery) bool {
+	if mwlOptionalHasMatchingKey(query) {
+		return true
+	}
 	keys := []MWLKey{query.PatientName, query.PatientID, query.PatientBirthDate, query.PatientSex, query.AccessionNumber, query.RequestedProcedureID, query.RequestedProcedureDescription}
 	if query.ScheduledProcedureStep != nil {
 		step := query.ScheduledProcedureStep

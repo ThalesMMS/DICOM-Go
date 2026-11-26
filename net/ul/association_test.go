@@ -15,6 +15,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -172,7 +173,7 @@ func TestReadAssociationPDUUsesReadDeadlineOnly(t *testing.T) {
 	defer cancel()
 
 	conn := &deadlineTrackingConn{readErr: io.EOF}
-	_, err := readAssociationPDU(ctx, conn, DefaultMaxPDU)
+	_, err := readAssociationPDU(ctx, conn, DefaultMaxPDU, 0)
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("readAssociationPDU() error = %v, want io.EOF", err)
 	}
@@ -272,8 +273,11 @@ func TestAssociationIdleTimeoutAllowsSlowActivePDUProgress(t *testing.T) {
 			Context:                   ctx,
 			SupportedAbstractSyntaxes: []string{verificationSOPClassUID},
 			SupportedTransferSyntaxes: []string{ImplicitVRLittleEndian},
-			IdleTimeout:               25 * time.Millisecond,
-			ReadProgressTimeout:       25 * time.Millisecond,
+			// The PDU below takes about ten gaps of 30 ms, well past the idle
+			// timeout, while each gap stays far below the progress timeout even
+			// with the coarse Windows timer and a loaded machine.
+			IdleTimeout:         100 * time.Millisecond,
+			ReadProgressTimeout: 400 * time.Millisecond,
 		})
 		if err != nil {
 			serverErr <- err
@@ -306,13 +310,14 @@ func TestAssociationIdleTimeoutAllowsSlowActivePDUProgress(t *testing.T) {
 		t.Fatalf("WritePDU() error = %v", err)
 	}
 	writeDone := make(chan error, 1)
+	conn := client.Conn
 	go func() {
 		for _, value := range encoded.Bytes() {
-			if _, err := client.Conn.Write([]byte{value}); err != nil {
+			if _, err := conn.Write([]byte{value}); err != nil {
 				writeDone <- err
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(30 * time.Millisecond)
 		}
 		writeDone <- nil
 	}()
@@ -748,17 +753,23 @@ func TestAssociationWriteProgressTimeoutAllowsSlowActiveTransfer(t *testing.T) {
 	defer func() { _ = clientConn.Close() }()
 	defer func() { _ = serverConn.Close() }()
 
+	// Each 32 KiB write waits for one read, which comes after a pause
+	// that is far shorter than the progress timeout, so that a loaded
+	// machine that oversleeps the pause still accepts every write in time.
+	// The pauses are what make the whole transfer outlast the timeout: a
+	// sleep never ends early, so 33 of them take at least 330 ms.
+	const readPause = 10 * time.Millisecond
 	assoc := &Association{
 		Conn:                 clientConn,
 		Context:              context.Background(),
-		writeProgressTimeout: 25 * time.Millisecond,
+		writeProgressTimeout: 250 * time.Millisecond,
 		operational:          &operationalState{},
 	}
 	pdu := &PDataTF{Values: []PDataValue{{
 		PresentationContextID: 1,
 		IsCommand:             false,
 		IsLast:                true,
-		Data:                  make([]byte, 256*1024),
+		Data:                  make([]byte, 1024*1024),
 	}}}
 
 	readDone := make(chan error, 1)
@@ -766,7 +777,7 @@ func TestAssociationWriteProgressTimeoutAllowsSlowActiveTransfer(t *testing.T) {
 		buffer := make([]byte, 32*1024)
 		remaining := int64(PDUHeaderSize + PDVHeaderSize + uint32(len(pdu.Values[0].Data)))
 		for remaining > 0 {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(readPause)
 			want := int64(len(buffer))
 			if remaining < want {
 				want = remaining
@@ -792,6 +803,8 @@ func TestAssociationWriteProgressTimeoutAllowsSlowActiveTransfer(t *testing.T) {
 		t.Fatalf("slow reader error = %v", err)
 	}
 
+	// A peer that stops reading is detected within the progress timeout.
+	assoc.writeProgressTimeout = 25 * time.Millisecond
 	started = time.Now()
 	idleCtx, cancelIdle := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancelIdle()
@@ -2385,5 +2398,205 @@ func TestAssociationExclusiveTokenProtectsCarryoverAndIsAssociationLocal(t *test
 	values, err := first.TakePDataCarryoverContext(firstCtx)
 	if err != nil || len(values) != 1 || string(values[0].Data) != "owned" {
 		t.Fatalf("owner TakePDataCarryoverContext() = %#v, %v", values, err)
+	}
+}
+
+// TestWithActiveTransferIsIdempotent: marking an already active transfer
+// keeps the context, so a reader marking every P-DATA does not grow the
+// chain that every deadline and value lookup walks.
+func TestWithActiveTransferIsIdempotent(t *testing.T) {
+	ctx := WithActiveTransfer(context.Background())
+	if again := WithActiveTransfer(ctx); again != ctx {
+		t.Fatal("WithActiveTransfer wrapped an already active context")
+	}
+	if !activeTransferFromContext(ctx) {
+		t.Fatal("context not marked active")
+	}
+}
+
+// TestWithConnDeadlineInterruptsOnCancel: cancelling the context during fn
+// moves the deadline to now, and the deadline is cleared afterwards.
+func TestWithConnDeadlineInterruptsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var mu sync.Mutex
+	var deadlines []time.Time
+	set := func(d time.Time) error {
+		mu.Lock()
+		defer mu.Unlock()
+		deadlines = append(deadlines, d)
+		return nil
+	}
+	err := withConnDeadline(ctx, set, func() error {
+		cancel()
+		for {
+			mu.Lock()
+			n := len(deadlines)
+			mu.Unlock()
+			if n > 0 {
+				return errors.New("interrupted")
+			}
+			runtime.Gosched()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deadlines) != 2 || deadlines[0].IsZero() || !deadlines[1].IsZero() {
+		t.Fatalf("deadlines = %v, want now then cleared", deadlines)
+	}
+}
+
+// A peer that sends the first byte of a PDU and then stays silent must not
+// hold a read forever when only the idle timeout is configured.
+func TestAssociationIdleTimeoutBoundsAStallInsideAPDU(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	assoc := &Association{
+		Conn:        server,
+		MaxPDU:      DefaultMaxPDU,
+		Context:     context.Background(),
+		idleTimeout: 50 * time.Millisecond,
+	}
+	go func() { _, _ = client.Write([]byte{byte(PDUDataTF)}) }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := assoc.ReadPDU()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrAssociationTimeout) {
+			t.Fatalf("ReadPDU() error = %v, want ErrAssociationTimeout", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReadPDU() stayed blocked on a PDU that stopped after one byte")
+	}
+
+	// The wait before the first byte of a release reply is governed by the
+	// caller's context; the gap inside a reply that already began is not.
+	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { _, _ = io.Copy(io.Discard, client) }()
+	started := time.Now()
+	if err := assoc.Release(releaseCtx); !errors.Is(err, ErrAssociationTimeout) {
+		t.Fatalf("Release() error = %v, want ErrAssociationTimeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("Release() took %s although the buffered PDU never continued", elapsed)
+	}
+}
+
+// A caller that cancels an operation and then closes the association must see
+// its cancellation from the next Receive or Send, not the closed connection it
+// caused. The goroutine running the operation can reach Receive after both
+// steps, when the association no longer holds a connection (#2006).
+func TestReceiveAndSendAfterCancelThenCloseReportContextError(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		end    func() (context.Context, context.CancelFunc)
+		target error
+	}{
+		{
+			name:   "canceled",
+			end:    func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			target: context.Canceled,
+		},
+		{
+			name: "deadline",
+			end: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+			target: ErrAssociationTimeout,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local, remote := net.Pipe()
+			cleanupClose(t, "remote pipe", remote)
+			assoc := &Association{Conn: local, MaxPDU: DefaultMaxPDU, Context: context.Background()}
+
+			ctx, cancel := tc.end()
+			cancel()
+			if err := assoc.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+
+			if _, err := assoc.Receive(ctx); !errors.Is(err, tc.target) {
+				t.Fatalf("Receive() error = %v, want %v", err, tc.target)
+			}
+			if err := assoc.Send(ctx, &ReleaseRQ{}); !errors.Is(err, tc.target) {
+				t.Fatalf("Send() error = %v, want %v", err, tc.target)
+			}
+		})
+	}
+
+	// The close can also land after Receive or Send took the connection and
+	// before the I/O starts, failing the call that applies the context's
+	// deadline to the connection.
+	for _, op := range []string{"Receive", "Send"} {
+		t.Run(op+"/closed while setting the deadline", func(t *testing.T) {
+			local, remote := net.Pipe()
+			cleanupClose(t, "remote pipe", remote)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			assoc := &Association{MaxPDU: DefaultMaxPDU, Context: context.Background()}
+			assoc.Conn = &closeOnDeadlineConn{Conn: local, before: func() {
+				cancel()
+				_ = assoc.Close()
+			}}
+
+			var err error
+			if op == "Receive" {
+				_, err = assoc.Receive(ctx)
+			} else {
+				err = assoc.Send(ctx, &ReleaseRQ{})
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("%s() error = %v, want context.Canceled", op, err)
+			}
+		})
+	}
+
+	// Without an ended context the closed association is still reported.
+	local, remote := net.Pipe()
+	cleanupClose(t, "remote pipe", remote)
+	assoc := &Association{Conn: local, MaxPDU: DefaultMaxPDU, Context: context.Background()}
+	if err := assoc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := assoc.Receive(context.Background()); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Receive() error = %v, want net.ErrClosed", err)
+	}
+	if err := assoc.Send(context.Background(), &ReleaseRQ{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Send() error = %v, want net.ErrClosed", err)
+	}
+}
+
+// closeOnDeadlineConn runs before once, ahead of the first deadline set on
+// the connection, to land a cancel and close between the moment an operation
+// takes the connection and the moment it starts its I/O.
+type closeOnDeadlineConn struct {
+	net.Conn
+	before func()
+	once   sync.Once
+}
+
+func (c *closeOnDeadlineConn) SetReadDeadline(t time.Time) error {
+	c.trigger(t)
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *closeOnDeadlineConn) SetWriteDeadline(t time.Time) error {
+	c.trigger(t)
+	return c.Conn.SetWriteDeadline(t)
+}
+
+func (c *closeOnDeadlineConn) trigger(t time.Time) {
+	if !t.IsZero() {
+		c.once.Do(c.before)
 	}
 }

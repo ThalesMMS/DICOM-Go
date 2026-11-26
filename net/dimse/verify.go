@@ -19,14 +19,17 @@ var (
 
 // CEchoVerificationOptions configures a one-shot Verification SOP Class C-ECHO.
 type CEchoVerificationOptions struct {
+	Transport          ul.TransportOptions
 	Address            string
 	CalledAETitle      string
 	CallingAETitle     string
 	TransferSyntaxUIDs []string
 	TLSConfig          *tls.Config
-	DialTimeout        time.Duration
-	ReleaseTimeout     time.Duration
-	MessageID          uint16
+	// UserIdentity, when set, proposes User Identity negotiation.
+	UserIdentity   *ul.UserIdentityRequest
+	DialTimeout    time.Duration
+	ReleaseTimeout time.Duration
+	MessageID      uint16
 }
 
 // CEchoVerificationResult describes a successful C-ECHO verification exchange.
@@ -68,9 +71,11 @@ func verifyCEcho(ctx context.Context, opts CEchoVerificationOptions, now func() 
 	dialCtx, cancelDial := contextWithOptionalTimeout(ctx, opts.DialTimeout)
 	defer cancelDial()
 	assoc, err := ul.DialContext(dialCtx, opts.Address, ul.DialOptions{
+		Transport:      opts.Transport,
 		CalledAETitle:  opts.CalledAETitle,
 		CallingAETitle: opts.CallingAETitle,
 		TLSConfig:      opts.TLSConfig,
+		UserIdentity:   opts.UserIdentity,
 		Contexts: []ul.PresentationContext{{
 			AbstractSyntaxUID:  VerificationSOPClassUID,
 			TransferSyntaxUIDs: verificationTransferSyntaxes(opts.TransferSyntaxUIDs),
@@ -96,7 +101,7 @@ func verifyCEcho(ctx context.Context, opts CEchoVerificationOptions, now func() 
 	}
 	result.PresentationContext = pc
 
-	response, err := SendCEcho(assoc, pc.ID, messageID)
+	response, err := SendCEchoWithContext(ctx, assoc, pc.ID, messageID)
 	if err != nil {
 		return result, fmt.Errorf("%w: send to %s: %w", ErrCEchoRequest, opts.Address, err)
 	}

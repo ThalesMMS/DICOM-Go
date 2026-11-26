@@ -90,7 +90,7 @@ func BuildSubscriptionInformation(receivingAETitle string, deletionLock bool, ma
 			elements = append(elements, StringElement(key.Tag, entry.VR, key.Values...))
 		}
 	}
-	return NewDataSet(elements...), nil
+	return NewDataSet(withQueryCharacterSet(elements)...), nil
 }
 
 func BuildUnsubscriptionInformation(receivingAETitle string) (*object.Object, error) {
@@ -121,13 +121,11 @@ func parseSubscriptionInformation(dataSet *object.Object, requireLock bool) (rec
 		allowed[TagDeletionLock] = true
 	}
 	matchingKeys = make(map[string][]string)
-	seen := make(map[core.Tag]bool, len(allowed))
 	for _, element := range dataSet.Elements() {
+		if dataSet.HasDuplicateParsedTag(element.Tag()) {
+			return "", false, nil, statusError("N-ACTION UPS Watch", StatusInvalidArgumentValue, ErrInvalidDataSet)
+		}
 		if allowed[element.Tag()] {
-			if seen[element.Tag()] {
-				return "", false, nil, statusError("N-ACTION UPS Watch", StatusInvalidArgumentValue, ErrInvalidDataSet)
-			}
-			seen[element.Tag()] = true
 			continue
 		}
 		entry, supported := queryEntry(element.Tag())
@@ -137,10 +135,16 @@ func parseSubscriptionInformation(dataSet *object.Object, requireLock bool) (rec
 		if element.VR() != entry.VR {
 			return "", false, nil, statusError("N-ACTION UPS Watch", StatusInvalidArgumentValue, ErrInvalidDataSet)
 		}
-		if _, duplicate := matchingKeys[element.Tag().String()]; duplicate {
+		values, decodeErr := dataSet.LookupStrings(element.Tag())
+		if decodeErr != nil {
 			return "", false, nil, statusError("N-ACTION UPS Watch", StatusInvalidArgumentValue, ErrInvalidDataSet)
 		}
-		matchingKeys[element.Tag().String()] = element.StringValues()
+		if element.Tag() == TagSpecificCharacterSet {
+			if _, charsetErr := dataSet.CharacterSet(); charsetErr != nil {
+				return "", false, nil, statusError("N-ACTION UPS Watch", StatusInvalidArgumentValue, ErrInvalidDataSet)
+			}
+		}
+		matchingKeys[element.Tag().String()] = values
 	}
 	return receivingAE, deletionLock, matchingKeys, nil
 }
@@ -385,16 +389,12 @@ func statusForHandlerError(err error) (uint16, error) {
 	return dimse.StatusProcessingFailure, err
 }
 
+// validAETitle applies the library's AE title rule, ul.ValidateAETitle
+// (PS3.5 Table 6.2-1), to a value carried in a data set or an HTTP
+// parameter: the value as written is at most 16 bytes and carries no NUL,
+// because only the padded A-ASSOCIATE field may be padded with NUL.
 func validAETitle(value string) bool {
-	if strings.TrimSpace(value) == "" || len(value) > 16 {
-		return false
-	}
-	for index := 0; index < len(value); index++ {
-		if value[index] < 0x20 || value[index] > 0x7e || value[index] == '\\' {
-			return false
-		}
-	}
-	return true
+	return len(value) <= ul.MaxAETitleLength && !strings.ContainsRune(value, 0) && ul.ValidateAETitle(value) == nil
 }
 
 func (service *Service) normalizedEventReportHandler(ctx context.Context, request dimse.NormalizedEventReportRequest, information *object.Object) (dimse.NormalizedEventReportSCPResult, error) {

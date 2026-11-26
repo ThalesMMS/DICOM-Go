@@ -977,12 +977,49 @@ func TestQueryExactScanLimitCompletesSuccessfully(t *testing.T) {
 	}
 }
 
-func TestQueryDateTimeNegativeOffsetIsRangeDelimiter(t *testing.T) {
-	if queryValueMatch(core.VRDT, "20260808120000-0300", "20260808120000-0300") {
-		t.Fatal("negative DT offset was incorrectly treated as single-value matching")
+func TestQueryDateTimeNegativeOffsetIsNotARangeDelimiter(t *testing.T) {
+	for _, tc := range []struct {
+		request, candidate string
+		want               bool
+	}{
+		{"20260808120000-0300", "20260808120000-0300", true},
+		{"20260808120000-0300", "20260808150000+0000", true},
+		{"20260808120000-0300", "20260808120000+0000", false},
+		{"20260808110000-0300-20260808130000-0300", "20260808120000-0300", true},
+		{"20260808110000-0300-20260808130000-0300", "20260808140000-0300", false},
+		{"-20260808130000-0300", "20260808120000-0300", true},
+		{"20260808110000-0300-", "20260808120000-0300", true},
+		{"20260808110000-0300-", "20260808100000-0300", false},
+		{"2007-0500", "20070601", true},
+		// Valid ranges keep their meaning.
+		{"20260808110000-20260808130000", "20260808120000", true},
+		{"1000-1100", "10500101", true},
+		// More '-' than two negative offsets and a separator.
+		{"2026-0300-2027-0300-", "20260808", false},
+	} {
+		if got := queryValueMatch(core.VRDT, tc.request, tc.candidate); got != tc.want {
+			t.Errorf("DT %q matches %q = %v, want %v", tc.request, tc.candidate, got, tc.want)
+		}
 	}
-	if !queryValueMatch(core.VRDT, "20260808110000-0300-20260808130000-0300", "20260808120000-0300") {
-		t.Fatal("DT range with negative offsets did not match by instant")
+}
+
+func TestQueryLeapSecondStaysInItsMinute(t *testing.T) {
+	for _, tc := range []struct {
+		vr                 core.VR
+		request, candidate string
+		want               bool
+	}{
+		{core.VRDT, "20161231235960", "20161231235960", true},
+		{core.VRDT, "20170101000000", "20161231235960", false},
+		{core.VRDT, "20161231235959", "20161231235960", false},
+		{core.VRDT, "20161231", "20161231235960", true},
+		{core.VRTM, "235959-235960", "235960", true},
+		{core.VRTM, "2359", "235960", true},
+		{core.VRTM, "000000", "235960", false},
+	} {
+		if got := queryValueMatch(tc.vr, tc.request, tc.candidate); got != tc.want {
+			t.Errorf("%s %q matches %q = %v, want %v", tc.vr, tc.request, tc.candidate, got, tc.want)
+		}
 	}
 }
 

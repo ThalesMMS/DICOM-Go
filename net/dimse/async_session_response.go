@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/net/ul"
@@ -160,13 +161,8 @@ func (s *AsyncSession) writeValidatedMessage(ctx context.Context, pcID byte, com
 		if beforeWrite != nil {
 			beforeWrite()
 		}
-		if err := SendCommandSetWithContext(ctx, s.assoc, pcID, command); err != nil {
+		if err := sendMessageDataSet(ctx, s.assoc, pcID, command, dataset, syntax); err != nil {
 			return err
-		}
-		if dataset != nil {
-			if err := SendDataSetWithContext(ctx, s.assoc, pcID, dataset, syntax); err != nil {
-				return err
-			}
 		}
 		if afterWrite != nil {
 			afterWrite()
@@ -178,18 +174,10 @@ func (s *AsyncSession) writeValidatedMessage(ctx context.Context, pcID byte, com
 func (s *AsyncSession) writeValidatedEncodedMessage(ctx context.Context, pcID byte, command []core.Element, writeDataSet CStoreDataSetWriter, syntax transfer.Syntax) error {
 	ctx = s.owner.Context(ctx)
 	return s.assoc.SerializeMessageWriteContext(ctx, func() error {
-		if err := SendCommandSetWithContext(ctx, s.assoc, pcID, command); err != nil {
-			return err
-		}
 		writeCtx := dataSetWriteContext(ctx)
-		writer := NewPDataWriterWithContext(writeCtx, s.assoc, pcID, false, peerMaxPDUWithHeader(s.assoc))
-		if err := writeDataSet(writeCtx, writer, syntax); err != nil {
-			return fmt.Errorf("dicom dimse: send dataset: %w", err)
-		}
-		if err := writer.Finish(); err != nil {
-			return fmt.Errorf("dicom dimse: finish dataset P-DATA: %w", err)
-		}
-		return nil
+		return sendMessageWithContext(ctx, s.assoc, pcID, command, syntax, func(writer io.Writer) error {
+			return writeDataSet(writeCtx, writer, syntax)
+		})
 	})
 }
 

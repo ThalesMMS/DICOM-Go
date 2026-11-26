@@ -64,13 +64,14 @@ func FuzzDICOMwebMetadataJSONInstanceRefs(f *testing.F) {
 			t.Fatalf("DICOM JSON decoding is not deterministic")
 		}
 
-		refs, refsErr := instanceRefsFromMetadata(metadata, fallbackStudyUID, fallbackSeriesUID)
+		scope := InstanceRef{StudyInstanceUID: fallbackStudyUID, SeriesInstanceUID: fallbackSeriesUID}
+		refs, refsErr := instanceRefsFromMetadata(metadata, scope)
 		if datasetErr != nil {
 			if refsErr == nil {
 				t.Fatalf("reference extraction accepted metadata rejected by the dataset decoder")
 			}
 		} else {
-			wantRefs, wantErr := instanceRefsFromDatasets(datasets, fallbackStudyUID, fallbackSeriesUID)
+			wantRefs, wantErr := instanceRefsFromDatasets(datasets, scope)
 			if (refsErr == nil) != (wantErr == nil) {
 				t.Fatalf("metadata and dataset reference extraction disagree: metadata error=%v dataset error=%v", refsErr != nil, wantErr != nil)
 			}

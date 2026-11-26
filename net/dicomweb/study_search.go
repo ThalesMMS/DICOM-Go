@@ -34,13 +34,19 @@ type StudySearchCriteria struct {
 	CustomFieldKeyword string
 	CustomFieldValue   string
 	Limit              int
+	// Offset skips that many matches (QIDO-RS offset). Use StudyPager to
+	// walk every page.
+	Offset int
 }
 
 // StudyMatch is a neutral QIDO-RS study result extracted from DICOM JSON.
 type StudyMatch struct {
-	PatientName      string
-	PatientID        string
-	PatientBirthDate string
+	PatientName string
+	PatientID   string
+	// IssuerOfPatientID (0010,0021) scopes PatientID; empty when the server
+	// did not return it.
+	IssuerOfPatientID string
+	PatientBirthDate  string
 
 	StudyDate  string
 	StudyTime  string
@@ -61,6 +67,7 @@ type StudyMatch struct {
 var studySearchReturnFields = []string{
 	"PatientName",
 	"PatientID",
+	"IssuerOfPatientID",
 	"PatientBirthDate",
 	"StudyDate",
 	"StudyTime",
@@ -102,6 +109,9 @@ func StudySearchParams(criteria StudySearchCriteria) (url.Values, error) {
 	if criteria.Limit > 0 {
 		params.Set("limit", strconv.Itoa(criteria.Limit))
 	}
+	if criteria.Offset > 0 {
+		params.Set("offset", strconv.Itoa(criteria.Offset))
+	}
 	for _, field := range studySearchReturnFields {
 		params.Add("includefield", field)
 	}
@@ -120,6 +130,7 @@ func StudyMatchesFromDatasets(datasets []Dataset) []StudyMatch {
 		matches = append(matches, StudyMatch{
 			PatientName:            dicomjson.ElementString(dataset, "00100010"),
 			PatientID:              dicomjson.ElementString(dataset, "00100020"),
+			IssuerOfPatientID:      dicomjson.ElementString(dataset, "00100021"),
 			PatientBirthDate:       dicomjson.ElementString(dataset, "00100030"),
 			StudyDate:              dicomjson.ElementString(dataset, "00080020"),
 			StudyTime:              dicomjson.ElementString(dataset, "00080030"),

@@ -277,7 +277,7 @@ func (emitter *streamingCFindEmitter) close() {
 
 func receiveStreamingCFindDataSet(ctx context.Context, assoc *ul.Association, pcID byte, syntax transfer.Syntax, maxBytes int64, maxElements, maxDepth int) (*object.Object, error) {
 	reader := newTypedPDataReaderWithContext(dataSetReadContext(ctx, assoc), assoc, pcID, false)
-	value, err := object.ReadDataSetWithOptions(reader, syntax, object.ReadFileOptions{
+	value, err := readPDataDataSet(reader, syntax, object.ReadFileOptions{
 		MaxElementBytes: maxBytes, MaxTotalBytes: maxBytes, MaxElements: maxElements, MaxSequenceDepth: maxDepth,
 	})
 	if err != nil {

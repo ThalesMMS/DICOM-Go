@@ -20,6 +20,11 @@ var (
 	// ErrBearerTokenUnavailable reports that a dynamic bearer source could not
 	// provide a usable access token. Provider errors are deliberately redacted.
 	ErrBearerTokenUnavailable = errors.New("DICOMweb bearer token unavailable")
+	// ErrBearerSignInRequired is the one cause a token source can report
+	// through the redaction: it holds no grant that can obtain a token,
+	// because none was given or the provider revoked or expired it, so only
+	// a new sign-in by the user helps. It is an ErrBearerTokenUnavailable.
+	ErrBearerSignInRequired = fmt.Errorf("%w: a new sign-in is required", ErrBearerTokenUnavailable)
 )
 
 // AccessToken keeps the bearer value private while exposing only non-secret
@@ -283,6 +288,8 @@ func sanitizedTokenError(err error) error {
 		return context.Canceled
 	case errors.Is(err, context.DeadlineExceeded):
 		return context.DeadlineExceeded
+	case errors.Is(err, ErrBearerSignInRequired):
+		return ErrBearerSignInRequired
 	default:
 		return ErrBearerTokenUnavailable
 	}

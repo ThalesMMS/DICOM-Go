@@ -8,6 +8,9 @@ import (
 
 func allowedMethods(path string) []string {
 	parts := resourceParts(path)
+	if methods := workitemAllowedMethods(parts); methods != nil {
+		return methods
+	}
 	if len(parts) == 1 && parts[0] == "studies" {
 		return []string{http.MethodGet, http.MethodPost}
 	}
@@ -22,10 +25,15 @@ func allowedMethods(path string) []string {
 }
 
 func (s *Server) dispatch(w *serverResponseWriter, r *http.Request, operation Operation) (int, error) {
+	if isWorkitemOperation(operation) {
+		return s.serveWorkitems(w, r, operation)
+	}
 	if strings.TrimSpace(requestAcceptHeader(r)) == "" {
 		return 0, newServerStatusError(http.StatusNotAcceptable, "not_acceptable", ErrUnsupported)
 	}
 	switch operation {
+	case OperationRetrieveWADOURI:
+		return s.serveWADOURI(w, r)
 	case OperationSearchStudies, OperationSearchSeries, OperationSearchInstances:
 		return s.serveSearch(w, r, operation)
 	case OperationRetrieveMetadata:
@@ -49,7 +57,13 @@ func routeOperation(r *http.Request) Operation {
 	if r == nil || r.URL == nil {
 		return OperationUnknown
 	}
+	if operation := workitemRouteOperation(r.Method, requestResourceParts(r.URL)); operation != OperationUnknown {
+		return operation
+	}
 	parts := resourceParts(r.URL.Path)
+	if operation := workitemRouteOperation(r.Method, parts); operation != OperationUnknown {
+		return operation
+	}
 	if r.Method == http.MethodPost && len(parts) >= 1 && parts[0] == "studies" && len(parts) <= 2 {
 		return OperationStoreInstances
 	}
@@ -61,6 +75,8 @@ func routeOperation(r *http.Request) Operation {
 	}
 	if len(parts) == 1 {
 		switch parts[0] {
+		case "wado":
+			return OperationRetrieveWADOURI
 		case "studies":
 			return OperationSearchStudies
 		case "series":
@@ -127,6 +143,26 @@ func routeOperation(r *http.Request) Operation {
 		}
 	}
 	return OperationUnknown
+}
+
+// requestResourceParts splits the escaped request path and unescapes each
+// segment, so a segment that holds an escaped "/" (an AE Title may contain
+// one, PS3.5) stays one segment. It falls back to the decoded path when the
+// escaped form cannot be read.
+func requestResourceParts(u *url.URL) []string {
+	if u == nil {
+		return nil
+	}
+	raw := resourceParts(u.EscapedPath())
+	parts := make([]string, 0, len(raw))
+	for _, segment := range raw {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			return resourceParts(u.Path)
+		}
+		parts = append(parts, decoded)
+	}
+	return parts
 }
 
 func resourceParts(path string) []string {

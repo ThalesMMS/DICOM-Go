@@ -44,7 +44,7 @@ func TestServeAssociationHandlesCEchoAndCFindOnSameAssociation(t *testing.T) {
 				if req.QueryRetrieveLevel != QueryRetrieveLevelStudy {
 					t.Errorf("QueryRetrieveLevel = %q, want STUDY", req.QueryRetrieveLevel)
 				}
-				return []*object.Object{studyRootFindMatch("PID1", "1.2.3.study")}, nil
+				return []*object.Object{studyRootFindMatch("PID1", "1.2.3.9102")}, nil
 			}),
 		})
 	}()

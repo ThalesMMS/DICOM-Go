@@ -286,7 +286,7 @@ func receiveModalityWorklistResponse(ctx context.Context, assoc *ul.Association,
 		return response, nil, nil
 	}
 	reader := newTypedPDataReaderWithContext(dataSetReadContext(ctx, assoc), assoc, pcID, false)
-	match, err := object.ReadDataSetWithOptions(reader, syntax, object.ReadFileOptions{
+	match, err := readPDataDataSet(reader, syntax, object.ReadFileOptions{
 		MaxElementBytes:  options.MaxResponseBytes,
 		MaxTotalBytes:    options.MaxResponseBytes,
 		MaxSequenceDepth: options.MaxResponseDepth,

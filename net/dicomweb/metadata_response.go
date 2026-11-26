@@ -63,13 +63,10 @@ func (spool *datasetResponseSpool) Append(ctx context.Context, server *Server, d
 	}
 	switch spool.representation {
 	case metadataRepresentationJSON:
-		data, err := server.encodeResponseDataset(ctx, dataset)
-		if err != nil {
+		if err := spool.json.AppendEncoded(func(out io.Writer) error { return server.writeResponseDataset(ctx, out, dataset) }); err != nil {
 			return err
 		}
-		if err := spool.json.Append(data); err != nil {
-			return err
-		}
+
 	case metadataRepresentationXML:
 		obj, err := server.responseDatasetObject(ctx, dataset)
 		if err != nil {
@@ -197,7 +194,7 @@ func classifyMetadataConversionError(err error) error {
 	if errors.Is(err, ErrResourceLimit) || errors.Is(err, dicomjson.ErrMaxJSONBytesExceeded) ||
 		errors.Is(err, dicomjson.ErrMaxInlineBinaryBytesExceeded) || errors.Is(err, dicomjson.ErrMaxTotalBinaryBytesExceeded) ||
 		errors.Is(err, dicomjson.ErrMaxSequenceDepthExceeded) || errors.Is(err, dicomjson.ErrMaxElementsExceeded) ||
-		errors.Is(err, dicomjson.ErrMaxSequenceItemsExceeded) || errors.Is(err, dicomxml.ErrMaxXMLBytesExceeded) ||
+		errors.Is(err, dicomjson.ErrMaxSequenceItemsExceeded) || errors.Is(err, dicomjson.ErrMaxValuesExceeded) || errors.Is(err, dicomxml.ErrMaxXMLBytesExceeded) ||
 		errors.Is(err, dicomxml.ErrMaxValueBytesExceeded) || errors.Is(err, dicomxml.ErrMaxInlineBytesExceeded) ||
 		errors.Is(err, dicomxml.ErrMaxBinaryBytesExceeded) || errors.Is(err, dicomxml.ErrMaxDepthExceeded) ||
 		errors.Is(err, dicomxml.ErrMaxElementsExceeded) || errors.Is(err, dicomxml.ErrMaxItemsExceeded) {
@@ -267,6 +264,14 @@ func (c Client) validateMetadataResponseOptions() error {
 	return nil
 }
 
+func (c Client) metadataDatasetLimit(limits responseParseLimits) int {
+	maximum := c.Options.MaxMetadataParts
+	if maximum == 0 {
+		maximum = defaultMaxMetadataParts
+	}
+	return min(maximum, limits.maxParts)
+}
+
 func metadataRefFromContentLocation(responseURL, value string) (InstanceRef, error) {
 	if strings.TrimSpace(value) == "" {
 		return InstanceRef{}, fmt.Errorf("DICOM XML metadata part is missing Content-Location")
@@ -334,7 +339,21 @@ func (c Client) datasetsFromMetadataResponse(ctx context.Context, response Respo
 		}
 		// application/json and text/plain preserve interoperability with legacy
 		// servers that return the DICOM JSON array under a generic media type.
-		return datasetsFromDICOMJSON(response.Body)
+		decoder := dicomjson.NewDecoder(bytes.NewReader(response.Body), std.Dictionary, dicomjson.UnmarshalOptions{
+			Limits: dicomjson.Limits{MaxJSONBytes: int64(len(response.Body))},
+		})
+		datasets := make([]Dataset, 0)
+		maximumDatasets := c.metadataDatasetLimit(limits)
+		if err := decoder.DecodeRawDatasetsContext(ctx, func(dataset Dataset) error {
+			if requireContentLocation && len(datasets) >= maximumDatasets {
+				return &ResponseDecodeError{Kind: ResponseDecodePartLimit, Limit: int64(maximumDatasets), Value: int64(len(datasets) + 1)}
+			}
+			datasets = append(datasets, dataset)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return datasets, nil
 	case "multipart/related":
 		if limits.maxDepth < 1 {
 			return nil, &ResponseDecodeError{Kind: ResponseDecodeMultipartDepth, Limit: int64(limits.maxDepth), Value: 1}
@@ -384,46 +403,33 @@ func (c Client) metadataMediaTypeConfigured(want MetadataMediaType) bool {
 }
 
 func (c Client) datasetsFromDICOMXMLMultipart(ctx context.Context, response Response, boundary, outerTransferSyntax string, requireContentLocation bool, limits responseParseLimits) ([]Dataset, error) {
-	maximumParts := c.Options.MaxMetadataParts
-	if maximumParts < 0 {
+	if c.Options.MaxMetadataParts < 0 {
 		return nil, fmt.Errorf("MaxMetadataParts must not be negative")
 	}
-	if maximumParts == 0 {
-		maximumParts = defaultMaxMetadataParts
-	}
-	if limits.maxParts < maximumParts {
-		maximumParts = limits.maxParts
-	}
+	maximumParts := c.metadataDatasetLimit(limits)
 	maximumBytes := limits.maxPartBytes
-	body := newMultipartHeaderLimitReader(bytes.NewReader(response.Body), boundary, limits.maxHeaderBytes)
-	reader := multipart.NewReader(body, boundary)
+	reader := newMultipartResponseReader(bytes.NewReader(response.Body), boundary, limits.maxHeaderBytes)
 	datasets := make([]Dataset, 0)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		part, err := reader.NextRawPart()
+		part, err := reader.nextPart()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			if body.Err() != nil {
-				return nil, body.Err()
-			}
 			return nil, multipartDecodeError(err)
 		}
 		if len(datasets) >= maximumParts {
-			_ = part.Close()
 			return nil, &ResponseDecodeError{Kind: ResponseDecodePartLimit, Limit: int64(maximumParts), Value: int64(len(datasets) + 1)}
 		}
 		if err := validatePartHeader(part.Header, limits); err != nil {
-			_ = part.Close()
 			return nil, err
 		}
 		partMediaType, partParams, err := validatePartMediaType(part.Header.Get("Content-Type"), metadataXMLResponsePolicy, limits)
 		if err != nil || !strings.EqualFold(partMediaType, string(MetadataMediaTypeDICOMXML)) || !metadataCharsetSupported(partParams) ||
 			!metadataParametersSupported(partParams, "charset", "transfer-syntax") {
-			_ = part.Close()
 			if err != nil {
 				return nil, err
 			}
@@ -447,7 +453,6 @@ func (c Client) datasetsFromDICOMXMLMultipart(ctx context.Context, response Resp
 			}
 		}
 		data, err := readResponsePart(part, limits)
-		_ = part.Close()
 		if err != nil {
 			return nil, responsePartReadError(err)
 		}
@@ -486,6 +491,9 @@ func (c Client) datasetFromDICOMXML(ctx context.Context, data []byte, maximumByt
 	}
 	obj, err := dicomxml.UnmarshalContext(ctx, data, std.Dictionary, dicomxml.UnmarshalOptions{
 		TransferSyntax: syntax,
+		// Orthanc's DICOMweb plugin writes xsi:schemaLocation on the root
+		// element and omits xml:space.
+		AllowForeignRootAttributes: true,
 		Limits: dicomxml.Limits{
 			MaxXMLBytes:          maximumBytes,
 			MaxValueBytes:        int(valueLimit),

@@ -216,11 +216,16 @@ func TestServeStudyRootCFindRejectsUnsupportedLevel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	status, serverErr := runStudyRootCFindStatusTest(t, ctx, CFindHandlerFunc(func(context.Context, CFindRequestContext) ([]*object.Object, error) {
+	// PATIENT is not a level of the Study Root model: the Identifier does not
+	// fit the Information Model, A900 per PS3.4 C.4.1.1.4.
+	rsp, serverErr := runStudyRootCFindResponseTest(t, ctx, 0, CFindHandlerFunc(func(context.Context, CFindRequestContext) ([]*object.Object, error) {
 		return nil, errors.New("handler should not run for unsupported level")
 	}), withQueryRetrieveLevel("PATIENT"))
-	if status != CFindStatusUnableToProcess {
-		t.Fatalf("final status = 0x%04X, want unable-to-process 0x%04X", status, CFindStatusUnableToProcess)
+	if rsp.Status != CFindStatusIdentifierDoesNotMatchSOPClass {
+		t.Fatalf("final status = 0x%04X, want identifier-does-not-match 0x%04X", rsp.Status, CFindStatusIdentifierDoesNotMatchSOPClass)
+	}
+	if rsp.ErrorComment != "Unsupported Query/Retrieve Level (0008,0052)" {
+		t.Fatalf("Error Comment = %q, want the Query/Retrieve Level key", rsp.ErrorComment)
 	}
 	if serverErr == nil || !strings.Contains(serverErr.Error(), "unsupported QueryRetrieveLevel") {
 		t.Fatalf("server error = %v, want unsupported QueryRetrieveLevel", serverErr)
@@ -259,6 +264,14 @@ func runStudyRootCFindStatusTest(t *testing.T, ctx context.Context, handler CFin
 }
 
 func runStudyRootCFindStatusTestWithServeTimeout(t *testing.T, setupCtx context.Context, serveTimeout time.Duration, handler CFindHandler, options ...findStatusTestOption) (uint16, error) {
+	t.Helper()
+	rsp, err := runStudyRootCFindResponseTest(t, setupCtx, serveTimeout, handler, options...)
+	return rsp.Status, err
+}
+
+// runStudyRootCFindResponseTest returns the first C-FIND response the client
+// receives, with its Error Comment, and the server's result.
+func runStudyRootCFindResponseTest(t *testing.T, setupCtx context.Context, serveTimeout time.Duration, handler CFindHandler, options ...findStatusTestOption) (*CFindResponse, error) {
 	t.Helper()
 
 	listener, err := ul.Listen(ul.ListenOptions{Address: "127.0.0.1:0", Context: setupCtx})
@@ -334,7 +347,7 @@ func runStudyRootCFindStatusTestWithServeTimeout(t *testing.T, setupCtx context.
 	if err != nil {
 		t.Fatalf("ReceiveCFindResponse() error = %v", err)
 	}
-	return rsp.Status, <-serverDone
+	return rsp, <-serverDone
 }
 
 func studyRootFindMatch(patientID, studyInstanceUID string) *object.Object {

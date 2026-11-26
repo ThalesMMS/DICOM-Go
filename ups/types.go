@@ -1,5 +1,6 @@
 // Package ups implements the DICOM Unified Procedure Step workflows defined
-// by PS3.4 Annex CC. Transport adapters are built on net/dimse, while the
+// by PS3.4 Annex CC. Transport adapters are built on net/dimse and, for
+// UPS-RS, net/dicomweb (NewDICOMwebBackend, NewDICOMwebEventSink), while the
 // state machine and persistence boundaries remain usable without a network.
 package ups
 
@@ -261,6 +262,19 @@ type ServiceOptions struct {
 	DeliveryLimits            DeliveryLimits
 	RefuseDeletionLocks       bool
 	FallbackReceivingAETitles []string
+	// EventSink, when set, is offered every due delivery before the DIMSE
+	// callback path; a DICOMweb event channel uses it (see NewDICOMwebEventSink).
+	EventSink EventSink
+}
+
+// EventSink delivers committed UPS events through a transport other than a
+// DIMSE N-EVENT-REPORT association, such as a DICOMweb WebSocket channel.
+// DeliverUPSEvent reports handled=false when it has no open channel for
+// delivery.ReceivingAETitle, which lets the CallbackResolver deliver it over
+// DIMSE instead. handled=true with a nil error records the delivery as
+// delivered; a non-nil error keeps it pending for a later retry.
+type EventSink interface {
+	DeliverUPSEvent(ctx context.Context, delivery Delivery) (handled bool, err error)
 }
 
 type SCPStatus string

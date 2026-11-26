@@ -22,9 +22,10 @@ type preparationPlan struct {
 	derivedUID    string
 }
 type prepared struct {
-	plan  preparationPlan
-	dir   string
-	paths map[string]string
+	plan    preparationPlan
+	dir     string
+	paths   map[string]string
+	offsets map[string]int64
 }
 
 func (p *prepared) close() error { return os.RemoveAll(p.dir) }
@@ -55,7 +56,10 @@ func (s *Source) prepare(parent context.Context, expected *preparationPlan) (res
 	if err != nil {
 		return nil, report, err
 	}
-	p := &prepared{dir: dir, paths: map[string]string{}, plan: preparationPlan{input: cloneDescriptor(input)}}
+	p := &prepared{dir: dir, paths: map[string]string{}, offsets: map[string]int64{}, plan: preparationPlan{input: cloneDescriptor(input)}}
+	if s.preparedTracker != nil {
+		s.preparedTracker(p)
+	}
 	defer func() {
 		if result == nil || err != nil {
 			err = errors.Join(err, p.close())
@@ -110,9 +114,9 @@ func (s *Source) prepare(parent context.Context, expected *preparationPlan) (res
 		MaxTotalBytes: limits.MaxInputBytes, MaxElementBytes: limits.MaxInputBytes,
 		MaxPixelDataBytes: limits.MaxInputBytes, MaxElements: limits.MaxElements,
 		MaxFragments: limits.MaxFragments, MaxSequenceDepth: limits.MaxDepth,
-		// The existing transcoder accepts materialized pixels. Opaque pass-
-		// through can keep them deferred; both paths retain the input bounds.
-		DeferPixelData: !original.Deflated && s.opts.Target.UID == original.UID && !s.opts.Transcode.ForceReencode,
+		// Qualified incremental preparation and opaque pass-through keep
+		// top-level pixels deferred. Other profiles retain the resident route.
+		DeferPixelData: (!original.Deflated && s.opts.Target.UID == original.UID && !s.opts.Transcode.ForceReencode) || incrementalProfile(original, s.opts.Target, s.opts.Transcode),
 	}
 	dataset, err := object.ReadDataSetWithOptions(&contextReadSeeker{ctx: ctx, ReadSeeker: inputFile}, original, readOpts)
 	if err != nil {
@@ -143,9 +147,31 @@ func (s *Source) prepare(parent context.Context, expected *preparationPlan) (res
 		case target.RequiresCodec():
 			candidate.Operation = "encode"
 		}
-		transformed, transformReport, err = pixeldata.TranscodeDataSet(ctx, dataset, original, target, s.opts.Transcode)
+		outputPath := filepath.Join(dir, "target.dataset")
+		var incrementalOutput *object.File
+		var incrementalOffset, incrementalSize int64
+		if incrementalProfile(original, target, s.opts.Transcode) {
+			incrementalOutput, transformReport, incrementalOffset, incrementalSize, err = prepareIncremental(ctx, inputPath, 0, outputPath, original, target, s.opts.Transcode, s.opts.Dictionary, &budget)
+			if errors.Is(err, pixeldata.ErrTranscodeStreamingIneligible) {
+				err = dataset.Close()
+				if err == nil {
+					_, err = inputFile.Seek(0, io.SeekStart)
+				}
+				if err == nil {
+					readOpts.DeferPixelData = false
+					dataset, err = object.ReadDataSetWithOptions(&contextReadSeeker{ctx: ctx, ReadSeeker: inputFile}, original, readOpts)
+				}
+			} else if err == nil {
+				defer func() { err = errors.Join(err, incrementalOutput.Close()) }()
+				transformed = incrementalOutput.Dataset
+			}
+		}
+		if err == nil && incrementalOutput == nil {
+			transformed, transformReport, err = pixeldata.TranscodeDataSet(ctx, dataset, original, target, s.opts.Transcode)
+		}
 		if err == nil {
 			defer func() { err = errors.Join(err, transformed.Close()) }()
+			report.LossyVerification = transformReport.LossyVerification
 			candidate.Lossy = transformReport.Lossy
 			if transformReport.Lossy {
 				if !s.opts.Transcode.AllowLossy || s.opts.FallbackOriginal {
@@ -166,18 +192,25 @@ func (s *Source) prepare(parent context.Context, expected *preparationPlan) (res
 				}
 				p.plan.derivedUID = uid
 			}
-			outputPath := filepath.Join(dir, "target.dataset")
-			var outputSize int64
-			outputSize, err = writeRepresentation(ctx, outputPath, transformed, target, &budget, limits.MaxOutputBytes)
+			outputSize := incrementalSize
+			if incrementalOutput == nil {
+				outputSize, err = writeRepresentation(ctx, outputPath, transformed, target, &budget, limits.MaxOutputBytes)
+			}
 			if err == nil {
 				p.plan.output, err = dimse.NewFileStoreSource(&object.File{Dataset: transformed, TransferSyntax: target}, outputSize).Inspect(ctx)
 			}
 			if err == nil {
 				p.paths[target.UID] = outputPath
+				p.offsets[target.UID] = incrementalOffset
 				candidate.Producible = true
 			}
 		}
 		if err != nil {
+			var verification *pixeldata.LossyVerificationError
+			if errors.As(err, &verification) {
+				copy := *verification
+				report.VerificationFailure = &copy
+			}
 			candidate.Reason, candidate.RuntimeMissing = exclusionReason(err)
 			report.Candidates = append(report.Candidates, candidate)
 			if ctx.Err() != nil {
@@ -241,6 +274,12 @@ func exclusionReason(err error) (string, bool) {
 		return "runtime-unavailable", true
 	case errors.Is(err, pixeldata.ErrTranscodeLossyDisallowed):
 		return "lossy-disallowed", false
+	case errors.Is(err, pixeldata.ErrTranscodePixelError):
+		return "lossy-error-exceeded", false
+	case errors.Is(err, pixeldata.ErrTranscodeComparisonUnsupported):
+		return "lossy-comparison-unsupported", false
+	case errors.Is(err, pixeldata.ErrTranscodeVerificationOptions):
+		return "verification-options-invalid", false
 	case errors.Is(err, ErrResourceLimit), errors.Is(err, pixeldata.ErrTranscodeResourceLimit):
 		return "resource-limit", false
 	case errors.Is(err, pixeldata.ErrTranscodeUnsupported), errors.Is(err, pixeldata.ErrUnsupportedEncoderMetadata):

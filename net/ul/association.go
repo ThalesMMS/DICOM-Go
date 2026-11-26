@@ -1,7 +1,6 @@
 package ul
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/net/telemetry"
+	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
 var (
@@ -40,7 +40,56 @@ func (e *RejectionError) Error() string {
 	if e == nil {
 		return ErrAssociationRejected.Error()
 	}
-	return fmt.Sprintf("%s: result=%d source=%d reason=%d", ErrAssociationRejected, e.Result, e.Source, e.Reason)
+	return fmt.Sprintf("%s: %s (result=%d source=%d reason=%d)", ErrAssociationRejected, e.Description(), e.Result, e.Source, e.Reason)
+}
+
+// Description names the result, source and reason as PS3.8 Table 9-21 does,
+// for example "rejected-permanent, service-user,
+// calling-AE-title-not-recognized". Unknown codes are shown as numbers.
+func (e *RejectionError) Description() string {
+	if e == nil {
+		return ""
+	}
+	result := fmt.Sprintf("result %d", e.Result)
+	switch e.Result {
+	case AssociateRJResultPermanent:
+		result = "rejected-permanent"
+	case AssociateRJResultTransient:
+		result = "rejected-transient"
+	}
+	source := fmt.Sprintf("source %d", e.Source)
+	reason := fmt.Sprintf("reason %d", e.Reason)
+	switch e.Source {
+	case AssociateRJSourceServiceUser:
+		source = "service-user"
+		switch e.Reason {
+		case AssociateRJReasonNoReasonGiven:
+			reason = "no-reason-given"
+		case AssociateRJReasonApplicationContextNameNotSupported:
+			reason = "application-context-name-not-supported"
+		case AssociateRJReasonCallingAETitleNotRecognized:
+			reason = "calling-AE-title-not-recognized"
+		case AssociateRJReasonCalledAETitleNotRecognized:
+			reason = "called-AE-title-not-recognized"
+		}
+	case AssociateRJSourceServiceProviderACSE:
+		source = "service-provider (ACSE)"
+		switch e.Reason {
+		case AssociateRJReasonNoReasonGiven:
+			reason = "no-reason-given"
+		case AssociateRJReasonProtocolVersionNotSupported:
+			reason = "protocol-version-not-supported"
+		}
+	case AssociateRJSourceServiceProviderPresentation:
+		source = "service-provider (presentation)"
+		switch e.Reason {
+		case 1:
+			reason = "temporary-congestion"
+		case AssociateRJReasonLocalLimitExceeded:
+			reason = "local-limit-exceeded"
+		}
+	}
+	return result + ", " + source + ", " + reason
 }
 
 func (e *RejectionError) Unwrap() error {
@@ -74,6 +123,11 @@ type AcceptedContext struct {
 	ID                byte
 	AbstractSyntaxUID string
 	TransferSyntaxUID string
+	// RelatedGeneralSOPClassUID is set on the acceptor when it took an
+	// abstract syntax it does not support as this Related General SOP Class
+	// of the requestor's SOP Class Common Extended Negotiation (PS3.4
+	// B.3.1.4); the context keeps the proposed abstract syntax.
+	RelatedGeneralSOPClassUID string
 }
 
 type UserIdentityRequest struct {
@@ -139,6 +193,13 @@ func NewTokenIdentity(identityType byte, token []byte, positiveResponseRequested
 }
 
 type Association struct {
+	// artimTimeout bounds the wait for the peer to close after this side
+	// sent an A-ABORT; zero closes at once.
+	artimTimeout time.Duration
+	// maxSendPDU caps outgoing P-DATA-TF PDUs (see SendPDULimit).
+	maxSendPDU uint32
+	// maxAssociationPDU bounds inbound A-ASSOCIATE-RQ/AC bodies.
+	maxAssociationPDU                      uint32
 	connMu                                 sync.RWMutex
 	readMu                                 sync.Mutex
 	writeMu                                sync.Mutex
@@ -175,6 +236,7 @@ type Association struct {
 	AcceptedRoleSelections                 []RoleSelectionItem
 	RequestedExtendedNegotiation           []SopClassExtendedNegotiationItem
 	AcceptedExtendedNegotiation            []SopClassExtendedNegotiationItem
+	RequestedCommonExtendedNegotiation     []SopClassCommonExtendedNegotiationItem
 	RequestedAsynchronousOperationsWindow  *AsynchronousOperationsWindow
 	NegotiatedAsynchronousOperationsWindow AsynchronousOperationsWindow
 	AsynchronousOperationsNegotiated       bool
@@ -269,6 +331,9 @@ func (a *Association) EffectiveAsynchronousOperationsWindow() AsynchronousOperat
 }
 
 type DialOptions struct {
+	// Transport selects an explicit dialer, local TCP address or HTTP CONNECT tunnel.
+	// Its zero value preserves direct TCP without environment proxy discovery.
+	Transport                 TransportOptions
 	CalledAETitle             string
 	CallingAETitle            string
 	MaxPDU                    uint32
@@ -277,11 +342,20 @@ type DialOptions struct {
 	ImplementationVersionName string
 	ProtocolVersion           uint16
 	Contexts                  []PresentationContext
-	ApplicationContextName    string
-	TLSConfig                 *tls.Config
-	UserIdentity              *UserIdentityRequest
-	RoleSelections            []RoleSelectionItem
-	ExtendedNegotiation       []SopClassExtendedNegotiationItem
+	// TransferSyntaxAllowlist restricts each SCU context to its intersection
+	// with these UIDs. An empty intersection fails before dialing. Nil keeps
+	// the caller's proposal as given; the policy leaves SOP classes and roles intact.
+	TransferSyntaxAllowlist []string
+	ApplicationContextName  string
+	TLSConfig               *tls.Config
+	UserIdentity            *UserIdentityRequest
+	RoleSelections          []RoleSelectionItem
+	ExtendedNegotiation     []SopClassExtendedNegotiationItem
+	// CommonExtendedNegotiation proposes SOP Class Common Extended
+	// Negotiation sub-items (PS3.7 D.3.3.6), at most one per proposed SOP
+	// Class, so an acceptor that lacks a new or private SOP Class can accept
+	// it as one of its Related General SOP Classes.
+	CommonExtendedNegotiation []SopClassCommonExtendedNegotiationItem
 	// AsynchronousOperationsWindow proposes the requestor's local invoked and
 	// performed limits. Nil omits sub-item 0x53 and preserves synchronous 1/1.
 	AsynchronousOperationsWindow *AsynchronousOperationsWindow
@@ -291,20 +365,82 @@ type DialOptions struct {
 	ReadProgressTimeout          time.Duration
 	WriteProgressTimeout         time.Duration
 	ReleaseTimeout               time.Duration
+	// ARTIMTimeout bounds the wait for the peer to close after this side
+	// sent an A-ABORT (PS3.8 ARTIM): zero is DefaultARTIMTimeout, negative
+	// closes at once.
+	ARTIMTimeout time.Duration
+	// MaxSendPDU caps the P-DATA-TF PDUs this side sends, below the peer's
+	// Maximum Length; zero is DefaultMaxSendPDU (128 KiB).
+	MaxSendPDU uint32
+	// MaxAssociationPDU bounds the A-ASSOCIATE-RQ/AC body read before the
+	// association exists; zero is DefaultMaxAssociationPDU (1 MiB). A larger
+	// PDU is answered with an A-P-ABORT (invalid PDU parameter value).
+	MaxAssociationPDU uint32
+	// SocketBuffers sets SO_SNDBUF and SO_RCVBUF on the physical socket before
+	// connect (including a proxy hop); zero keeps OS defaults. A custom
+	// Transport.DialContext owns pre-connect options and rejects nonzero values.
+	SocketBuffers SocketBuffers
 }
 
 type ListenOptions struct {
 	Address string
 	Context context.Context
+	// SocketBuffers sets SO_SNDBUF and SO_RCVBUF on the listening socket,
+	// which accepted sockets inherit, and again on each accepted socket;
+	// zero fields keep the operating system defaults.
+	SocketBuffers SocketBuffers
 }
 
 type AcceptOptions struct {
-	AETitle                    string
-	MaxPDU                     uint32
-	SupportedAbstractSyntaxes  []string
-	SupportedTransferSyntaxes  []string
-	AcceptAnyAbstractSyntax    bool
-	RequireMatchingCalledAE    bool
+	// CalledAERegistry selects an immutable acceptor catalog from the validated
+	// Called AE before admission. It is exclusive with global catalogs/rules.
+	// Nil preserves the existing single-AE behavior.
+	CalledAERegistry          *CalledAERegistry
+	AETitle                   string
+	MaxPDU                    uint32
+	SupportedAbstractSyntaxes []string
+	SupportedTransferSyntaxes []string
+	// PreferProposedTransferSyntaxOrder accepts, for each presentation
+	// context, the first proposed transfer syntax that is also supported. By
+	// default the acceptor's SupportedTransferSyntaxes order wins. An archive
+	// answering C-GET uses the proposer's order so a requester offering the
+	// stored compressed syntax receives it without transcoding.
+	PreferProposedTransferSyntaxOrder bool
+	AcceptAnyAbstractSyntax           bool
+	// PresentationContextRules configure individual abstract syntaxes: a
+	// rule's abstract syntax is supported, its transfer syntaxes replace
+	// SupportedTransferSyntaxes and its role policy decides whether the
+	// context is accepted. Other abstract syntaxes keep the global settings.
+	PresentationContextRules []PresentationContextRule
+	// CalledAEPresentationContextRules, when set, replaces
+	// PresentationContextRules for an association whose Called AE title
+	// equals a key after DICOM padding normalization (case-sensitive, as
+	// EqualAETitles). Other Called AEs keep PresentationContextRules. A
+	// single-catalog listener answering several aliases uses it to support an
+	// abstract syntax, or to allow a role, on some aliases only: rules make
+	// their abstract syntax supported, so a syntax left out of
+	// SupportedAbstractSyntaxes is refused on an alias whose list omits it.
+	// Keys must be valid AE titles, distinct after normalization, and each
+	// list follows the PresentationContextRules validation. It is exclusive
+	// with CalledAERegistry and must not be modified while associations are
+	// being accepted.
+	CalledAEPresentationContextRules map[string][]PresentationContextRule
+	// AlwaysAcceptDefaultRole accepts a context whose rule does not allow the
+	// SCU role when the requestor proposed no role selection, for requestors
+	// that omit the sub-item (DCMTK alwaysAcceptDefaultRole).
+	AlwaysAcceptDefaultRole bool
+	RequireMatchingCalledAE bool
+	// Admission, when set, decides from the A-ASSOCIATE-RQ and the transport
+	// whether the association may proceed, before user identity handling,
+	// presentation context negotiation or any session state; a non-nil
+	// result is sent as the A-ASSOCIATE-RJ.
+	Admission AdmissionHandler
+	// AdmissionDecider, when set, replaces Admission: one call decides both
+	// the admission and, through AdmissionDecision.UserIdentity, the answer to
+	// the requestor's User Identity sub-item of the same association, so a
+	// policy that changes between the two cannot answer one association
+	// from two versions.
+	AdmissionDecider           AdmissionDecider
 	Context                    context.Context
 	ImplementationClassUID     string
 	ImplementationVersionName  string
@@ -312,6 +448,12 @@ type AcceptOptions struct {
 	UserIdentityHandler        UserIdentityHandler
 	RoleSelections             []RoleSelectionItem
 	ExtendedNegotiationHandler ExtendedNegotiationHandler
+	// CommonExtendedNegotiationHandler, when set, lets a proposed abstract
+	// syntax that is not otherwise supported be accepted as a Related General
+	// SOP Class named by the requestor's SOP Class Common Extended
+	// Negotiation and supported here (AcceptRelatedGeneralSOPClasses accepts
+	// any). Nil keeps such contexts rejected.
+	CommonExtendedNegotiationHandler CommonExtendedNegotiationHandler
 	// AsynchronousOperationsWindow is the acceptor's local invoked/performed
 	// capacity. Nil declines asynchronous negotiation and defaults both sides to
 	// synchronous 1/1 even when the requestor proposed sub-item 0x53.
@@ -320,20 +462,55 @@ type AcceptOptions struct {
 	// written to the peer. Callers can use it to publish rejection accounting
 	// before the rejection becomes externally observable.
 	OnAssociationRejected func()
-	Observability         *ObservabilityOptions
-	NegotiationTimeout    time.Duration
-	IdleTimeout           time.Duration
-	ReadProgressTimeout   time.Duration
-	WriteProgressTimeout  time.Duration
-	ReleaseTimeout        time.Duration
+	// OnAssociationRejection runs synchronously, after OnAssociationRejected
+	// and before the A-ASSOCIATE-RJ is written, with what the acceptor knows
+	// about the refused request. It serves audit records; it must return
+	// promptly and cannot change the rejection.
+	OnAssociationRejection func(RejectedAssociation)
+	// OnTLSHandshakeFailure runs synchronously when a connection is closed
+	// because its TLS handshake failed, before any DICOM PDU. It serves
+	// audit records and counters; it must return promptly.
+	OnTLSHandshakeFailure func(TLSHandshakeFailure)
+	// rejectedRequest is the request being answered, for the callback above.
+	rejectedRequest      *AssociationRQ
+	Observability        *ObservabilityOptions
+	NegotiationTimeout   time.Duration
+	IdleTimeout          time.Duration
+	ReadProgressTimeout  time.Duration
+	WriteProgressTimeout time.Duration
+	ReleaseTimeout       time.Duration
+	// ARTIMTimeout bounds the wait for the peer to close after this side
+	// sent an A-ASSOCIATE-RJ or A-ABORT (PS3.8 ARTIM): zero is
+	// DefaultARTIMTimeout, negative closes at once. Input received meanwhile
+	// is discarded, at most 1 MiB.
+	ARTIMTimeout time.Duration
+	// MaxSendPDU caps the P-DATA-TF PDUs this side sends, below the peer's
+	// Maximum Length; zero is DefaultMaxSendPDU (128 KiB).
+	MaxSendPDU uint32
+	// MaxAssociationPDU bounds the A-ASSOCIATE-RQ/AC body read before the
+	// association exists; zero is DefaultMaxAssociationPDU (1 MiB). A larger
+	// PDU is answered with an A-P-ABORT (invalid PDU parameter value).
+	MaxAssociationPDU uint32
 }
 
 type Listener struct {
 	listener net.Listener
+	buffers  SocketBuffers
 }
 
 func Dial(address string, opts DialOptions) (*Association, error) {
 	opts = normalizeDialOptions(opts)
+	if len(opts.TransferSyntaxAllowlist) != 0 {
+		opts.Contexts = append([]PresentationContext(nil), opts.Contexts...)
+		for i, context := range opts.Contexts {
+			allowed := transfer.FilterTransferSyntaxUIDs(context.TransferSyntaxUIDs, opts.TransferSyntaxAllowlist)
+			if len(allowed) == 0 {
+				return nil, fmt.Errorf("%w: transfer syntax allowlist excludes all proposals for abstract syntax %q",
+					transfer.ErrUnsupportedTransferSyntax, context.AbstractSyntaxUID)
+			}
+			opts.Contexts[i].TransferSyntaxUIDs = allowed
+		}
+	}
 	if err := validateDialOptions(opts); err != nil {
 		return nil, err
 	}
@@ -350,30 +527,59 @@ func Dial(address string, opts DialOptions) (*Association, error) {
 		}()
 	}
 
-	conn, err := (&net.Dialer{}).DialContext(opts.Context, "tcp", address)
-	if err != nil {
-		return nil, associationContextError(opts.Context, err)
-	}
-	operational.setConnection(conn)
-	associationCtx := context.Background()
+	// The negotiation timeout covers the connection too: a caller without a
+	// deadline of its own must not wait for the system's connect timeout on
+	// a host that drops packets.
 	negotiationCtx, cancelNegotiation := contextWithOptionalTimeout(opts.Context, opts.NegotiationTimeout)
 	defer cancelNegotiation()
+	conn, err := opts.Transport.dial(negotiationCtx, address, opts.SocketBuffers)
+	if err != nil {
+		return nil, associationContextError(negotiationCtx, err)
+	}
+	operational.setConnection(conn)
+	if opts.Transport.HTTPConnect != nil {
+		operational.setLogicalRemoteAddress(address)
+	}
+	associationCtx := context.Background()
 	opts.Context = negotiationCtx
+	var clientAuth *tlsClientAuthWatch
 	if opts.TLSConfig != nil {
-		tlsConn, err := clientTLSConn(opts.Context, conn, address, opts.TLSConfig)
+		tlsConn, watch, err := clientTLSConn(opts.Context, conn, address, opts.TLSConfig)
 		if err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
-		conn = tlsConn
+		conn, clientAuth = tlsConn, watch
 	}
 
 	assoc, err := negotiateSCU(conn, opts, operational)
 	if err != nil {
+		err = clientAuth.refusal(err)
 		if shouldAbortFailedNegotiation(err) {
-			_ = writeAssociationPDUObserved(opts.Context, conn, &AbortRQ{Source: AbortSourceServiceUser, Reason: AbortReasonNotSpecified}, operational)
+			source, reason := AbortSourceServiceUser, AbortReasonNotSpecified
+			if providerReason, ok := ProviderAbortReason(err); ok {
+				source, reason = AbortSourceServiceProvider, providerReason
+			}
+			abortCtx, artim := opts.Context, artimTimeout(opts.ARTIMTimeout)
+			if contextLimitReached(abortCtx) {
+				// The caller's deadline or cancellation ended the
+				// negotiation. The A-ABORT is still sent, under a deadline
+				// of its own, and the ARTIM wait for the peer to close still
+				// happens, but neither holds the caller past the limit it
+				// set.
+				writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(abortCtx), artim+time.Second)
+				go func() {
+					defer cancelWrite()
+					_ = writeAssociationPDUObserved(writeCtx, conn, &AbortRQ{Source: source, Reason: reason}, operational)
+					_ = lingerClose(conn, artim)
+				}()
+			} else {
+				_ = writeAssociationPDUObserved(abortCtx, conn, &AbortRQ{Source: source, Reason: reason}, operational)
+				_ = lingerClose(conn, artim)
+			}
+		} else {
+			_ = conn.Close()
 		}
-		_ = conn.Close()
 		return nil, err
 	}
 	established = true
@@ -411,12 +617,40 @@ func Listen(opts ListenOptions) (*Listener, error) {
 	if address == "" {
 		address = "127.0.0.1:0"
 	}
+	if err := opts.SocketBuffers.validate(); err != nil {
+		return nil, err
+	}
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", address)
+	if !opts.SocketBuffers.IsZero() {
+		lc.Control = opts.SocketBuffers.control
+	}
+	ln, err := lc.Listen(ctx, listenNetwork(address), address)
 	if err != nil {
 		return nil, associationContextError(ctx, err)
 	}
-	return &Listener{listener: ln}, nil
+	return &Listener{listener: ln, buffers: opts.SocketBuffers}, nil
+}
+
+// listenNetwork selects the TCP network for a listen address. An IPv4
+// literal, including the unspecified 0.0.0.0, listens on IPv4 only: with
+// "tcp" Go opens a dual-stack socket for an unspecified address, which would
+// also accept IPv6 connections the address did not ask for. Other hosts keep
+// "tcp".
+func listenNetwork(address string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return "tcp"
+	}
+	for i := 0; i < len(host); i++ {
+		if host[i] == ':' {
+			// An IPv6 literal, including an IPv4-mapped one.
+			return "tcp"
+		}
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
+		return "tcp4"
+	}
+	return "tcp"
 }
 
 func (l *Listener) Close() error {
@@ -433,11 +667,32 @@ func (l *Listener) Addr() net.Addr {
 	return l.listener.Addr()
 }
 
+// Accept waits for the next connection and applies the listener's socket
+// buffers to it. It returns every failure at once; AcceptContext retries the
+// ones that leave the listener usable.
 func (l *Listener) Accept() (net.Conn, error) {
 	if l == nil || l.listener == nil {
 		return nil, net.ErrClosed
 	}
-	return l.listener.Accept()
+	conn, err := l.listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if err := l.applyBuffers(conn); err != nil {
+		_ = conn.Close()
+		// Only this connection is lost; the error keeps its cause.
+		return nil, &connectionSetupError{err: err}
+	}
+	return conn, nil
+}
+
+// applyBuffers sets the listener's socket buffer sizes on an accepted TCP
+// socket; other connections are left alone.
+func (l *Listener) applyBuffers(conn net.Conn) error {
+	if _, ok := conn.(*net.TCPConn); !ok || l.buffers.IsZero() {
+		return nil
+	}
+	return l.buffers.apply(conn)
 }
 
 func (l *Listener) AcceptAssociation(opts AcceptOptions) (*Association, error) {
@@ -453,6 +708,10 @@ func (l *Listener) AcceptAssociation(opts AcceptOptions) (*Association, error) {
 	if err != nil {
 		return nil, associationContextError(opts.Context, err)
 	}
+	if err := l.applyBuffers(conn); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	assoc, err := Accept(conn, opts)
 	if err != nil {
 		_ = conn.Close()
@@ -463,7 +722,16 @@ func (l *Listener) AcceptAssociation(opts AcceptOptions) (*Association, error) {
 
 func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 	opts = normalizeAcceptOptions(opts)
+	if err := validateCalledAEOptions(opts); err != nil {
+		return nil, err
+	}
 	if err := validateOperationalTimeouts(opts.NegotiationTimeout, opts.IdleTimeout, opts.ReadProgressTimeout, opts.WriteProgressTimeout, opts.ReleaseTimeout); err != nil {
+		return nil, err
+	}
+	if err := validatePresentationContextRules(opts.PresentationContextRules); err != nil {
+		return nil, err
+	}
+	if err := validateCalledAEPresentationContextRules(opts.CalledAEPresentationContextRules); err != nil {
 		return nil, err
 	}
 	associationCtx := opts.Context
@@ -486,14 +754,18 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 	if opts.TLSConfig != nil {
 		tlsConn, err := serverTLSConn(opts.Context, conn, opts.TLSConfig)
 		if err != nil {
+			notifyTLSHandshakeFailure(opts, conn, err)
 			_ = conn.Close()
 			return nil, err
 		}
 		conn = tlsConn
 	}
 
-	pdu, err := readAssociationPDUObserved(opts.Context, conn, opts.MaxPDU, operational)
+	pdu, err := readAssociationPDUObserved(opts.Context, conn, opts.MaxPDU, opts.MaxAssociationPDU, operational)
 	if err != nil {
+		// A malformed or oversized request is answered with an A-P-ABORT
+		// and its reason (AA-1/AA-8); transport errors just close.
+		providerAbortAndClose(opts.Context, conn, err, artimTimeout(opts.ARTIMTimeout), operational)
 		return nil, err
 	}
 
@@ -501,16 +773,68 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 	if !ok {
 		response := unexpectedAssociationResponse(pdu)
 		_ = writeAssociationPDUObserved(opts.Context, conn, response, operational)
-		_ = conn.Close()
-		return nil, fmt.Errorf("%w: got %s while waiting for A-ASSOCIATE-RQ", ErrUnexpectedPDU, pduName(pdu))
+		_ = lingerClose(conn, artimTimeout(opts.ARTIMTimeout))
+		return nil, UnexpectedPDUError(pdu, "waiting for A-ASSOCIATE-RQ")
 	}
+	opts.rejectedRequest = rq
 
 	if rj, ok := rejectAssociationRequest(rq, opts); ok {
-		notifyAssociationRejected(opts)
-		if err := writeAssociationPDUObserved(opts.Context, conn, rj, operational); err != nil {
+		if err := rejectAndClose(opts, conn, &rj, operational); err != nil {
 			return nil, err
 		}
-		return nil, &RejectionError{Result: rj.Result, Source: rj.Source, Reason: rj.Reason}
+		rejection := &RejectionError{Result: rj.Result, Source: rj.Source, Reason: rj.Reason}
+		if cause := invalidRequestAETitle(rq); cause != nil {
+			return nil, errors.Join(rejection, cause)
+		}
+		return nil, rejection
+	}
+	if opts.CalledAERegistry != nil {
+		selected, found := opts.CalledAERegistry.lookup(rq.CalledAETitle)
+		if !found {
+			rj := RejectCalledAETitle()
+			if err := rejectAndClose(opts, conn, rj, operational); err != nil {
+				return nil, err
+			}
+			return nil, &RejectionError{Result: rj.Result, Source: rj.Source, Reason: rj.Reason}
+		}
+		opts.AETitle = selected.AETitle
+		opts.PresentationContextRules = selected.Profile.Rules
+	}
+	if rules, ok := calledAEPresentationContextRules(opts.CalledAEPresentationContextRules, rq.CalledAETitle); ok {
+		opts.PresentationContextRules = rules
+	}
+	admission := opts.Admission
+	var decidedIdentity UserIdentityHandler
+	if decider := opts.AdmissionDecider; decider != nil {
+		// decidedIdentity is read only when admit returned the decision of
+		// the handler, which wrote it first; an admission that times out
+		// rejects the association without reading it.
+		admission = func(ctx context.Context, req AdmissionRequest) *AssociationRJ {
+			decision := decider(ctx, req)
+			decidedIdentity = decision.UserIdentity
+			return decision.Reject
+		}
+	}
+	if admission != nil {
+		// Admission runs before user identity handling, presentation context
+		// negotiation or any session state.
+		rj, admissionErr := admit(opts.Context, admission, admissionRequest(conn, rq))
+		if rj != nil {
+			writeOpts := opts
+			if contextLimitReached(opts.Context) {
+				// A handler that overran the negotiation deadline still gets
+				// its rejection sent, under a short deadline of its own.
+				var cancelWrite context.CancelFunc
+				writeOpts.Context, cancelWrite = context.WithTimeout(context.WithoutCancel(opts.Context), admissionRejectWriteTimeout)
+				defer cancelWrite()
+			}
+			writeErr := rejectAndClose(writeOpts, conn, rj, operational)
+			rejection := &RejectionError{Result: rj.Result, Source: rj.Source, Reason: rj.Reason}
+			return nil, errors.Join(rejection, admissionErr, writeErr)
+		}
+	}
+	if decidedIdentity != nil {
+		opts.UserIdentityHandler = decidedIdentity
 	}
 	identityReq, identityResult, err := handleUserIdentity(rq.UserInfo, opts)
 	if err != nil {
@@ -519,12 +843,30 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 			Source: AssociateRJSourceServiceUser,
 			Reason: AssociateRJReasonNoReasonGiven,
 		}
-		notifyAssociationRejected(opts)
-		_ = writeAssociationPDUObserved(opts.Context, conn, rj, operational)
-		_ = conn.Close()
+		_ = rejectAndClose(opts, conn, rj, operational)
 		return nil, err
 	}
-	results, accepted := negotiatePresentationContexts(rq.PresentationContexts, opts)
+	requestedRoles, err := roleSelectionsFromUserInfo(rq.UserInfo)
+	if err != nil {
+		rj := &AssociationRJ{
+			Result: AssociateRJResultPermanent,
+			Source: AssociateRJSourceServiceUser,
+			Reason: AssociateRJReasonNoReasonGiven,
+		}
+		_ = rejectAndClose(opts, conn, rj, operational)
+		return nil, err
+	}
+	requestedCommon, err := commonExtendedNegotiationFromUserInfo(rq.UserInfo)
+	if err != nil {
+		rj := &AssociationRJ{
+			Result: AssociateRJResultPermanent,
+			Source: AssociateRJSourceServiceUser,
+			Reason: AssociateRJReasonNoReasonGiven,
+		}
+		_ = rejectAndClose(opts, conn, rj, operational)
+		return nil, err
+	}
+	results, accepted := negotiatePresentationContextsWithRoles(rq.PresentationContexts, opts, requestedRoles, requestedCommon)
 	outcomes := presentationContextOutcomesFromResults(rq.PresentationContexts, results)
 	if len(accepted) == 0 {
 		rj := &AssociationRJ{
@@ -532,21 +874,17 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 			Source: AssociateRJSourceServiceUser,
 			Reason: AssociateRJReasonNoReasonGiven,
 		}
-		notifyAssociationRejected(opts)
-		_ = writeAssociationPDUObserved(opts.Context, conn, rj, operational)
-		_ = conn.Close()
+		_ = rejectAndClose(opts, conn, rj, operational)
 		return nil, noAcceptedPresentationContextsError(outcomes)
 	}
-	requestedRoles, acceptedRoles, err := negotiateRoleSelections(rq.UserInfo, opts.RoleSelections, accepted)
+	acceptedRoles, err := negotiateRoleSelections(requestedRoles, opts, accepted)
 	if err != nil {
 		rj := &AssociationRJ{
 			Result: AssociateRJResultPermanent,
 			Source: AssociateRJSourceServiceUser,
 			Reason: AssociateRJReasonNoReasonGiven,
 		}
-		notifyAssociationRejected(opts)
-		_ = writeAssociationPDUObserved(opts.Context, conn, rj, operational)
-		_ = conn.Close()
+		_ = rejectAndClose(opts, conn, rj, operational)
 		return nil, err
 	}
 	requestedExtended, acceptedExtended, err := negotiateExtendedNegotiation(rq.UserInfo, opts.ExtendedNegotiationHandler, accepted)
@@ -556,9 +894,7 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 			Source: AssociateRJSourceServiceUser,
 			Reason: AssociateRJReasonNoReasonGiven,
 		}
-		notifyAssociationRejected(opts)
-		_ = writeAssociationPDUObserved(opts.Context, conn, rj, operational)
-		_ = conn.Close()
+		_ = rejectAndClose(opts, conn, rj, operational)
 		return nil, err
 	}
 	requestedAsync, asyncRequested, err := asynchronousOperationsWindowFromUserInfo(rq.UserInfo)
@@ -568,9 +904,7 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 			Source: AssociateRJSourceServiceUser,
 			Reason: AssociateRJReasonNoReasonGiven,
 		}
-		notifyAssociationRejected(opts)
-		_ = writeAssociationPDUObserved(opts.Context, conn, rj, operational)
-		_ = conn.Close()
+		_ = rejectAndClose(opts, conn, rj, operational)
 		return nil, err
 	}
 	var acceptedAsync *AsynchronousOperationsWindow
@@ -627,6 +961,7 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 		AcceptedRoleSelections:                 acceptedRoles,
 		RequestedExtendedNegotiation:           requestedExtended,
 		AcceptedExtendedNegotiation:            acceptedExtended,
+		RequestedCommonExtendedNegotiation:     requestedCommon,
 		RequestedAsynchronousOperationsWindow:  cloneAsynchronousOperationsWindow(requestedAsyncPtr),
 		NegotiatedAsynchronousOperationsWindow: localAsync,
 		AsynchronousOperationsNegotiated:       acceptedAsync != nil,
@@ -637,6 +972,9 @@ func Accept(conn net.Conn, opts AcceptOptions) (*Association, error) {
 		readProgressTimeout:                    opts.ReadProgressTimeout,
 		writeProgressTimeout:                   opts.WriteProgressTimeout,
 		releaseTimeout:                         opts.ReleaseTimeout,
+		artimTimeout:                           artimTimeout(opts.ARTIMTimeout),
+		maxSendPDU:                             resolveMaxSendPDU(opts.MaxSendPDU),
+		maxAssociationPDU:                      resolveMaxAssociationPDU(opts.MaxAssociationPDU),
 	}
 	established = true
 	assoc.Context = associationCtx
@@ -648,14 +986,46 @@ func (a *Association) Send(ctx context.Context, pdu PDU) error {
 	if !a.exclusiveOperationAllowed(ctx) {
 		return ErrAssociationExclusivelyOwned
 	}
-	conn := a.connection()
-	if conn == nil {
-		return net.ErrClosed
-	}
 	if ctx == nil {
 		ctx = a.context()
 	}
+	conn := a.connection()
+	if conn == nil {
+		return closedAssociationError(ctx)
+	}
 	return a.writePDU(ctx, conn, pdu)
+}
+
+// closedAssociationError reports a Send, Receive, WritePDU or ReadPDU on an
+// association whose connection is gone. ctx is the context the I/O would have
+// run under: the caller's, or the association's own when the caller passed
+// none. A context that already ended takes precedence, as it does for a read
+// or write the close interrupts (withConnDeadline): a caller that cancels an
+// operation and then closes the association must see its cancellation,
+// whichever of the two the operation's goroutine notices first.
+func closedAssociationError(ctx context.Context) error {
+	if ctxErr := endedContextError(ctx); ctxErr != nil {
+		return ctxErr
+	}
+	return net.ErrClosed
+}
+
+// endedContextError returns the error of a context that already ended, a
+// deadline as ErrAssociationTimeout, or nil while the context is live. It
+// takes precedence over a transport error, which the end of the context or a
+// close following it may have caused.
+func endedContextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	ctxErr := ctx.Err()
+	if ctxErr == nil {
+		return nil
+	}
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %v", ErrAssociationTimeout, ctxErr)
+	}
+	return ctxErr
 }
 
 // SerializeMessageWrite executes write while holding the association's DIMSE
@@ -700,11 +1070,12 @@ func (a *Association) WritePDU(pdu PDU) error {
 	if !a.exclusiveOperationAllowed(nil) {
 		return ErrAssociationExclusivelyOwned
 	}
+	ctx := a.context()
 	conn := a.connection()
 	if conn == nil {
-		return net.ErrClosed
+		return closedAssociationError(ctx)
 	}
-	return a.writePDU(a.context(), conn, pdu)
+	return a.writePDU(ctx, conn, pdu)
 }
 
 func (a *Association) writePDU(ctx context.Context, conn net.Conn, pdu PDU) error {
@@ -749,12 +1120,12 @@ func (a *Association) Receive(ctx context.Context) (PDU, error) {
 	if !a.exclusiveOperationAllowed(ctx) {
 		return nil, ErrAssociationExclusivelyOwned
 	}
-	conn := a.connection()
-	if conn == nil {
-		return nil, net.ErrClosed
-	}
 	if ctx == nil {
 		ctx = a.context()
+	}
+	conn := a.connection()
+	if conn == nil {
+		return nil, closedAssociationError(ctx)
 	}
 	pdu, err := a.readPDU(ctx, conn)
 	if err != nil {
@@ -772,11 +1143,12 @@ func (a *Association) ReadPDU() (PDU, error) {
 	if !a.exclusiveOperationAllowed(nil) {
 		return nil, ErrAssociationExclusivelyOwned
 	}
+	ctx := a.context()
 	conn := a.connection()
 	if conn == nil {
-		return nil, net.ErrClosed
+		return nil, closedAssociationError(ctx)
 	}
-	pdu, err := a.readPDU(a.context(), conn)
+	pdu, err := a.readPDU(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +1175,7 @@ func (a *Association) readPDU(ctx context.Context, conn net.Conn) (PDU, error) {
 	}
 	pduType := PDUType(a.pduReadBuffer[0])
 	pduLength := binary.BigEndian.Uint32(a.pduReadBuffer[2:PDUHeaderSize])
-	if err := validateReadPDULength(pduType, pduLength, a.MaxPDU); err != nil {
+	if err := validateReadPDULength(pduType, pduLength, a.MaxPDU, resolveMaxAssociationPDU(a.maxAssociationPDU)); err != nil {
 		a.operational.observePDUErrorWithByteCount(telemetry.Inbound, a.pduReadBuffer, int64(len(a.pduReadBuffer)), int64(len(a.pduReadBuffer)-initialLength), err)
 		a.pduReadBuffer = nil
 		return nil, err
@@ -815,7 +1187,7 @@ func (a *Association) readPDU(ctx context.Context, conn net.Conn) (PDU, error) {
 	}
 	encoded := a.pduReadBuffer[:total]
 	a.pduReadBuffer = nil
-	pdu, err := ReadPDU(bytes.NewReader(encoded), a.MaxPDU)
+	pdu, err := parsePDUBody(pduType, encoded[PDUHeaderSize:])
 	if a.operational != nil {
 		if err != nil {
 			a.operational.observePDUErrorWithByteCount(telemetry.Inbound, encoded, int64(len(encoded)), int64(len(encoded)-initialLength), err)
@@ -824,8 +1196,21 @@ func (a *Association) readPDU(ctx context.Context, conn net.Conn) (PDU, error) {
 			a.observeLifecyclePDU(telemetry.Inbound, pdu)
 		}
 	}
+	// P-DATA values own copies of their bytes, so the buffer serves the next
+	// PDU; other PDUs may alias it and leave it to the collector.
+	if pduType == PDUDataTF && cap(encoded) <= maxRetainedPDUReadBuffer {
+		a.pduReadBuffer = encoded[:0]
+	}
 	return pdu, err
 }
+
+// pduReadGrowth bounds how far the read buffer grows ahead of the bytes that
+// actually arrived, so a declared length alone cannot make the reader
+// allocate it; maxRetainedPDUReadBuffer bounds the buffer kept between PDUs.
+const (
+	pduReadGrowth            = 64 << 10
+	maxRetainedPDUReadBuffer = 1<<20 + int(PDUHeaderSize)
+)
 
 func (a *Association) observeLifecyclePDU(direction telemetry.Direction, pdu PDU) {
 	if a == nil {
@@ -866,11 +1251,13 @@ func (a *Association) observeLifecyclePDU(direction telemetry.Direction, pdu PDU
 
 func (a *Association) fillPDUReadBuffer(ctx context.Context, conn net.Conn, target int) error {
 	for len(a.pduReadBuffer) < target {
-		chunkSize := target - len(a.pduReadBuffer)
-		if chunkSize > 32*1024 {
-			chunkSize = 32 * 1024
+		if len(a.pduReadBuffer) == cap(a.pduReadBuffer) {
+			size := len(a.pduReadBuffer) + max(len(a.pduReadBuffer), pduReadGrowth)
+			grown := make([]byte, len(a.pduReadBuffer), min(size, target))
+			copy(grown, a.pduReadBuffer)
+			a.pduReadBuffer = grown
 		}
-		chunk := make([]byte, chunkSize)
+		chunk := a.pduReadBuffer[len(a.pduReadBuffer):min(cap(a.pduReadBuffer), target)]
 		readCtx := ctx
 		cancelRead := func() {}
 		if timeout := a.nextReadTimeout(ctx); timeout > 0 {
@@ -884,7 +1271,7 @@ func (a *Association) fillPDUReadBuffer(ctx context.Context, conn net.Conn, targ
 		})
 		cancelRead()
 		if read > 0 {
-			a.pduReadBuffer = append(a.pduReadBuffer, chunk[:read]...)
+			a.pduReadBuffer = a.pduReadBuffer[:len(a.pduReadBuffer)+read]
 		}
 		if len(a.pduReadBuffer) >= target {
 			return nil
@@ -915,7 +1302,17 @@ func (a *Association) nextReadTimeout(ctx context.Context) time.Duration {
 	if timeout, ok := progressTimeoutFromContext(ctx, readProgressTimeoutKey{}); ok {
 		return timeout
 	}
-	return a.readProgressTimeout
+	if a.readProgressTimeout > 0 {
+		return a.readProgressTimeout
+	}
+	// Without a read-progress timeout, a peer that sends part of a PDU and
+	// then stays silent is still bounded: the idle timeout applies to each
+	// gap inside the PDU, whether or not it was suppressed for the wait
+	// before the first byte.
+	if len(a.pduReadBuffer) != 0 {
+		return a.idleTimeout
+	}
+	return 0
 }
 
 type readProgressTimeoutKey struct{}
@@ -930,6 +1327,11 @@ type suppressIdleTimeoutKey struct{}
 func WithActiveTransfer(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// Idempotent: readers mark every P-DATA of a fragmented message, and a
+	// value layer per PDU made each context lookup walk the whole chain.
+	if activeTransferFromContext(ctx) {
+		return ctx
 	}
 	return context.WithValue(ctx, activeTransferKey{}, true)
 }
@@ -1048,14 +1450,19 @@ func (a *Association) Abort(reason byte) error {
 }
 
 func (a *Association) AbortWithContext(ctx context.Context, reason byte) error {
+	return a.abort(ctx, AbortSourceServiceUser, reason)
+}
+
+// abort sends an A-ABORT and closes after the peer closed or ARTIM expired.
+func (a *Association) abort(ctx context.Context, source, reason byte) error {
 	if !a.exclusiveOperationAllowed(ctx) {
 		return ErrAssociationExclusivelyOwned
 	}
 	if a == nil || a.connection() == nil {
 		return nil
 	}
-	err := a.Send(ctx, &AbortRQ{Source: AbortSourceServiceUser, Reason: reason})
-	closeErr := a.Close()
+	err := a.Send(ctx, &AbortRQ{Source: source, Reason: reason})
+	closeErr := a.closeLingering()
 	if err != nil {
 		return err
 	}
@@ -1228,6 +1635,15 @@ func (a *Association) connection() net.Conn {
 	return a.Conn
 }
 
+// RemoteAddr returns the current transport peer of the association. It
+// returns nil once the connection has been closed.
+func (a *Association) RemoteAddr() net.Addr {
+	if conn := a.connection(); conn != nil {
+		return conn.RemoteAddr()
+	}
+	return nil
+}
+
 func (a *Association) context() context.Context {
 	if a == nil || a.Context == nil {
 		return context.Background()
@@ -1241,7 +1657,7 @@ func negotiateSCU(conn net.Conn, opts DialOptions, operational *operationalState
 		return nil, err
 	}
 
-	pdu, err := readAssociationPDUObserved(opts.Context, conn, opts.MaxPDU, operational)
+	pdu, err := readAssociationPDUObserved(opts.Context, conn, opts.MaxPDU, opts.MaxAssociationPDU, operational)
 	if err != nil {
 		return nil, err
 	}
@@ -1281,9 +1697,11 @@ func negotiateSCU(conn net.Conn, opts DialOptions, operational *operationalState
 			localAsync = acceptedAsync
 		}
 		return &Association{
-			Conn:                                   conn,
-			CalledAETitle:                          resp.CalledAETitle,
-			CallingAETitle:                         resp.CallingAETitle,
+			Conn: conn,
+			// PS3.8 9.3.3: the A-ASSOCIATE-AC AE title fields echo the
+			// request and are not tested, so the requestor keeps its own.
+			CalledAETitle:                          rq.CalledAETitle,
+			CallingAETitle:                         rq.CallingAETitle,
 			Contexts:                               append([]PresentationContext(nil), rq.PresentationContexts...),
 			AcceptedContexts:                       accepted,
 			ContextOutcomes:                        outcomes,
@@ -1297,6 +1715,7 @@ func negotiateSCU(conn net.Conn, opts DialOptions, operational *operationalState
 			AcceptedRoleSelections:                 acceptedRoles,
 			RequestedExtendedNegotiation:           append([]SopClassExtendedNegotiationItem(nil), opts.ExtendedNegotiation...),
 			AcceptedExtendedNegotiation:            acceptedExtended,
+			RequestedCommonExtendedNegotiation:     cloneSopClassCommonExtendedNegotiationItems(opts.CommonExtendedNegotiation),
 			RequestedAsynchronousOperationsWindow:  cloneAsynchronousOperationsWindow(opts.AsynchronousOperationsWindow),
 			NegotiatedAsynchronousOperationsWindow: localAsync,
 			AsynchronousOperationsNegotiated:       asyncAccepted,
@@ -1307,13 +1726,16 @@ func negotiateSCU(conn net.Conn, opts DialOptions, operational *operationalState
 			readProgressTimeout:                    opts.ReadProgressTimeout,
 			writeProgressTimeout:                   opts.WriteProgressTimeout,
 			releaseTimeout:                         opts.ReleaseTimeout,
+			artimTimeout:                           artimTimeout(opts.ARTIMTimeout),
+			maxSendPDU:                             resolveMaxSendPDU(opts.MaxSendPDU),
+			maxAssociationPDU:                      resolveMaxAssociationPDU(opts.MaxAssociationPDU),
 		}, nil
 	case *AssociationRJ:
 		return nil, &RejectionError{Result: resp.Result, Source: resp.Source, Reason: resp.Reason}
 	case *AbortRQ:
 		return nil, &AbortError{Source: resp.Source, Reason: resp.Reason}
 	default:
-		return nil, fmt.Errorf("%w: got %s while waiting for A-ASSOCIATE-AC", ErrUnexpectedPDU, pduName(pdu))
+		return nil, UnexpectedPDUError(pdu, "waiting for A-ASSOCIATE-AC")
 	}
 }
 
@@ -1372,6 +1794,73 @@ func notifyAssociationRejected(opts AcceptOptions) {
 	}
 }
 
+// TLSHandshakeFailure describes a connection an acceptor with TLS closed
+// because the handshake did not complete: a peer that speaks no TLS, offers
+// no common protocol version or cipher suite, or presents no acceptable
+// certificate.
+type TLSHandshakeFailure struct {
+	// RemoteAddr is the peer's transport address, nil when unknown.
+	RemoteAddr net.Addr
+	// NotTLS reports a first record that is not a TLS handshake, as a
+	// plain-text A-ASSOCIATE-RQ is.
+	NotTLS bool
+	// Err is the handshake error. It can quote bytes the peer sent; log it
+	// only after sanitizing.
+	Err error
+}
+
+func notifyTLSHandshakeFailure(opts AcceptOptions, conn net.Conn, err error) {
+	if opts.OnTLSHandshakeFailure == nil {
+		return
+	}
+	failure := TLSHandshakeFailure{Err: err}
+	if conn != nil {
+		failure.RemoteAddr = conn.RemoteAddr()
+	}
+	var header tls.RecordHeaderError
+	failure.NotTLS = errors.As(err, &header)
+	func() {
+		defer func() { _ = recover() }()
+		opts.OnTLSHandshakeFailure(failure)
+	}()
+}
+
+// RejectedAssociation describes one A-ASSOCIATE-RJ an acceptor sends.
+type RejectedAssociation struct {
+	// RemoteAddr is the peer's transport address, nil when unknown.
+	RemoteAddr net.Addr
+	// CallingAETitle and CalledAETitle are the proposed titles with padding
+	// removed. A title that is not a valid AE title (PS3.5 Table 6.2-1) is
+	// reported as empty, so a record of the rejection never carries control
+	// characters chosen by the peer.
+	CallingAETitle string
+	CalledAETitle  string
+	// Rejection is the result, source and reason sent to the peer.
+	Rejection AssociationRJ
+}
+
+func notifyAssociationRejection(opts AcceptOptions, conn net.Conn, rj *AssociationRJ) {
+	if opts.OnAssociationRejection == nil || rj == nil {
+		return
+	}
+	rejected := RejectedAssociation{Rejection: *rj}
+	if conn != nil {
+		rejected.RemoteAddr = conn.RemoteAddr()
+	}
+	if rq := opts.rejectedRequest; rq != nil {
+		if ValidateAETitle(rq.CallingAETitle) == nil {
+			rejected.CallingAETitle = NormalizeAETitle(rq.CallingAETitle)
+		}
+		if ValidateAETitle(rq.CalledAETitle) == nil {
+			rejected.CalledAETitle = NormalizeAETitle(rq.CalledAETitle)
+		}
+	}
+	func() {
+		defer func() { _ = recover() }()
+		opts.OnAssociationRejection(rejected)
+	}()
+}
+
 func rejectAssociationRequest(rq *AssociationRQ, opts AcceptOptions) (AssociationRJ, bool) {
 	if rq.ProtocolVersion != DefaultProtocolVersion {
 		return AssociationRJ{
@@ -1387,7 +1876,16 @@ func rejectAssociationRequest(rq *AssociationRQ, opts AcceptOptions) (Associatio
 			Reason: AssociateRJReasonApplicationContextNameNotSupported,
 		}, true
 	}
-	if opts.RequireMatchingCalledAE && rq.CalledAETitle != opts.AETitle {
+	// PS3.5 Table 6.2-1 excludes control characters and backslash from AE
+	// titles and forbids an all-space value; such a title is refused before
+	// it reaches admission, comparison or any log.
+	if ValidateAETitle(rq.CallingAETitle) != nil {
+		return *RejectCallingAETitle(), true
+	}
+	if ValidateAETitle(rq.CalledAETitle) != nil {
+		return *RejectCalledAETitle(), true
+	}
+	if opts.RequireMatchingCalledAE && !EqualAETitles(rq.CalledAETitle, opts.AETitle) {
 		return AssociationRJ{
 			Result: AssociateRJResultPermanent,
 			Source: AssociateRJSourceServiceUser,
@@ -1397,18 +1895,58 @@ func rejectAssociationRequest(rq *AssociationRQ, opts AcceptOptions) (Associatio
 	return AssociationRJ{}, false
 }
 
+// invalidRequestAETitle explains an A-ASSOCIATE-RQ AE title that
+// rejectAssociationRequest refused; nil when both titles are valid.
+func invalidRequestAETitle(rq *AssociationRQ) error {
+	if err := ValidateAETitle(rq.CallingAETitle); err != nil {
+		return fmt.Errorf("calling AE title: %w", err)
+	}
+	if err := ValidateAETitle(rq.CalledAETitle); err != nil {
+		return fmt.Errorf("called AE title: %w", err)
+	}
+	return nil
+}
+
 func negotiatePresentationContexts(requested []PresentationContextProposed, opts AcceptOptions) ([]PresentationContextResult, []AcceptedContext) {
+	return negotiatePresentationContextsWithRoles(requested, opts, nil, nil)
+}
+
+// negotiatePresentationContextsWithRoles decides each proposed context from
+// the global settings or the abstract syntax's PresentationContextRule; a
+// rule's role policy rejects the context (user-rejection) when no role fits
+// the requestor's proposal. An abstract syntax that is not supported is
+// accepted under the settings of a Related General SOP Class from common when
+// AcceptOptions.CommonExtendedNegotiationHandler agrees.
+func negotiatePresentationContextsWithRoles(requested []PresentationContextProposed, opts AcceptOptions, requestedRoles []RoleSelectionItem, common []SopClassCommonExtendedNegotiationItem) ([]PresentationContextResult, []AcceptedContext) {
 	results := make([]PresentationContextResult, 0, len(requested))
 	accepted := make([]AcceptedContext, 0, len(requested))
 	for _, pc := range requested {
 		transferSyntax := ImplicitVRLittleEndian
 		result := PresentationContextAcceptance
 
+		settingsSOPClass := pc.AbstractSyntaxUID
+		relatedGeneral := ""
 		abstractSupported := opts.AcceptAnyAbstractSyntax || containsString(opts.SupportedAbstractSyntaxes, pc.AbstractSyntaxUID)
+		if _, ruled := presentationContextRule(opts, pc.AbstractSyntaxUID); ruled {
+			abstractSupported = true
+		}
+		if !abstractSupported {
+			if general, ok := relatedGeneralSOPClassFor(pc.AbstractSyntaxUID, common, opts); ok {
+				settingsSOPClass, relatedGeneral, abstractSupported = general, general, true
+			}
+		}
+		rule, ruled := presentationContextRule(opts, settingsSOPClass)
+		supportedTransferSyntaxes := opts.SupportedTransferSyntaxes
+		if ruled && len(rule.TransferSyntaxes) > 0 {
+			supportedTransferSyntaxes = rule.TransferSyntaxes
+		}
 		if !abstractSupported {
 			result = PresentationContextAbstractSyntaxNotSupported
-		} else if ts, ok := chooseServerTransferSyntax(pc.TransferSyntaxUIDs, opts.SupportedTransferSyntaxes); ok {
+		} else if ts, ok := chooseServerTransferSyntax(pc.TransferSyntaxUIDs, supportedTransferSyntaxes, opts.PreferProposedTransferSyntaxOrder); ok {
 			transferSyntax = ts
+			if ruled && rule.Roles != nil && !ruleRoleAccepts(*rule.Roles, requestedRoleFor(requestedRoles, pc.AbstractSyntaxUID), opts.AlwaysAcceptDefaultRole) {
+				result = PresentationContextUserRejection
+			}
 		} else {
 			result = PresentationContextTransferSyntaxesNotSupported
 		}
@@ -1420,21 +1958,30 @@ func negotiatePresentationContexts(requested []PresentationContextProposed, opts
 		})
 		if result == PresentationContextAcceptance {
 			accepted = append(accepted, AcceptedContext{
-				ID:                pc.ID,
-				AbstractSyntaxUID: pc.AbstractSyntaxUID,
-				TransferSyntaxUID: transferSyntax,
+				ID:                        pc.ID,
+				AbstractSyntaxUID:         pc.AbstractSyntaxUID,
+				TransferSyntaxUID:         transferSyntax,
+				RelatedGeneralSOPClassUID: relatedGeneral,
 			})
 		}
 	}
 	return results, accepted
 }
 
-func chooseServerTransferSyntax(requested, supported []string) (string, bool) {
+func chooseServerTransferSyntax(requested, supported []string, proposerOrder bool) (string, bool) {
 	if len(requested) == 0 {
 		return "", false
 	}
 	if len(supported) == 0 {
 		return requested[0], true
+	}
+	if proposerOrder {
+		for _, requestedTS := range requested {
+			if containsString(supported, requestedTS) {
+				return requestedTS, true
+			}
+		}
+		return "", false
 	}
 	for _, supportedTS := range supported {
 		if containsString(requested, supportedTS) {
@@ -1449,8 +1996,8 @@ func buildAssociateRQ(opts DialOptions) AssociationRQ {
 	proposed, _ := proposedContexts(opts.Contexts)
 	return AssociationRQ{
 		ProtocolVersion:        opts.ProtocolVersion,
-		CalledAETitle:          opts.CalledAETitle,
-		CallingAETitle:         opts.CallingAETitle,
+		CalledAETitle:          NormalizeAETitle(opts.CalledAETitle),
+		CallingAETitle:         NormalizeAETitle(opts.CallingAETitle),
 		ApplicationContextName: opts.ApplicationContextName,
 		PresentationContexts:   proposed,
 		UserInfo: dialUserInfo(
@@ -1460,6 +2007,7 @@ func buildAssociateRQ(opts DialOptions) AssociationRQ {
 			opts.UserIdentity,
 			opts.RoleSelections,
 			opts.ExtendedNegotiation,
+			opts.CommonExtendedNegotiation,
 			opts.AsynchronousOperationsWindow,
 		),
 	}
@@ -1470,11 +2018,23 @@ func validateDialOptions(opts DialOptions) error {
 	if err := validateOperationalTimeouts(opts.NegotiationTimeout, opts.IdleTimeout, opts.ReadProgressTimeout, opts.WriteProgressTimeout, opts.ReleaseTimeout); err != nil {
 		return err
 	}
+	if err := opts.Transport.validate(opts.SocketBuffers); err != nil {
+		return err
+	}
+	if err := opts.SocketBuffers.validate(); err != nil {
+		return err
+	}
 	if len(opts.CalledAETitle) > MaxAETitleLength {
 		return fmt.Errorf("%w: called AE title length %d exceeds %d", ErrInvalidAEtitle, len(opts.CalledAETitle), MaxAETitleLength)
 	}
 	if len(opts.CallingAETitle) > MaxAETitleLength {
 		return fmt.Errorf("%w: calling AE title length %d exceeds %d", ErrInvalidAEtitle, len(opts.CallingAETitle), MaxAETitleLength)
+	}
+	if err := ValidateAETitle(opts.CalledAETitle); err != nil {
+		return fmt.Errorf("called AE title: %w", err)
+	}
+	if err := ValidateAETitle(opts.CallingAETitle); err != nil {
+		return fmt.Errorf("calling AE title: %w", err)
 	}
 	if opts.UserIdentity != nil {
 		if err := validateUserIdentityRequest(*opts.UserIdentity); err != nil {
@@ -1505,7 +2065,23 @@ func validateDialOptions(opts DialOptions) error {
 			return fmt.Errorf("%w: extended negotiation SOP class %q was not proposed", ErrInvalidUserItem, item.SopClassUID)
 		}
 	}
+	if _, err := commonExtendedNegotiationFromUserInfo(commonExtendedNegotiationUserItems(opts.CommonExtendedNegotiation)); err != nil {
+		return err
+	}
+	for _, item := range opts.CommonExtendedNegotiation {
+		if _, ok := proposedSOPClasses[item.SopClassUID]; !ok {
+			return fmt.Errorf("%w: common extended negotiation SOP class %q was not proposed", ErrInvalidUserItem, item.SopClassUID)
+		}
+	}
 	return nil
+}
+
+func commonExtendedNegotiationUserItems(items []SopClassCommonExtendedNegotiationItem) []UserVariableItem {
+	out := make([]UserVariableItem, len(items))
+	for i, item := range items {
+		out[i] = item
+	}
+	return out
 }
 
 func validateOperationalTimeouts(negotiation, idle, readProgress, writeProgress, release time.Duration) error {
@@ -1575,7 +2151,7 @@ func implementationUserInfo(maxPDU uint32, implementationClassUID, implementatio
 	}
 }
 
-func dialUserInfo(maxPDU uint32, implementationClassUID, implementationVersionName string, identity *UserIdentityRequest, roles []RoleSelectionItem, extended []SopClassExtendedNegotiationItem, asynchronous *AsynchronousOperationsWindow) []UserVariableItem {
+func dialUserInfo(maxPDU uint32, implementationClassUID, implementationVersionName string, identity *UserIdentityRequest, roles []RoleSelectionItem, extended []SopClassExtendedNegotiationItem, common []SopClassCommonExtendedNegotiationItem, asynchronous *AsynchronousOperationsWindow) []UserVariableItem {
 	items := implementationUserInfo(maxPDU, implementationClassUID, implementationVersionName)
 	if asynchronous != nil {
 		items = append(items, *asynchronous)
@@ -1585,6 +2161,9 @@ func dialUserInfo(maxPDU uint32, implementationClassUID, implementationVersionNa
 			SopClassUID: item.SopClassUID,
 			Data:        append([]byte(nil), item.Data...),
 		})
+	}
+	for _, item := range common {
+		items = append(items, cloneSopClassCommonExtendedNegotiationItem(item))
 	}
 	for _, role := range roles {
 		items = append(items, role)
@@ -1724,28 +2303,41 @@ func handleUserIdentity(items []UserVariableItem, opts AcceptOptions) (*UserIden
 	}
 }
 
-func negotiateRoleSelections(items []UserVariableItem, supported []RoleSelectionItem, acceptedContexts []AcceptedContext) ([]RoleSelectionItem, []RoleSelectionItem, error) {
-	requested, err := roleSelectionsFromUserInfo(items)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(requested) == 0 || len(supported) == 0 || len(acceptedContexts) == 0 {
-		return requested, nil, nil
-	}
-	acceptedSOPClasses := acceptedSOPClassSet(acceptedContexts)
-	supportedBySOP := make(map[string]RoleSelectionItem, len(supported))
-	for _, role := range supported {
+// negotiateRoleSelections builds the role selection reply for the accepted
+// contexts. A PresentationContextRule role policy replies with the roles both
+// sides allow (its context was rejected when none fit). The legacy
+// RoleSelections list replies with the intersection and omits the item when
+// it is empty, so the requestor keeps its default roles: an SCP-only entry
+// that enables C-GET must not deny plain C-STORE senders their SCU role.
+func negotiateRoleSelections(requested []RoleSelectionItem, opts AcceptOptions, acceptedContexts []AcceptedContext) ([]RoleSelectionItem, error) {
+	supportedBySOP := make(map[string]RoleSelectionItem, len(opts.RoleSelections))
+	for _, role := range opts.RoleSelections {
 		if err := validateRoleSelectionItem(role); err != nil {
-			return requested, nil, err
+			return nil, err
 		}
 		supportedBySOP[role.SopClassUID] = role
 	}
+	if len(requested) == 0 || len(acceptedContexts) == 0 {
+		return nil, nil
+	}
+	acceptedSOPClasses := acceptedSOPClassSet(acceptedContexts)
 	accepted := make([]RoleSelectionItem, 0, len(requested))
 	for _, req := range requested {
 		if _, ok := acceptedSOPClasses[req.SopClassUID]; !ok {
 			continue
 		}
-		support, ok := supportedBySOP[req.SopClassUID]
+		// A context accepted as a Related General SOP Class follows that
+		// class's role policy.
+		settingsSOPClass := relatedGeneralSOPClassOf(acceptedContexts, req.SopClassUID)
+		if rule, ok := presentationContextRule(opts, settingsSOPClass); ok && rule.Roles != nil {
+			accepted = append(accepted, RoleSelectionItem{
+				SopClassUID: req.SopClassUID,
+				SCURole:     req.SCURole && rule.Roles.SCU,
+				SCPRole:     req.SCPRole && rule.Roles.SCP,
+			})
+			continue
+		}
+		support, ok := supportedBySOP[settingsSOPClass]
 		if !ok {
 			continue
 		}
@@ -1758,7 +2350,7 @@ func negotiateRoleSelections(items []UserVariableItem, supported []RoleSelection
 			accepted = append(accepted, role)
 		}
 	}
-	return requested, accepted, nil
+	return accepted, nil
 }
 
 func negotiateExtendedNegotiation(items []UserVariableItem, handler ExtendedNegotiationHandler, acceptedContexts []AcceptedContext) ([]SopClassExtendedNegotiationItem, []SopClassExtendedNegotiationItem, error) {
@@ -1794,6 +2386,17 @@ func negotiateExtendedNegotiation(items []UserVariableItem, handler ExtendedNego
 		}
 	}
 	return requested, accepted, nil
+}
+
+// relatedGeneralSOPClassOf returns the Related General SOP Class an accepted
+// context for sopClassUID was taken as, or sopClassUID itself.
+func relatedGeneralSOPClassOf(contexts []AcceptedContext, sopClassUID string) string {
+	for _, context := range contexts {
+		if context.AbstractSyntaxUID == sopClassUID && context.RelatedGeneralSOPClassUID != "" {
+			return context.RelatedGeneralSOPClassUID
+		}
+	}
+	return sopClassUID
 }
 
 func acceptedSOPClassSet(contexts []AcceptedContext) map[string]struct{} {
@@ -1857,9 +2460,14 @@ func acceptedExtendedNegotiationFromUserInfo(items []UserVariableItem, proposed 
 	return accepted, nil
 }
 
+// roleSelectionsFromUserInfo returns one role selection per SOP Class. PS3.7
+// D.3.3.4 defines one item per SOP Class, but DCMTK-based peers such as
+// Orthanc repeat the same item for every presentation context of a class.
+// An identical repeat carries no new information and is ignored; repeats that
+// disagree remain a protocol error.
 func roleSelectionsFromUserInfo(items []UserVariableItem) ([]RoleSelectionItem, error) {
 	var roles []RoleSelectionItem
-	seen := make(map[string]struct{})
+	seen := make(map[string]RoleSelectionItem)
 	for _, item := range items {
 		role, ok := asRoleSelectionItem(item)
 		if !ok {
@@ -1868,10 +2476,13 @@ func roleSelectionsFromUserInfo(items []UserVariableItem) ([]RoleSelectionItem, 
 		if err := validateRoleSelectionItem(role); err != nil {
 			return nil, err
 		}
-		if _, ok := seen[role.SopClassUID]; ok {
-			return nil, fmt.Errorf("%w: duplicate role selection for SOP class %q", ErrInvalidUserItem, role.SopClassUID)
+		if previous, ok := seen[role.SopClassUID]; ok {
+			if previous.SCURole != role.SCURole || previous.SCPRole != role.SCPRole {
+				return nil, fmt.Errorf("%w: conflicting role selections for SOP class %q", ErrInvalidUserItem, role.SopClassUID)
+			}
+			continue
 		}
-		seen[role.SopClassUID] = struct{}{}
+		seen[role.SopClassUID] = role
 		roles = append(roles, role)
 	}
 	return roles, nil
@@ -2107,11 +2718,11 @@ func normalizeAcceptOptions(opts AcceptOptions) AcceptOptions {
 	return opts
 }
 
-func readAssociationPDU(ctx context.Context, conn net.Conn, maxPDU uint32) (PDU, error) {
+func readAssociationPDU(ctx context.Context, conn net.Conn, maxPDU, maxAssociationPDU uint32) (PDU, error) {
 	var pdu PDU
 	err := withConnReadDeadline(ctx, conn, func() error {
 		var err error
-		pdu, err = ReadPDU(conn, maxPDU)
+		pdu, err = ReadPDUWithAssociationLimit(conn, maxPDU, maxAssociationPDU)
 		return err
 	})
 	if err != nil {
@@ -2150,33 +2761,76 @@ func (w *progressWriter) Write(p []byte) (int, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// One watcher per call turns cancellation into an immediate deadline; each
+	// chunk then only moves the deadline, instead of paying for a context and
+	// a goroutine per 32 KiB. The mutex keeps a chunk from pushing the
+	// deadline past a cancellation that already fired.
+	var mu sync.Mutex
+	canceled := false
+	if ctx.Done() != nil {
+		fired := make(chan struct{})
+		stop := context.AfterFunc(ctx, func() {
+			defer close(fired)
+			mu.Lock()
+			canceled = true
+			_ = w.conn.SetWriteDeadline(time.Now())
+			mu.Unlock()
+		})
+		defer func() {
+			if !stop() {
+				<-fired
+			}
+			_ = w.conn.SetWriteDeadline(time.Time{})
+		}()
+	} else {
+		defer func() { _ = w.conn.SetWriteDeadline(time.Time{}) }()
+	}
 	total := 0
+	var err error
 	for len(p) > 0 {
 		chunk := p
 		if len(chunk) > 32*1024 {
 			chunk = chunk[:32*1024]
 		}
-		writeCtx, cancelWrite := context.WithTimeout(ctx, w.timeout)
+		deadline := time.Now().Add(w.timeout)
+		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+			deadline = ctxDeadline
+		}
+		mu.Lock()
+		if !canceled {
+			err = w.conn.SetWriteDeadline(deadline)
+		}
+		mu.Unlock()
+		if err != nil {
+			break
+		}
 		written := 0
-		err := withConnWriteDeadline(writeCtx, w.conn, func() error {
-			var writeErr error
-			written, writeErr = w.conn.Write(chunk)
-			return writeErr
-		})
-		cancelWrite()
+		written, err = w.conn.Write(chunk)
 		total += written
 		p = p[written:]
 		if err != nil {
-			return total, err
+			break
 		}
 		if written == 0 {
 			return total, io.ErrNoProgress
 		}
 	}
-	return total, nil
+	if err == nil {
+		return total, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			return total, fmt.Errorf("%w: %v", ErrAssociationTimeout, ctxErr)
+		}
+		return total, ctxErr
+	}
+	return total, associationContextError(ctx, err)
 }
 
-func clientTLSConn(ctx context.Context, conn net.Conn, address string, config *tls.Config) (net.Conn, error) {
+// clientTLSConn completes the TLS handshake of an association requestor. The
+// returned watch tells a TLS 1.3 server's refusal of the client certificate
+// from another closed connection (see TLSClientCertificateRefusedError).
+func clientTLSConn(ctx context.Context, conn net.Conn, address string, config *tls.Config) (net.Conn, *tlsClientAuthWatch, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2184,11 +2838,15 @@ func clientTLSConn(ctx context.Context, conn net.Conn, address string, config *t
 	if tlsConfig.ServerName == "" && !tlsConfig.InsecureSkipVerify {
 		tlsConfig.ServerName = tlsServerName(address)
 	}
-	tlsConn := tls.Client(conn, tlsConfig)
+	watch := &tlsClientAuthWatch{raw: newWatchedConn(conn)}
+	watch.watchClientAuth(tlsConfig)
+	acceptSessionTickets(tlsConfig)
+	tlsConn := tls.Client(watch.raw, tlsConfig)
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		return nil, fmt.Errorf("dicom ul: TLS client handshake: %w", associationContextError(ctx, err))
+		return nil, nil, fmt.Errorf("dicom ul: TLS client handshake: %w", associationContextError(ctx, err))
 	}
-	return tlsConn, nil
+	watch.settle(tlsConn)
+	return tlsConn, watch, nil
 }
 
 func serverTLSConn(ctx context.Context, conn net.Conn, config *tls.Config) (net.Conn, error) {
@@ -2226,34 +2884,37 @@ func withConnDeadline(ctx context.Context, setDeadline connDeadlineSetter, fn fu
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := setDeadline(deadline); err != nil {
+			// A close that followed the end of the context fails this
+			// call before the I/O starts; the context still decides.
+			if ctxErr := endedContextError(ctx); ctxErr != nil {
+				return ctxErr
+			}
 			return err
 		}
 		defer func() { _ = setDeadline(time.Time{}) }()
 	}
 	if ctx.Done() != nil {
-		cancelWatch := make(chan struct{})
-		watchDone := make(chan struct{})
-		go func() {
-			defer close(watchDone)
-			select {
-			case <-ctx.Done():
-				_ = setDeadline(time.Now())
-			case <-cancelWatch:
-			}
-		}()
+		// context.AfterFunc registers a callback instead of starting a
+		// watcher goroutine per call: every PDU read and write passes here,
+		// and a goroutine each cost about a millisecond per PDU.
+		fired := make(chan struct{})
+		stop := context.AfterFunc(ctx, func() {
+			defer close(fired)
+			_ = setDeadline(time.Now())
+		})
 		defer func() {
-			close(cancelWatch)
-			<-watchDone
+			if !stop() {
+				<-fired
+			}
 			_ = setDeadline(time.Time{})
 		}()
 	}
 
 	err := fn()
-	if ctxErr := ctx.Err(); ctxErr != nil && err != nil {
-		if errors.Is(ctxErr, context.DeadlineExceeded) {
-			return fmt.Errorf("%w: %v", ErrAssociationTimeout, ctxErr)
+	if err != nil {
+		if ctxErr := endedContextError(ctx); ctxErr != nil {
+			return ctxErr
 		}
-		return ctxErr
 	}
 	return associationContextError(ctx, err)
 }

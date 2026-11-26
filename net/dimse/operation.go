@@ -171,7 +171,7 @@ func applyOperationErrorPolicy(assoc *ul.Association, policy OperationErrorPolic
 			return fmt.Errorf("%w; release association failed: %v", err, releaseErr)
 		}
 	case OperationErrorPolicyAbort:
-		if abortErr := assoc.AbortWithContext(cleanupCtx, ul.AbortReasonNotSpecified); abortErr != nil {
+		if abortErr := assoc.AbortForError(cleanupCtx, err); abortErr != nil {
 			return fmt.Errorf("%w; abort association failed: %v", err, abortErr)
 		}
 	}

@@ -52,7 +52,9 @@ const (
 
 // EndpointPolicy centralizes the only supported disclosure modes for AE titles
 // and network addresses. The zero value omits both. Plaintext requires explicit
-// selection; HMAC produces stable correlation without retaining the source.
+// selection and passes the value through EscapePeerString, so a peer-chosen
+// control character never reaches an observer verbatim; HMAC produces stable
+// correlation without retaining the source and hashes the unescaped value.
 type EndpointPolicy struct {
 	AETitles  EndpointMode
 	Addresses EndpointMode
@@ -85,7 +87,7 @@ func (p EndpointPolicy) transform(mode EndpointMode, domain, value string) strin
 		return ""
 	}
 	if mode == EndpointPlaintext {
-		return value
+		return EscapePeerString(value)
 	}
 	if mode != EndpointHMACSHA256 || len(p.HMACKey) == 0 {
 		return ""

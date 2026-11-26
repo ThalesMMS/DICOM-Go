@@ -768,7 +768,7 @@ func TestReadPDUAllowsAssociationRequestAbovePDataMax(t *testing.T) {
 func TestReadPDURejectsAssociationRequestAboveAssociationReadLimit(t *testing.T) {
 	var header [PDUHeaderSize]byte
 	header[0] = byte(PDUAssociateRQ)
-	binary.BigEndian.PutUint32(header[2:], maxAssociationPDU+1)
+	binary.BigEndian.PutUint32(header[2:], DefaultMaxAssociationPDU+1)
 
 	_, err := ReadPDU(bytes.NewReader(header[:]), MinimumPDUSize)
 	if !errors.Is(err, ErrPDUTooLarge) {
@@ -954,9 +954,23 @@ func TestRejectsMalformedFields(t *testing.T) {
 			want: ErrInvalidAEtitle,
 		},
 		{
-			name: "even presentation context id",
+			// The library proposes only odd IDs (PS3.8 9.3.2.2); even IDs
+			// are tolerated only when a peer chose them.
+			name: "even proposed presentation context id",
+			pdu: AssociationRQ{
+				ProtocolVersion: DefaultProtocolVersion, CalledAETitle: "SCP", CallingAETitle: "SCU",
+				ApplicationContextName: ApplicationContextName,
+				PresentationContexts: []PresentationContextProposed{
+					{ID: 2, AbstractSyntaxUID: "1.2.3", TransferSyntaxUIDs: []string{ImplicitVRLittleEndian}},
+				},
+				UserInfo: []UserVariableItem{MaxLengthItem{Value: 4096}},
+			},
+			want: ErrInvalidPCID,
+		},
+		{
+			name: "zero P-DATA presentation context id",
 			pdu: PDataTF{Values: []PDataValue{
-				{PresentationContextID: 2, IsCommand: true, IsLast: true, Data: []byte{1}},
+				{PresentationContextID: 0, IsCommand: true, IsLast: true, Data: []byte{1}},
 			}},
 			want: ErrInvalidPCID,
 		},

@@ -48,13 +48,13 @@ func FuzzDICOMwebMetadataReferences(f *testing.F) {
 		if len(data) > wadoFuzzMaxInputBytes {
 			t.Skip()
 		}
-		refs, err := instanceRefsFromMetadata(data, "9.8.7", "9.8.7.6")
+		refs, err := instanceRefsFromMetadata(data, InstanceRef{StudyInstanceUID: "1.2.3", SeriesInstanceUID: "1.2.3.4"})
 		if err != nil {
 			_ = err.Error()
 			return
 		}
 		for _, ref := range refs {
-			if ref.StudyInstanceUID == "" || ref.SeriesInstanceUID == "" || ref.SOPInstanceUID == "" {
+			if ref.StudyInstanceUID != "1.2.3" || ref.SeriesInstanceUID != "1.2.3.4" || ref.SOPInstanceUID == "" {
 				t.Fatalf("successful metadata parse returned an incomplete reference: %#v", ref)
 			}
 		}

@@ -29,6 +29,11 @@ type NormalizedOperationOptions struct {
 	// MaxResponseDataSetBytes bounds a returned Attribute List, Action Reply, or
 	// Event Reply. Zero uses MaxNormalizedDataSetBytes.
 	MaxResponseDataSetBytes int64
+	// EventReports handles bounded N-EVENT-REPORT requests interleaved while
+	// awaiting this operation's response. Nil preserves the unexpected-command
+	// error policy. A non-nil configuration with no handler consumes and refuses
+	// events. It does not enable a background reader.
+	EventReports *NormalizedEventReportOptions
 }
 
 // NormalizedExchangeInfo describes the presentation context used by an
@@ -37,6 +42,9 @@ type NormalizedExchangeInfo struct {
 	PresentationContext ul.AcceptedContext
 	TransferSyntax      transfer.Syntax
 	DataSet             *object.Object
+	// EventReports records acknowledged interleaved events without retaining
+	// their datasets. Event failures do not change the original DIMSE outcome.
+	EventReports []NormalizedEventReportOutcome
 }
 
 type NormalizedEventReportResult struct {
@@ -350,6 +358,10 @@ func (c *NormalizedClient) exchange(options NormalizedOperationOptions, request 
 	if err := ctx.Err(); err != nil {
 		return result, newOperationError(request.service, err, false)
 	}
+	events, err := newNormalizedEventReportState(options.EventReports)
+	if err != nil {
+		return result, newOperationError(request.service, err, false)
+	}
 
 	releaseOperation, err := beginAssociationOperation(c.Assoc)
 	if err != nil {
@@ -364,24 +376,36 @@ func (c *NormalizedClient) exchange(options NormalizedOperationOptions, request 
 	result.info.PresentationContext = pc
 	result.info.TransferSyntax = syntax
 
-	if err := SendCommandSetWithContext(ctx, c.Assoc, pc.ID, request.commandSet); err != nil {
+	if err := sendMessageDataSet(ctx, c.Assoc, pc.ID, request.commandSet, request.dataSet, syntax); err != nil {
 		return result, c.normalizedOperationError(options, request.service, err)
-	}
-	if request.dataSet != nil {
-		if err := SendDataSetWithContext(ctx, c.Assoc, pc.ID, request.dataSet, syntax); err != nil {
-			return result, c.normalizedOperationError(options, request.service, err)
-		}
 	}
 
 	responseCtx, responseCancel := operationResponseContext(ctx, options.ResponseTimeout)
 	defer responseCancel()
-	command, err := receiveCommandSetWithContext(responseCtx, c.Assoc, pc.ID)
-	if err != nil {
-		return result, c.normalizedOperationError(options, request.service, err)
-	}
-	field, err := CommandUint16(command, CommandField)
-	if err != nil {
-		return result, c.normalizedOperationError(options, request.service, err)
+	var command *object.Object
+	var field uint16
+	for {
+		responsePCID, next, receiveErr := ReceiveCommandSetAnyWithContext(responseCtx, c.Assoc)
+		if receiveErr != nil {
+			return result, c.normalizedOperationError(options, request.service, receiveErr)
+		}
+		field, err = CommandUint16(next, CommandField)
+		if err != nil {
+			return result, c.normalizedOperationError(options, request.service, err)
+		}
+		if field == NEventReportRQ && events != nil {
+			outcome, eventErr := events.receiveAndRespond(responseCtx, c.Assoc, responsePCID, next)
+			if eventErr != nil {
+				return result, c.normalizedOperationError(options, request.service, eventErr)
+			}
+			result.info.EventReports = append(result.info.EventReports, outcome)
+			continue
+		}
+		if responsePCID != pc.ID {
+			return result, c.normalizedOperationError(options, request.service, ErrPresentationContextMismatch)
+		}
+		command = next
+		break
 	}
 	if field != request.responseCommandField {
 		err = fmt.Errorf("dicom dimse: %s response command field 0x%04X, want 0x%04X", request.service, field, request.responseCommandField)

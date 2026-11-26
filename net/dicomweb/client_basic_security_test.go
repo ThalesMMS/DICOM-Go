@@ -293,3 +293,32 @@ func writeEmptyDICOMJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/dicom+json")
 	_, _ = w.Write([]byte("[]"))
 }
+
+func TestClientBasicAuthReusesConnections(t *testing.T) {
+	var connections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := r.BasicAuth(); !ok {
+			t.Error("request without Basic credentials")
+		}
+		writeEmptyDICOMJSON(w)
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	client := basicSecurityClient(server.URL, server.Client())
+	for i := 0; i < 5; i++ {
+		if _, err := client.SearchStudies(context.Background(), nil); err != nil {
+			t.Fatalf("SearchStudies() #%d error = %v", i+1, err)
+		}
+	}
+	// Each request used to clone the transport, which opened a new
+	// connection (and TLS handshake) per request (#1242).
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("sequential Basic requests opened %d connections, want 1", got)
+	}
+}

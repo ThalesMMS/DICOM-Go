@@ -94,6 +94,35 @@ func TestServePatientRootCMoveAcceptsAllLevels(t *testing.T) {
 	}
 }
 
+// An unknown Query/Retrieve Level does not fit the Information Model: the
+// C-MOVE SCP answers A900 (Identifier does not match SOP Class) with an Error
+// Comment naming the key (PS3.4 C.4.2.1.4) without calling the handler. The
+// requestor's value is not echoed, as it may exceed the 64 characters of the
+// Error Comment.
+func TestServePatientRootCMoveRefusesUnknownLevel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	responses, serverErr := runPatientRootCMoveProgressTest(t, ctx, CMoveHandlerFunc(func(context.Context, CMoveRequestContext) ([]CMoveSubOperation, error) {
+		t.Error("handler should not run for an unknown QueryRetrieveLevel")
+		return nil, nil
+	}), withPatientRootCMoveIdentifier([]core.Element{
+		{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0052), VR: core.VRCS}, Value: core.StringValue{"FRAME"}},
+		{Header: core.ElementHeader{Tag: core.NewTag(0x0010, 0x0020), VR: core.VRLO}, Value: core.StringValue{"P1"}},
+	}))
+	if serverErr == nil {
+		t.Fatal("ServePatientRootCMove() error = nil, want the level error")
+	}
+	if len(responses) != 1 {
+		t.Fatalf("responses = %d, want only the final response", len(responses))
+	}
+	final := responses[0]
+	assertCMoveCounts(t, "final", final, StatusCMoveIdentifierDoesNotMatchSOPClass, 0, 0, 0, 0)
+	if final.ErrorComment != "Unsupported Query/Retrieve Level (0008,0052)" {
+		t.Fatalf("final Error Comment = %q, want the Query/Retrieve Level key", final.ErrorComment)
+	}
+}
+
 func TestServePatientRootCMoveReportsSubOperationCounts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

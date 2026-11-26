@@ -1,12 +1,12 @@
 package dimse
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/dictionary/std"
 	"github.com/ThalesMMS/dicom-go/net/ul"
-	"github.com/ThalesMMS/dicom-go/parser"
+	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
@@ -56,17 +56,8 @@ func SendCFindRequest(assoc *ul.Association, pcID byte, req CFindRequest, identi
 	if !ok {
 		return fmt.Errorf("dicom dimse: unsupported transfer syntax %q", accepted.TransferSyntaxUID)
 	}
-	var buf bytes.Buffer
-	w := parser.NewWriter(&buf, syntax)
-	for _, el := range identifier {
-		if err := w.WriteElement(el); err != nil {
-			return err
-		}
-	}
-	data := buf.Bytes()
-	writer := NewPDataWriter(assoc, pcID, false, peerMaxPDUWithHeader(assoc))
-	if _, err := writer.Write(data); err != nil {
-		return err
-	}
-	return writer.Finish()
+	// The identifier goes through the same data set path as every other DIMSE
+	// data set: deflated (with the PS3.5 A.5 pad) on a Deflated context, and
+	// cut into even PDVs (PS3.8 E.1).
+	return SendDataSet(assoc, pcID, object.FromElements(identifier, std.Dictionary), syntax)
 }

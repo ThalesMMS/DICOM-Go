@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 
 	dicomenc "github.com/ThalesMMS/dicom-go/encoding"
 )
@@ -15,28 +16,47 @@ func WritePDU(w io.Writer, pdu PDU) error {
 		return fmt.Errorf("%w: nil PDU", ErrInvalidPDU)
 	}
 
-	var body bytes.Buffer
-	pduType, err := writePDUBody(&body, pdu)
+	// The header and body are encoded into one pooled buffer and written at
+	// once: a separate 6-byte header write stalls loopback transfers of large
+	// P-DATA PDUs, and a fresh buffer per PDU doubles the allocations.
+	buf := getPDUWriteBuffer()
+	defer putPDUWriteBuffer(buf)
+	var header [PDUHeaderSize]byte
+	buf.Write(header[:])
+	pduType, err := writePDUBody(buf, pdu)
 	if err != nil {
 		return err
 	}
-	if uint64(body.Len()) > math.MaxUint32 {
-		return fmt.Errorf("%w: PDU body length %d exceeds uint32", ErrLengthOverflow, body.Len())
+	bodyLength := buf.Len() - int(PDUHeaderSize)
+	if uint64(bodyLength) > math.MaxUint32 {
+		return fmt.Errorf("%w: PDU body length %d exceeds uint32", ErrLengthOverflow, bodyLength)
 	}
-
-	var header bytes.Buffer
-	header.WriteByte(byte(pduType))
-	header.WriteByte(0)
-	if err := dicomenc.NewBasicEncoder(binary.BigEndian).WriteU32(&header, uint32(body.Len())); err != nil {
-		return fmt.Errorf("dicom ul: write PDU length: %w", err)
-	}
-	if err := writeAll(w, header.Bytes()); err != nil {
-		return fmt.Errorf("dicom ul: write PDU header: %w", err)
-	}
-	if err := writeAll(w, body.Bytes()); err != nil {
-		return fmt.Errorf("dicom ul: write PDU body: %w", err)
+	encoded := buf.Bytes()
+	encoded[0] = byte(pduType)
+	binary.BigEndian.PutUint32(encoded[2:PDUHeaderSize], uint32(bodyLength))
+	if err := writeAll(w, encoded); err != nil {
+		return fmt.Errorf("dicom ul: write PDU: %w", err)
 	}
 	return nil
+}
+
+// maxPooledPDUWriteBuffer keeps buffers for PDUs up to 1 MiB in the pool; a
+// larger PDU still works but its buffer is left to the collector.
+const maxPooledPDUWriteBuffer = 1<<20 + int(PDUHeaderSize+PDVHeaderSize)
+
+var pduWriteBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+func getPDUWriteBuffer() *bytes.Buffer {
+	buf := pduWriteBuffers.Get().(*bytes.Buffer)
+	buf.Reset()
+	return buf
+}
+
+func putPDUWriteBuffer(buf *bytes.Buffer) {
+	if buf.Cap() > maxPooledPDUWriteBuffer {
+		return
+	}
+	pduWriteBuffers.Put(buf)
 }
 
 func writePDUBody(buf *bytes.Buffer, pdu PDU) (PDUType, error) {
@@ -111,7 +131,9 @@ func writeAssociationRQ(buf *bytes.Buffer, rq *AssociationRQ) error {
 	if len(rq.PresentationContexts) == 0 {
 		return fmt.Errorf("%w: A-ASSOCIATE-RQ requires at least one presentation context", ErrInvalidPDU)
 	}
-	if err := validatePresentationContextIDsProposed(rq.PresentationContexts); err != nil {
+	// The library proposes only odd IDs (PS3.8 9.3.2.2) even though it
+	// tolerates even IDs that a peer proposes.
+	if err := validatePresentationContextIDsProposed(rq.PresentationContexts, validPresentationContextID); err != nil {
 		return err
 	}
 	if rq.UserInfo == nil {
@@ -158,13 +180,16 @@ func writeAssociationAC(buf *bytes.Buffer, ac *AssociationAC) error {
 	return writeUserInformation(buf, ac.UserInfo)
 }
 
-func validatePresentationContextIDsProposed(contexts []PresentationContextProposed) error {
+// validatePresentationContextIDsProposed checks the count, uniqueness and
+// form of proposed IDs; valid is validPresentationContextID for a proposal
+// this library sends and validPeerPresentationContextID for one it receives.
+func validatePresentationContextIDsProposed(contexts []PresentationContextProposed, valid func(byte) bool) error {
 	if len(contexts) > MaxPresentationContexts {
 		return fmt.Errorf("%w: presentation context count %d exceeds %d", ErrInvalidPCID, len(contexts), MaxPresentationContexts)
 	}
 	seen := make(map[byte]bool, len(contexts))
 	for _, context := range contexts {
-		if !validPresentationContextID(context.ID) || seen[context.ID] {
+		if !valid(context.ID) || seen[context.ID] {
 			return fmt.Errorf("%w: duplicate or invalid presentation context ID %d", ErrInvalidPCID, context.ID)
 		}
 		seen[context.ID] = true
@@ -172,13 +197,15 @@ func validatePresentationContextIDsProposed(contexts []PresentationContextPropos
 	return nil
 }
 
+// validatePresentationContextIDsResult checks A-ASSOCIATE-AC result IDs. They
+// echo the requestor's proposal, so an even ID the peer chose is allowed.
 func validatePresentationContextIDsResult(contexts []PresentationContextResult) error {
 	if len(contexts) > MaxPresentationContexts {
 		return fmt.Errorf("%w: presentation context count %d exceeds %d", ErrInvalidPCID, len(contexts), MaxPresentationContexts)
 	}
 	seen := make(map[byte]bool, len(contexts))
 	for _, context := range contexts {
-		if !validPresentationContextID(context.ID) || seen[context.ID] {
+		if !validPeerPresentationContextID(context.ID) || seen[context.ID] {
 			return fmt.Errorf("%w: duplicate or invalid presentation context ID %d", ErrInvalidPCID, context.ID)
 		}
 		seen[context.ID] = true
@@ -259,7 +286,7 @@ func writePresentationContextResult(buf *bytes.Buffer, pc *PresentationContextRe
 	if pc == nil {
 		return fmt.Errorf("%w: nil *PresentationContextResult", ErrInvalidPDU)
 	}
-	if !validPresentationContextID(pc.ID) {
+	if !validPeerPresentationContextID(pc.ID) {
 		return fmt.Errorf("%w: %d", ErrInvalidPCID, pc.ID)
 	}
 	if pc.Result > PresentationContextTransferSyntaxesNotSupported {
@@ -319,6 +346,10 @@ func writeUserVariableItem(buf *bytes.Buffer, item UserVariableItem) error {
 		return writeSopClassExtendedNegotiationItem(buf, &it)
 	case *SopClassExtendedNegotiationItem:
 		return writeSopClassExtendedNegotiationItem(buf, it)
+	case SopClassCommonExtendedNegotiationItem:
+		return writeSopClassCommonExtendedNegotiationItem(buf, &it)
+	case *SopClassCommonExtendedNegotiationItem:
+		return writeSopClassCommonExtendedNegotiationItem(buf, it)
 	case RoleSelectionItem:
 		return writeRoleSelectionItem(buf, &it)
 	case *RoleSelectionItem:
@@ -468,7 +499,8 @@ func writePDataTF(buf *bytes.Buffer, pdata *PDataTF) error {
 
 	enc := dicomenc.NewBasicEncoder(binary.BigEndian)
 	for _, value := range pdata.Values {
-		if !validPresentationContextID(value.PresentationContextID) {
+		// An accepted context keeps the requestor's ID, which may be even.
+		if !validPeerPresentationContextID(value.PresentationContextID) {
 			return fmt.Errorf("%w: %d", ErrInvalidPCID, value.PresentationContextID)
 		}
 		if uint64(len(value.Data)) > math.MaxUint32-2 {

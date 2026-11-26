@@ -1,6 +1,7 @@
 package dicomweb
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -67,8 +68,60 @@ func safeOperationalError(err error) error {
 	}
 	clone := *urlErr
 	clone.URL = safeDiagnosticURL(urlErr.URL)
-	clone.Err = safeOperationalError(urlErr.Err)
+	switch cause := urlErr.Err.(type) {
+	case nil:
+	case *url.Error:
+		clone.Err = safeOperationalError(cause)
+	default:
+		// net/http can embed a malformed Location in its error text before
+		// CheckRedirect runs. RoundTrippers and callbacks can also include
+		// private request details. Preserve classification without that text.
+		clone.Err = redactedHTTPClientCause{cause: cause}
+	}
 	return &clone
+}
+
+type redactedHTTPClientCause struct {
+	cause error
+}
+
+func (e redactedHTTPClientCause) Error() string {
+	return "HTTP client operation failed"
+}
+
+func (e redactedHTTPClientCause) GoString() string {
+	return e.Error()
+}
+
+func (e redactedHTTPClientCause) Is(target error) bool {
+	if target == ErrHTTPConnectionBroken {
+		return e.cause != nil && strings.Contains(e.cause.Error(), httpConnectionBrokenText)
+	}
+	return errors.Is(e.cause, target)
+}
+
+// ErrHTTPConnectionBroken matches a request whose response ended inside its
+// status line or headers. net/http reports the case in text only, and that
+// text is redacted from the errors of this package; errors.Is keeps the
+// classification.
+var ErrHTTPConnectionBroken = errors.New("dicom dicomweb: the HTTP connection broke inside the response")
+
+// httpConnectionBrokenText is how net/http words the case.
+const httpConnectionBrokenText = "transport connection broken"
+
+func (e redactedHTTPClientCause) As(target any) bool {
+	return errors.As(e.cause, target)
+}
+
+// net/url.Error asks its immediate cause for these flags.
+func (e redactedHTTPClientCause) Timeout() bool {
+	cause, ok := e.cause.(interface{ Timeout() bool })
+	return ok && cause.Timeout()
+}
+
+func (e redactedHTTPClientCause) Temporary() bool {
+	cause, ok := e.cause.(interface{ Temporary() bool })
+	return ok && cause.Temporary()
 }
 
 func newDICOMwebError(kind ErrorKind, rawURL string, statusCode int, err error) *Error {

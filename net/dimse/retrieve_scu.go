@@ -3,6 +3,8 @@ package dimse
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/object"
@@ -169,10 +171,16 @@ func SendCMoveWithProgressWithOptions(options OperationOptions, assoc *ul.Associ
 		defer releaseOperation()
 		defer cancel()
 		for {
+			// Every terminal event reaches the reader through
+			// deliverRetrieveTerminal: once the context has ended it takes the
+			// place of a pending response the reader has not read, so the
+			// channel never ends after a pending response that the reader
+			// could take for the final one (#2004).
 			select {
 			case <-ctx.Done():
+				cancelCMoveAtProvider(assoc, pcID, req.MessageID)
 				err := applyOperationErrorPolicy(assoc, options.ErrorPolicy, newOperationError("C-MOVE", ctx.Err(), true))
-				emitCMoveProgress(ctx, out, CMoveProgress{Final: true, Err: err})
+				deliverRetrieveTerminal(ctx, out, CMoveProgress{Final: true, Err: err})
 				return
 			default:
 			}
@@ -180,22 +188,88 @@ func SendCMoveWithProgressWithOptions(options OperationOptions, assoc *ul.Associ
 			responseCtx, responseCancel := operationResponseContext(ctx, options.ResponseTimeout)
 			rsp, err := receiveCMoveResponseWithContext(responseCtx, assoc, pcID)
 			responseCancel()
+			if err == nil && rsp.MessageIDBeingRespondedTo != req.MessageID {
+				err = protocolViolationf("dicom dimse: C-MOVE response message ID %d, want %d", rsp.MessageIDBeingRespondedTo, req.MessageID)
+			}
 			if err != nil {
-				emitCMoveProgress(ctx, out, CMoveProgress{Final: true, Err: applyOperationErrorPolicy(assoc, options.ErrorPolicy, newOperationError("C-MOVE", err, true))})
+				if ctx.Err() != nil {
+					cancelCMoveAtProvider(assoc, pcID, req.MessageID)
+				}
+				deliverRetrieveTerminal(ctx, out, CMoveProgress{Final: true, Err: applyOperationErrorPolicy(assoc, options.ErrorPolicy, newOperationError("C-MOVE", err, true))})
 				return
 			}
 
 			cls := ClassifyCMoveStatus(rsp.Status)
-			final := cls != CMoveStatusPending
-			if !emitCMoveProgress(ctx, out, CMoveProgress{Response: rsp, Identifier: rsp.Identifier, Final: final, StatusClass: cls}) {
+			event := CMoveProgress{Response: rsp, Identifier: rsp.Identifier, Final: cls != CMoveStatusPending, StatusClass: cls}
+			if event.Final {
+				// The operation is over: its final response is handed over
+				// even when the context ends meanwhile, with no C-CANCEL for
+				// a finished operation and no abort in place of a release.
+				deliverRetrieveTerminal(ctx, out, event)
 				return
 			}
-			if final {
+			if !emitCMoveProgress(ctx, out, event) {
+				// The context ended while the reader had not yet taken the
+				// previous event: canceled like during a read, with the
+				// C-CANCEL and the abort.
+				cancelCMoveAtProvider(assoc, pcID, req.MessageID)
+				err := applyOperationErrorPolicy(assoc, options.ErrorPolicy, newOperationError("C-MOVE", ctx.Err(), true))
+				deliverRetrieveTerminal(ctx, out, CMoveProgress{Final: true, Err: err})
 				return
 			}
 		}
 	}()
 	return out, nil
+}
+
+// cancelCMoveAtProvider sends a C-CANCEL-RQ for a C-MOVE the requestor gives
+// up. The sub-operations of a C-MOVE run on other associations, so a provider
+// that only sees this association end may go on storing to the destination;
+// the cancel request tells it to stop. The request is best effort and bounded.
+func cancelCMoveAtProvider(assoc *ul.Association, pcID byte, messageID uint16) {
+	cancelCtx, done := context.WithTimeout(context.Background(), time.Second)
+	defer done()
+	_ = SendCCancelRequestWithContext(cancelCtx, assoc, pcID, CCancelRequest{MessageIDBeingRespondedTo: messageID})
+}
+
+// deliverRetrieveTerminal hands the last event of a retrieve to the reader
+// of out, the one-slot channel of its only sender. While ctx lasts it waits
+// for the reader to make room; once ctx has ended it puts the event in place
+// of the event the reader has not taken, which can only be a pending
+// response, without waiting for the reader.
+func deliverRetrieveTerminal[T any](ctx context.Context, out chan T, terminal T) {
+	select {
+	case out <- terminal:
+		return
+	default:
+	}
+	retrieveHandOverBlocked()
+	select {
+	case out <- terminal:
+		return
+	case <-ctx.Done():
+	}
+	for {
+		select {
+		case out <- terminal:
+			return
+		default:
+		}
+		select {
+		case <-out:
+		default:
+		}
+	}
+}
+
+// testHookRetrieveHandOverBlocked, when a test sets it, runs when a C-MOVE or
+// C-GET requestor starts to wait for its reader to take the previous event.
+var testHookRetrieveHandOverBlocked atomic.Pointer[func()]
+
+func retrieveHandOverBlocked() {
+	if hook := testHookRetrieveHandOverBlocked.Load(); hook != nil {
+		(*hook)()
+	}
 }
 
 func emitCMoveProgress(ctx context.Context, out chan<- CMoveProgress, progress CMoveProgress) bool {
@@ -204,6 +278,7 @@ func emitCMoveProgress(ctx context.Context, out chan<- CMoveProgress, progress C
 		return true
 	default:
 	}
+	retrieveHandOverBlocked()
 	select {
 	case <-ctx.Done():
 		return false

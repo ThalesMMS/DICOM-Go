@@ -8,12 +8,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math/big"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 )
 
@@ -306,6 +306,21 @@ func (s *MemoryStorageCommitmentStore) PurgeCompleted(ctx context.Context, befor
 	return len(keys), nil
 }
 
+// IsDue reports whether a List query with DueAt now selects the transaction:
+// an expired lease for claimed work, otherwise a NextAttemptAt not after now.
+// Persistent stores use it to implement List like the memory store.
+func (t StorageCommitmentTransaction) IsDue(now time.Time) bool { return transactionDue(t, now) }
+
+// Clone returns a copy that shares no slices or result with t. Stores return
+// clones so callers cannot mutate persisted state.
+func (t StorageCommitmentTransaction) Clone() StorageCommitmentTransaction {
+	return cloneStorageCommitmentTransaction(t)
+}
+
+// Terminal reports whether PurgeCompleted may remove a transaction in this
+// state.
+func (s StorageCommitmentState) Terminal() bool { return storageCommitmentTerminal(s) }
+
 func transactionDue(transaction StorageCommitmentTransaction, now time.Time) bool {
 	if transaction.State == StorageCommitmentStateProcessing || transaction.State == StorageCommitmentStateDelivering {
 		return !transaction.LeaseUntil.After(now)
@@ -510,15 +525,14 @@ func storageCommitmentStoreError(err error) error {
 	return sanitizedStorageCommitmentWorkflowError(StorageCommitmentFailureProcessing, err)
 }
 
-// GenerateStorageCommitmentTransactionUID returns a valid 2.25 UID using 128
-// random bits without mutable global state.
+// GenerateStorageCommitmentTransactionUID returns a new 2.25 UID from a
+// random UUID (core.NewUID).
 func GenerateStorageCommitmentTransactionUID() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", fmt.Errorf("dicom dimse: generate Storage Commitment transaction UID: %w", err)
+	uid, err := core.NewUID()
+	if err != nil {
+		return "", fmt.Errorf("dicom dimse: Storage Commitment transaction UID: %w", err)
 	}
-	integer := new(big.Int).SetBytes(value[:])
-	return "2.25." + integer.String(), nil
+	return uid, nil
 }
 
 // StorageCommitmentRequestOptions configures one N-ACTION submission on a
@@ -555,8 +569,8 @@ func (w *StorageCommitmentWorkflow) Request(ctx context.Context, assoc *ul.Assoc
 	transaction := StorageCommitmentTransaction{
 		TransactionUID: transactionUID, Direction: StorageCommitmentDirectionRequestor,
 		State: StorageCommitmentStateRequestPending, DeliveryMode: mode,
-		RequestorAETitle: strings.TrimSpace(assoc.CallingAETitle),
-		CommitterAETitle: strings.TrimSpace(assoc.CalledAETitle),
+		RequestorAETitle: ul.NormalizeAETitle(assoc.CallingAETitle),
+		CommitterAETitle: ul.NormalizeAETitle(assoc.CalledAETitle),
 		ReferencedSOPs:   references, RequestMessageID: w.nextMessageID(),
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -816,7 +830,9 @@ func normalizeStorageCommitmentReferences(references []StorageCommitmentSOPRefer
 
 func validStorageCommitmentFailureReason(reason uint16) bool {
 	switch reason {
-	case 0x0110, 0x0112, 0x0213, 0x0122, 0x0119, 0x0131:
+	case StorageCommitmentFailureReasonProcessingFailure, StorageCommitmentFailureReasonNoSuchSOPInstance,
+		StorageCommitmentFailureReasonResourceLimitation, StorageCommitmentFailureReasonSOPClassNotSupported,
+		StorageCommitmentFailureReasonClassInstanceConflict, StorageCommitmentFailureReasonDuplicateTransactionUID:
 		return true
 	default:
 		return false

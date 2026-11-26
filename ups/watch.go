@@ -325,6 +325,7 @@ func (service *Service) Subscribe(ctx context.Context, request SubscribeRequest)
 	if result.Subscription == nil {
 		return SubscribeResult{}, safeRepositoryError(ErrConflict)
 	}
+	service.WakeDeliveries()
 	return SubscribeResult{Subscription: *result.Subscription, Status: status}, nil
 }
 
@@ -393,11 +394,17 @@ func (service *Service) Deliveries(ctx context.Context, query DeliveryQuery) ([]
 }
 
 func (service *Service) DeliverDue(ctx context.Context, limit int) error {
+	_, err := service.deliverDue(ctx, limit)
+	return err
+}
+
+func (service *Service) deliverDue(ctx context.Context, limit int) (int, error) {
 	ctx = normalizeContext(ctx)
 	if limit <= 0 || limit > service.deliveryLimits.MaxBatch {
-		return ErrResourceLimit
+		return 0, ErrResourceLimit
 	}
 	var deliveryErrors []error
+	claimed := 0
 	for processed := 0; processed < limit; processed++ {
 		deliveries, err := service.store.ClaimDueDeliveries(ctx, service.clock().UTC(), 1, service.deliveryLimits.LeaseDuration)
 		if err != nil {
@@ -407,6 +414,7 @@ func (service *Service) DeliverDue(ctx context.Context, limit int) error {
 		if len(deliveries) == 0 {
 			break
 		}
+		claimed++
 		delivery := deliveries[0]
 		if delivery.Attempts > service.deliveryLimits.MaxAttempts {
 			persistCtx, cancel := context.WithTimeout(context.Background(), service.deliveryLimits.CleanupTimeout)
@@ -433,7 +441,48 @@ func (service *Service) DeliverDue(ctx context.Context, limit int) error {
 			deliveryErrors = append(deliveryErrors, attemptErr)
 		}
 	}
-	return errors.Join(deliveryErrors...)
+	return claimed, errors.Join(deliveryErrors...)
+}
+
+// WakeDeliveries asks a running RunDeliveries loop to attempt due deliveries
+// now. The service calls it after every committed event; an EventSink calls
+// it when a subscriber's channel opens. It never blocks.
+func (service *Service) WakeDeliveries() {
+	if service == nil || service.wake == nil {
+		return
+	}
+	select {
+	case service.wake <- struct{}{}:
+	default:
+	}
+}
+
+// RunDeliveries attempts due deliveries whenever an event is committed or
+// WakeDeliveries is called, and at least every interval (one second when
+// zero) so retries whose backoff has elapsed are not stranded. It returns the
+// context error when ctx ends. Attempt failures are recorded on the
+// deliveries themselves, exactly as with DeliverDue.
+func (service *Service) RunDeliveries(ctx context.Context, interval time.Duration) error {
+	ctx = normalizeContext(ctx)
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		for ctx.Err() == nil {
+			claimed, _ := service.deliverDue(ctx, service.deliveryLimits.MaxBatch)
+			if claimed < service.deliveryLimits.MaxBatch {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-service.wake:
+		case <-ticker.C:
+		}
+	}
 }
 
 // ReportSCPStatusChange durably queues the restart/shutdown event for the
@@ -485,6 +534,7 @@ func (service *Service) ReportSCPStatusChange(ctx context.Context, change SCPSta
 	if err != nil {
 		return safeRepositoryError(err)
 	}
+	service.WakeDeliveries()
 	return nil
 }
 
@@ -517,6 +567,21 @@ func validCSValue(value string) bool {
 }
 
 func (service *Service) attemptDelivery(ctx context.Context, delivery Delivery) (DeliveryOutcome, error) {
+	if service.eventSink != nil {
+		handled, err := service.eventSink.DeliverUPSEvent(ctx, delivery)
+		if handled && err == nil {
+			return DeliveryOutcome{Delivered: true}, nil
+		}
+		if handled {
+			class := classifyDeliveryFailure(err)
+			return service.failureOutcome(delivery, class, true, 0), &DeliveryError{Class: class, Retryable: true, Err: err}
+		}
+		if service.callbackResolver == nil {
+			// No open event channel and no DIMSE route: keep the event for the
+			// subscriber's next connection.
+			return service.failureOutcome(delivery, DeliveryFailureCallbackOffline, true, 0), &DeliveryError{Class: DeliveryFailureCallbackOffline, Retryable: true, Err: ErrDeliveryFailed}
+		}
+	}
 	if service.callbackResolver == nil {
 		return service.failureOutcome(delivery, DeliveryFailureCallbackUnknown, true, 0), &DeliveryError{Class: DeliveryFailureCallbackUnknown, Retryable: true, Err: ErrDeliveryFailed}
 	}
@@ -607,10 +672,18 @@ func (service *Service) validateSubscriber(ctx context.Context, receivingAETitle
 		return statusError("N-ACTION Subscription", StatusReceivingAEUnknown, ErrInvalidDataSet)
 	}
 	if service.callbackResolver == nil {
+		if service.eventSink != nil {
+			// Events for this AE Title wait for its event channel.
+			return nil
+		}
 		return statusError("N-ACTION Subscription", StatusEventReportsUnsupported, ErrDeliveryFailed)
 	}
 	target, err := service.callbackResolver.ResolveUPSCallback(ctx, CallbackRequest{ReceivingAETitle: receivingAETitle})
 	if err != nil || strings.TrimSpace(target.Address) == "" {
+		if service.eventSink != nil {
+			// Not a DIMSE callback target: it may still open an event channel.
+			return nil
+		}
 		return statusError("N-ACTION Subscription", StatusReceivingAEUnknown, err)
 	}
 	return nil

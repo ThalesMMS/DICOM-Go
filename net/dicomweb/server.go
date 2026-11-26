@@ -14,10 +14,16 @@ import (
 
 // Server is an embeddable http.Handler and an optional owner of an http.Server.
 type Server struct {
-	options ServerOptions
-	limits  ServerLimits
-	handler http.Handler
-	sem     chan struct{}
+	options        ServerOptions
+	limits         ServerLimits
+	handler        http.Handler
+	sem            chan struct{}
+	queue          chan struct{}
+	retrievePolicy *RetrieveTranscodePolicy
+	retrieveSem    chan struct{}
+	// createSpool creates the spool files of STOW-RS staging in a directory;
+	// nil selects os.CreateTemp. Tests replace it to make the spool fail.
+	createSpool func(directory, pattern string) (spoolFile, error)
 
 	mu         sync.Mutex
 	httpServer *http.Server
@@ -25,7 +31,7 @@ type Server struct {
 
 // NewServer constructs a bounded, deny-by-default DICOMweb handler.
 func NewServer(options ServerOptions) (*Server, error) {
-	if options.Backend == nil {
+	if options.Backend == nil && options.Workitems == nil {
 		return nil, fmt.Errorf("%w: backend is required", ErrInvalidServerOptions)
 	}
 	limits, err := normalizeServerLimits(options.Limits)
@@ -37,6 +43,13 @@ func NewServer(options ServerOptions) (*Server, error) {
 		return nil, err
 	}
 	options.StorePolicy = policy
+	retrievePolicy, err := normalizeRetrieveTranscodePolicy(options.RetrieveTranscode, limits, options.EnableWADOURI)
+	if err != nil {
+		return nil, err
+	}
+	if options.RetrieveTranscode != nil {
+		options.RetrieveTranscode = retrievePolicy
+	}
 	if options.SpoolRetentionAge < 0 || options.SpoolAggregateQuotaBytes < 0 {
 		return nil, fmt.Errorf("%w: invalid spool retention policy", ErrInvalidServerOptions)
 	}
@@ -53,9 +66,14 @@ func NewServer(options ServerOptions) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
-		options: options,
-		limits:  limits,
-		sem:     make(chan struct{}, limits.MaxConcurrentRequests),
+		options:        options,
+		limits:         limits,
+		sem:            make(chan struct{}, limits.MaxConcurrentRequests),
+		queue:          make(chan struct{}, limits.MaxQueuedRequests),
+		retrievePolicy: retrievePolicy,
+	}
+	if retrievePolicy != nil {
+		server.retrieveSem = make(chan struct{}, retrievePolicy.MaxConcurrentJobs)
 	}
 	var handler http.Handler = http.HandlerFunc(server.serveCore)
 	if options.Middleware != nil {
@@ -170,6 +188,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
+	// Event channels are hijacked connections that http.Server.Shutdown
+	// does not track; close them explicitly.
+	_ = s.options.WorkitemEvents.Close()
 	s.mu.Lock()
 	owned := s.httpServer
 	s.mu.Unlock()

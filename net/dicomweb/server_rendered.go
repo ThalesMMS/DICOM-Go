@@ -52,13 +52,13 @@ func (s *Server) serveRendered(w *serverResponseWriter, r *http.Request, thumbna
 	responseContentType := ""
 	responseContentLocation := ""
 	err = safeRender(renderer, r.Context(), request, func(part RenderedPart) error {
-		if err := r.Context().Err(); err != nil {
-			return err
-		}
 		if part.Reader == nil {
 			return ErrBackend
 		}
 		return withReaderClosed(part.Reader, func() error {
+			if err := CheckReadLease(r.Context()); err != nil {
+				return err
+			}
 			if part.Size < -1 || part.Size > s.limits.MaxPartBytes || count >= s.limits.MaxFrames {
 				return ErrResourceLimit
 			}

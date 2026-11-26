@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/dictionary/std"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/transfer"
@@ -88,11 +89,15 @@ type CMoveResponse struct {
 	NumberOfCompletedSuboperationsOrNil *uint16
 	NumberOfFailedSuboperationsOrNil    *uint16
 	NumberOfWarningSuboperationsOrNil   *uint16
+	// FailedSOPInstanceUIDListOrNil is sent in the Identifier of a Cancel,
+	// Warning or Failure response (PS3.4 C.4.2.1.4.2), never in the command
+	// set.
+	FailedSOPInstanceUIDListOrNil []string
 }
 
 func (r CMoveResponse) CommandSet() []core.Element {
 	datasetType := NoDataSet
-	if r.Identifier != nil && cMoveResponseStatusAllowsIdentifier(r.Status) {
+	if r.identifier() != nil && cMoveResponseStatusAllowsIdentifier(r.Status) {
 		datasetType = DataSetPresent
 	}
 	elements := []core.Element{
@@ -121,6 +126,55 @@ func (r CMoveResponse) CommandSet() []core.Element {
 		})
 	}
 	return elements
+}
+
+// identifier returns the Identifier sent with the response, including the
+// Failed SOP Instance UID List when one is set.
+func (r CMoveResponse) identifier() *object.Object {
+	return retrieveResponseIdentifier(r.Identifier, r.Status, r.FailedSOPInstanceUIDListOrNil)
+}
+
+// retrieveResponseIdentifier adds the Failed SOP Instance UID List (0008,0058)
+// to a C-MOVE or C-GET response Identifier. PS3.4 C.4.2.1.4.2 and
+// C.4.3.1.4.2 place the list in the Identifier of Cancel, Warning and
+// Failure responses. UIDs that cannot be encoded as UI values, such as those
+// of a sub-operation refused for an invalid instance UID, are left out. The
+// caller's identifier is not modified.
+func retrieveResponseIdentifier(identifier *object.Object, status uint16, failed []string) *object.Object {
+	if len(failed) == 0 || !cMoveResponseStatusAllowsIdentifier(status) {
+		return identifier
+	}
+	valid := make([]string, 0, len(failed))
+	for _, uid := range failed {
+		if core.IsValidUID(uid) {
+			valid = append(valid, uid)
+		}
+	}
+	if len(valid) == 0 {
+		return identifier
+	}
+	failed = valid
+	elements := identifier.Elements()
+	kept := elements[:0]
+	for _, element := range elements {
+		if element.Header.Tag != FailedSOPInstanceUIDList {
+			kept = append(kept, element)
+		}
+	}
+	return object.FromElements(append(kept, newUIListElement(FailedSOPInstanceUIDList, failed)), std.Dictionary)
+}
+
+// failedSOPInstanceUIDsFromIdentifier reads the Failed SOP Instance UID List
+// from a received C-MOVE or C-GET response Identifier.
+func failedSOPInstanceUIDsFromIdentifier(identifier *object.Object) ([]string, bool) {
+	if identifier == nil {
+		return nil, false
+	}
+	values, ok := identifier.GetStrings(FailedSOPInstanceUIDList)
+	if !ok || len(values) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), values...), true
 }
 
 func ParseCMoveRequest(obj *object.Object) (*CMoveRequest, error) {
@@ -159,10 +213,10 @@ func ParseCMoveRequest(obj *object.Object) (*CMoveRequest, error) {
 		AffectedSOPClassUID: sopClassUID,
 		MessageID:           messageID,
 		Priority:            priority,
-		MoveDestination:     moveDest,
+		MoveDestination:     ul.NormalizeAETitle(moveDest),
 	}
 	if originator, ok := obj.GetString(MoveOriginatorApplicationEntityTitle); ok {
-		req.MoveOriginatorAETitle = originator
+		req.MoveOriginatorAETitle = ul.NormalizeAETitle(originator)
 	}
 	originatorMessageID, err := optionalCommandUint16(obj, MoveOriginatorMessageID)
 	if err != nil {
@@ -178,9 +232,11 @@ func ParseCMoveResponse(obj *object.Object) (*CMoveResponse, error) {
 		return nil, err
 	}
 	if field != CMoveRSP {
-		return nil, fmt.Errorf("dicom dimse: command field 0x%04X, want C-MOVE-RSP 0x%04X", field, CMoveRSP)
+		return nil, protocolViolationf("dicom dimse: command field 0x%04X, want C-MOVE-RSP 0x%04X", field, CMoveRSP)
 	}
-	sopClassUID, err := commandUID(obj, AffectedSOPClassUID)
+	// Affected SOP Class UID is optional in a response (PS3.7 Table 9.1-3
+	// and 9.1-4); dcm4che omits it when a retrieve fails.
+	sopClassUID, _, err := optionalCommandUID(obj, AffectedSOPClassUID)
 	if err != nil {
 		return nil, err
 	}
@@ -274,14 +330,15 @@ func SendCMoveResponseWithContext(ctx context.Context, assoc *ul.Association, pc
 	if err := SendCommandSetWithContext(ctx, assoc, pcID, rsp.CommandSet()); err != nil {
 		return err
 	}
-	if rsp.Identifier == nil {
+	identifier := rsp.identifier()
+	if identifier == nil || !cMoveResponseStatusAllowsIdentifier(rsp.Status) {
 		return nil
 	}
 	syntax, err := acceptedTransferSyntax(assoc, pcID)
 	if err != nil {
 		return err
 	}
-	return SendDataSetWithContext(ctx, assoc, pcID, rsp.Identifier, syntax)
+	return SendDataSetWithContext(ctx, assoc, pcID, identifier, syntax)
 }
 
 func ReceiveCMoveResponse(assoc *ul.Association, pcID byte) (*CMoveResponse, error) {
@@ -307,6 +364,9 @@ func receiveCMoveResponseWithContext(ctx context.Context, assoc *ul.Association,
 	rsp.Identifier, err = receiveIdentifierDataSetWithContext(ctx, assoc, pcID, syntax)
 	if err != nil {
 		return nil, err
+	}
+	if failed, ok := failedSOPInstanceUIDsFromIdentifier(rsp.Identifier); ok {
+		rsp.FailedSOPInstanceUIDListOrNil = failed
 	}
 	return rsp, nil
 }

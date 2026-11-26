@@ -1,0 +1,7 @@
+# Patient ID single value matching with a whole-item SPS return key
+(0010,0020) LO [HF]
+(0010,0010) PN []
+(0040,0100) SQ
+  (fffe,e000) na
+  (fffe,e00d) na
+(fffe,e0dd) na

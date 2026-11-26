@@ -1,0 +1,8 @@
+# Scheduled Procedure Step Start Date closed range
+(0010,0010) PN []
+(0040,0100) SQ
+  (fffe,e000) na
+    (0040,0002) DA [19951201-19960131]
+    (0040,0003) TM []
+  (fffe,e00d) na
+(fffe,e0dd) na

@@ -3,6 +3,9 @@ package dicomweb
 import "context"
 
 func safeSearch(backend SearchBackend, ctx context.Context, req SearchRequest, yield func(Dataset) error) (result SearchResult, err error) {
+	if err := CheckReadLease(ctx); err != nil {
+		return SearchResult{}, err
+	}
 	defer func() {
 		if recover() != nil {
 			err = ErrBackend
@@ -11,6 +14,9 @@ func safeSearch(backend SearchBackend, ctx context.Context, req SearchRequest, y
 	return backend.Search(ctx, req, yield)
 }
 func safeMetadata(backend MetadataBackend, ctx context.Context, req MetadataRequest, yield func(Dataset) error) (err error) {
+	if err := CheckReadLease(ctx); err != nil {
+		return err
+	}
 	defer func() {
 		if recover() != nil {
 			err = ErrBackend
@@ -19,6 +25,9 @@ func safeMetadata(backend MetadataBackend, ctx context.Context, req MetadataRequ
 	return backend.Metadata(ctx, req, yield)
 }
 func safeRetrieve(backend RetrieveBackend, ctx context.Context, req RetrieveRequest, yield func(RetrievePart) error) (err error) {
+	if err := CheckReadLease(ctx); err != nil {
+		return err
+	}
 	defer func() {
 		if recover() != nil {
 			err = ErrBackend
@@ -27,6 +36,9 @@ func safeRetrieve(backend RetrieveBackend, ctx context.Context, req RetrieveRequ
 	return backend.Retrieve(ctx, req, yield)
 }
 func safeFrames(backend FrameBackend, ctx context.Context, req FrameRequest, yield func(FramePartStream) error) (err error) {
+	if err := CheckReadLease(ctx); err != nil {
+		return err
+	}
 	defer func() {
 		if recover() != nil {
 			err = ErrBackend
@@ -35,6 +47,9 @@ func safeFrames(backend FrameBackend, ctx context.Context, req FrameRequest, yie
 	return backend.RetrieveFrames(ctx, req, yield)
 }
 func safeRender(renderer Renderer, ctx context.Context, req RenderRequest, yield func(RenderedPart) error) (err error) {
+	if err := CheckReadLease(ctx); err != nil {
+		return err
+	}
 	defer func() {
 		if recover() != nil {
 			err = ErrBackend
@@ -43,6 +58,9 @@ func safeRender(renderer Renderer, ctx context.Context, req RenderRequest, yield
 	return renderer.Render(ctx, req, yield)
 }
 func safeBulkData(backend BulkDataBackend, ctx context.Context, req BulkDataRequest) (part BulkDataPart, err error) {
+	if err := CheckReadLease(ctx); err != nil {
+		return BulkDataPart{}, err
+	}
 	defer func() {
 		if recover() != nil {
 			err = ErrBackend

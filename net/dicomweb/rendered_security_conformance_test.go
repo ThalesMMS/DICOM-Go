@@ -278,16 +278,31 @@ func TestRenderedSecurityHonorsCancellationAndDeadline(t *testing.T) {
 		}
 	})
 	t.Run("server deadline reaches renderer", func(t *testing.T) {
-		var sawCancellation atomic.Bool
-		server := newRenderedSecurityServer(t, renderedSecurityRenderer(func(ctx context.Context, _ RenderRequest, _ func(RenderedPart) error) error {
-			<-ctx.Done()
-			sawCancellation.Store(true)
-			return ctx.Err()
-		}), func(limits *ServerLimits) { limits.MaxDuration = 10 * time.Millisecond })
-		recorder := renderedSecurityRequest(server, renderedSecurityInstancePath, "image/jpeg", context.Background())
-		if recorder.Code != http.StatusGatewayTimeout || !sawCancellation.Load() {
-			t.Fatalf("status=%d rendererCanceled=%t body=%q", recorder.Code, sawCancellation.Load(), recorder.Body.String())
+		// The renderer must be running when the deadline expires. A short
+		// deadline can expire while the request is still being admitted on a
+		// loaded machine, and the server then rightly answers 504 without
+		// calling the renderer. Such an attempt proves nothing, so the test
+		// tries again with a longer deadline; once the renderer runs it
+		// blocks until the deadline cancels it.
+		for _, deadline := range []time.Duration{250 * time.Millisecond, time.Second, 4 * time.Second} {
+			var entered, sawDeadline atomic.Bool
+			server := newRenderedSecurityServer(t, renderedSecurityRenderer(func(ctx context.Context, _ RenderRequest, _ func(RenderedPart) error) error {
+				entered.Store(true)
+				<-ctx.Done()
+				sawDeadline.Store(errors.Is(ctx.Err(), context.DeadlineExceeded))
+				return ctx.Err()
+			}), func(limits *ServerLimits) { limits.MaxDuration = deadline })
+			recorder := renderedSecurityRequest(server, renderedSecurityInstancePath, "image/jpeg", context.Background())
+			if recorder.Code == http.StatusGatewayTimeout && !entered.Load() {
+				t.Logf("the %v deadline expired before the renderer ran", deadline)
+				continue
+			}
+			if recorder.Code != http.StatusGatewayTimeout || !entered.Load() || !sawDeadline.Load() {
+				t.Fatalf("status=%d rendererEntered=%t rendererSawDeadline=%t body=%q", recorder.Code, entered.Load(), sawDeadline.Load(), recorder.Body.String())
+			}
+			return
 		}
+		t.Fatal("every deadline expired before the renderer ran")
 	})
 }
 

@@ -223,12 +223,13 @@ func nonPatientValues(owner *object.Object, element core.Element) ([]string, err
 // qrmatch's text/UID/sequence rules apply here, but binary US keys need a
 // decimal matching representation; raw binary is never interpreted as text.
 func nonPatientMatchingObject(source *object.Object) *object.Object {
-	result := object.New(std.Dictionary)
+	result := source.BorrowReadView()
 	for _, e := range source.Elements() {
 		if e.VR() == core.VRUS {
 			values, err := nonPatientValues(source, e)
 			if err == nil {
 				e.Value = core.StringValue(values)
+				result.Put(e)
 			}
 		}
 		if sequence, ok := e.Value.(core.SequenceValue); ok {
@@ -239,8 +240,8 @@ func nonPatientMatchingObject(source *object.Object) *object.Object {
 				items[i] = core.DataSet{Elements: nonPatientMatchingObject(nested).Elements()}
 			}
 			e.Value = core.SequenceValue{Items: items}
+			result.Put(e)
 		}
-		result.Put(e)
 	}
 	return result
 }
@@ -314,11 +315,11 @@ func (model NonPatientModel) Match(ctx context.Context, query, candidate *object
 	if !result.Match {
 		return nil, false, nil
 	}
-	projection, err := projectNonPatient(ctx, query, candidate)
+	projection, err := projectNonPatient(ctx, query.BorrowReadView(), candidate.BorrowReadView())
 	if err != nil {
 		return nil, false, err
 	}
-	for _, tag := range []core.Tag{npTag(8, 0x16), npTag(8, 0x18), npTag(8, 5)} {
+	for _, tag := range []core.Tag{npTag(8, 0x16), npTag(8, 0x18)} {
 		if e, ok := candidate.Get(tag); ok {
 			projection.Put(e)
 		}
@@ -339,12 +340,11 @@ func projectNonPatient(ctx context.Context, query, candidate *object.Object) (*o
 		}
 		if q, yes := requested.Value.(core.SequenceValue); yes && len(q.Items) == 1 {
 			if c, yes := e.Value.(core.SequenceValue); yes {
+				queryItems, _ := query.GetSequence(requested.Tag())
+				candidateItems, _ := candidate.GetSequence(requested.Tag())
 				items := make([]core.DataSet, 0, len(c.Items))
-				for _, item := range c.Items {
-					queryItem := object.FromElements(q.Items[0].Elements, std.Dictionary)
-					candidateItem := object.FromElements(item.Elements, std.Dictionary)
-					queryItem.SetValueByteOrder(query.ValueByteOrder())
-					candidateItem.SetValueByteOrder(candidate.ValueByteOrder())
+				queryItem := queryItems[0]
+				for _, candidateItem := range candidateItems {
 					matched, err := qrmatch.Match(nonPatientMatchingObject(queryItem), nonPatientMatchingObject(candidateItem), qrmatch.Options{Context: ctx})
 					if err != nil {
 						return nil, err
@@ -362,6 +362,9 @@ func projectNonPatient(ctx context.Context, query, candidate *object.Object) (*o
 			}
 		}
 		result.Put(e)
+	}
+	if charset, ok := candidate.Get(npTag(8, 5)); ok {
+		result.Put(charset)
 	}
 	return result, nil
 }

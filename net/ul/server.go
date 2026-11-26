@@ -41,10 +41,19 @@ type AssociationServerOptions struct {
 }
 
 type AssociationServerMetrics struct {
-	Negotiating       int64
-	Active            int64
-	Accepted          uint64
-	Rejected          uint64
+	Negotiating int64
+	Active      int64
+	Accepted    uint64
+	Rejected    uint64
+	// AcceptErrors counts accept failures that left the listener usable,
+	// such as running out of descriptors; the server pauses and accepts
+	// again (see Listener.AcceptContext).
+	AcceptErrors uint64
+	// NegotiationErrors counts connections closed without an association
+	// for a reason other than a rejection (Rejected) or a panic
+	// (NegotiationPanics): a malformed or unexpected PDU, a failed TLS
+	// handshake, a timeout or a closed connection. The server keeps serving.
+	NegotiationErrors uint64
 	NegotiationPanics uint64
 	HandlerErrors     uint64
 	HandlerPanics     uint64
@@ -83,6 +92,8 @@ type AssociationServer struct {
 	active            atomic.Int64
 	accepted          atomic.Uint64
 	rejected          atomic.Uint64
+	acceptErrors      atomic.Uint64
+	negotiationErrors atomic.Uint64
 	negotiationPanics atomic.Uint64
 	handlerErrors     atomic.Uint64
 	handlerPanics     atomic.Uint64
@@ -113,6 +124,9 @@ func NewAssociationServer(listener *Listener, options AssociationServerOptions) 
 		options.MaxConcurrentAssociations = DefaultServerMaxConcurrentAssociations
 	}
 	options.Accept = normalizeAcceptOptions(options.Accept)
+	if err := validateCalledAEOptions(options.Accept); err != nil {
+		return nil, err
+	}
 	if options.Accept.NegotiationTimeout == 0 {
 		options.Accept.NegotiationTimeout = DefaultServerNegotiationTimeout
 	}
@@ -218,7 +232,7 @@ func (s *AssociationServer) acceptLoop() error {
 			case <-s.ctx.Done():
 				return s.ctx.Err()
 			}
-			conn, err := s.listener.Accept()
+			conn, err := s.accept()
 			if err != nil {
 				s.releaseSlot()
 				return err
@@ -227,7 +241,7 @@ func (s *AssociationServer) acceptLoop() error {
 			continue
 		}
 
-		conn, err := s.listener.Accept()
+		conn, err := s.accept()
 		if err != nil {
 			return err
 		}
@@ -238,6 +252,14 @@ func (s *AssociationServer) acceptLoop() error {
 			s.rejectSaturated(conn)
 		}
 	}
+}
+
+// accept returns the next connection. Like net/http.Server.Serve it counts
+// a failure that leaves the listener usable, such as running out of
+// descriptors, and accepts again after a growing pause, so that one failure
+// does not stop the server; a closed listener or a canceled context ends it.
+func (s *AssociationServer) accept() (net.Conn, error) {
+	return acceptWithBackoff(s.ctx, s.listener.Accept, func(error) { s.acceptErrors.Add(1) })
 }
 
 func (s *AssociationServer) startConnection(conn net.Conn) {
@@ -278,6 +300,12 @@ func (s *AssociationServer) serveConnection(entry *serverConnection) {
 		return
 	}
 	if err != nil {
+		// The failure ends this connection only; the deferred close above
+		// releases it and the accept loop keeps serving.
+		var rejection *RejectionError
+		if !errors.As(err, &rejection) {
+			s.negotiationErrors.Add(1)
+		}
 		return
 	}
 	s.mu.Lock()
@@ -310,10 +338,18 @@ func (s *AssociationServer) serveConnection(entry *serverConnection) {
 	if handlerErr != nil && !errors.Is(handlerErr, context.Canceled) {
 		s.handlerErrors.Add(1)
 	}
+	// A handler that stopped on a protocol violation leaves the peer
+	// without an explanation; tell it with an A-P-ABORT and its reason.
+	if _, protocol := ProviderAbortReason(handlerErr); protocol && assoc.connection() != nil {
+		abortCtx, cancelAbort := context.WithTimeout(context.Background(), time.Second)
+		_ = assoc.AbortForError(abortCtx, handlerErr)
+		cancelAbort()
+	}
 }
 
 func (s *AssociationServer) rejectSaturated(conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	closeConn := func() { _ = conn.Close() }
+	defer func() { closeConn() }()
 	options := s.options.Accept
 	ctx, cancel := contextWithOptionalTimeout(s.ctx, options.NegotiationTimeout)
 	defer cancel()
@@ -326,16 +362,18 @@ func (s *AssociationServer) rejectSaturated(conn net.Conn) {
 	defer state.close()
 	state.setConnection(conn)
 	if options.TLSConfig != nil {
-		conn, err = serverTLSConn(ctx, conn, options.TLSConfig)
+		tlsConn, err := serverTLSConn(ctx, conn, options.TLSConfig)
 		if err != nil {
 			return
 		}
+		conn = tlsConn
 	}
-	pdu, err := readAssociationPDUObserved(ctx, conn, options.MaxPDU, state)
+	pdu, err := readAssociationPDUObserved(ctx, conn, options.MaxPDU, options.MaxAssociationPDU, state)
 	if err != nil {
 		return
 	}
-	if _, ok := pdu.(*AssociationRQ); !ok {
+	rq, ok := pdu.(*AssociationRQ)
+	if !ok {
 		return
 	}
 	rj := &AssociationRJ{
@@ -346,7 +384,10 @@ func (s *AssociationServer) rejectSaturated(conn net.Conn) {
 	// Count the server decision before exposing the rejection on the wire so a
 	// client that receives the RJ can immediately observe a consistent snapshot.
 	s.rejected.Add(1)
+	options.rejectedRequest = rq
+	notifyAssociationRejection(options, conn, rj)
 	_ = writeAssociationPDUObserved(ctx, conn, rj, state)
+	closeConn = func() { _ = lingerClose(conn, artimTimeout(options.ARTIMTimeout)) }
 }
 
 func (s *AssociationServer) Shutdown(ctx context.Context) error {
@@ -505,6 +546,8 @@ func (s *AssociationServer) Snapshot() AssociationServerMetrics {
 		Active:            s.active.Load(),
 		Accepted:          s.accepted.Load(),
 		Rejected:          s.rejected.Load(),
+		AcceptErrors:      s.acceptErrors.Load(),
+		NegotiationErrors: s.negotiationErrors.Load(),
 		NegotiationPanics: s.negotiationPanics.Load(),
 		HandlerErrors:     s.handlerErrors.Load(),
 		HandlerPanics:     s.handlerPanics.Load(),

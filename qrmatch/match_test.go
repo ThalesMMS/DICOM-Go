@@ -160,6 +160,7 @@ func TestMatchDateTimeRangesAndPartialPrecision(t *testing.T) {
 		name      string
 		query     core.Element
 		candidate core.Element
+		options   Options
 		want      bool
 	}{
 		{
@@ -196,12 +197,14 @@ func TestMatchDateTimeRangesAndPartialPrecision(t *testing.T) {
 			name:      "DA partial year matches day in year",
 			query:     str(tags.StudyDate, core.VRDA, "2026"),
 			candidate: str(tags.StudyDate, core.VRDA, "20260604"),
+			options:   Options{LenientDateQueries: true},
 			want:      true,
 		},
 		{
 			name:      "DA partial year range",
 			query:     str(tags.StudyDate, core.VRDA, "2025-2026"),
 			candidate: str(tags.StudyDate, core.VRDA, "20260604"),
+			options:   Options{LenientDateQueries: true},
 			want:      true,
 		},
 		{
@@ -225,7 +228,7 @@ func TestMatchDateTimeRangesAndPartialPrecision(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Match(dataset(tt.query), dataset(tt.candidate), Options{})
+			result, err := Match(dataset(tt.query), dataset(tt.candidate), tt.options)
 			if err != nil {
 				t.Fatalf("Match() error = %v", err)
 			}
@@ -233,6 +236,29 @@ func TestMatchDateTimeRangesAndPartialPrecision(t *testing.T) {
 				t.Fatalf("Match() = %v, want %v", result.Match, tt.want)
 			}
 		})
+	}
+}
+
+// TestMatchDateQueriesRequireFullDates checks that DA matching values other
+// than YYYYMMDD are invalid queries (PS3.5 6.2, as DCMTK's isDateQuery) unless
+// LenientDateQueries accepts them.
+func TestMatchDateQueriesRequireFullDates(t *testing.T) {
+	candidate := dataset(str(tags.StudyDate, core.VRDA, "20260604"))
+	for _, query := range []string{"2026", "202606", "2026.06.04", "2025-2026", "20260101-202612"} {
+		_, err := Match(dataset(str(tags.StudyDate, core.VRDA, query)), candidate, Options{})
+		if !errors.Is(err, ErrInvalidQuery) {
+			t.Errorf("%q: err = %v, want ErrInvalidQuery", query, err)
+		}
+		result, err := Match(dataset(str(tags.StudyDate, core.VRDA, query)), candidate, Options{LenientDateQueries: true})
+		if err != nil || !result.Match {
+			t.Errorf("%q lenient: match %v, err %v", query, result.Match, err)
+		}
+	}
+	// Stored candidate values are read leniently.
+	result, err := Match(dataset(str(tags.StudyDate, core.VRDA, "20260101-20261231")),
+		dataset(str(tags.StudyDate, core.VRDA, "2026.06.04")), Options{})
+	if err != nil || !result.Match {
+		t.Errorf("ACR-NEMA candidate: match %v, err %v", result.Match, err)
 	}
 }
 

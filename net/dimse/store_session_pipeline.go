@@ -59,23 +59,41 @@ func (s *StoreSession) storeAssociationPipelined(
 ) (int, int, bool, error) {
 	asyncSess, err := NewAsyncSession(assoc, AsyncSessionOptions{MaxInvokedOperations: effectiveInvoked})
 	if err != nil {
-		s.abortAssociation(assoc)
+		s.abortAssociation(assoc, err)
 		s.clearActive(assoc)
 		return position, completed, false, newStoreError("associate", -1, err, false)
 	}
 
 	completions := make(chan pipelineCompletion, effectiveInvoked)
+	var responseWorkers sync.WaitGroup
 	inFlight := make(map[int]pipelineFlight)
 	bytesInFlight := int64(0)
 	stopAdmit := false
 	usable := true
+	var accessErr error
+	// Finish cannot overtake a parsed correlated response. After abort, Wait is
+	// unblocked by the operation context/AsyncSession; drain only actual responses,
+	// without committing canceled batch counters or claiming remote rollback.
+	drainResponses := func() {
+		responseWorkers.Wait()
+		for {
+			select {
+			case completion := <-completions:
+				if completion.response != nil {
+					s.observeStoreResponse(ctx, result.Items[completion.sourceIndex], completion.response.Status)
+				}
+			default:
+				return
+			}
+		}
+	}
 
 	abortInFlight := func(cause error) (int, int, bool, error) {
 		for sourceIndex, flight := range inFlight {
 			item := &result.Items[sourceIndex]
 			if item.Outcome == StoreOutcomeNotSent || item.Outcome == "" {
 				item.Outcome = StoreOutcomeUnknown
-				item.Err = newStoreError("transfer", sourceIndex, ErrStoreUncertain, true)
+				item.Err = newStoreError("transfer", sourceIndex, uncertainStoreCause(cause), true)
 				result.Unknown++
 				completed++
 			}
@@ -88,6 +106,7 @@ func (s *StoreSession) storeAssociationPipelined(
 		abortCtx, cancel := context.WithTimeout(context.Background(), s.options.CleanupTimeout)
 		_ = asyncSess.Abort(abortCtx)
 		cancel()
+		drainResponses()
 		s.clearActive(assoc)
 		s.cancelAllNotSent(result, result.Plan, cause)
 		result.Complete = storeBatchComplete(result.Items)
@@ -107,16 +126,18 @@ func (s *StoreSession) storeAssociationPipelined(
 			item := &result.Items[planned.SourceIndex]
 			item.Descriptor = cloneStoreDescriptor(planned.Descriptor)
 			item.AssociationIndex = associationIndex
-			reserve := planned.Descriptor.Size
+			item.AssociationID = assoc.ID()
+			selectedPC, selectionErr := AcceptedContextForSOPClassTransferSyntaxes(assoc, planned.Descriptor.SOPClassUID, planned.Descriptor.WritableTransferSyntaxUIDs)
+			reserve := storeRepresentationSize(planned.Descriptor, selectedPC.TransferSyntaxUID)
 			if reserve < 0 {
 				reserve = 0
 			}
-			if s.options.MaxInFlightBytes > 0 && len(inFlight) > 0 && bytesInFlight+reserve > s.options.MaxInFlightBytes {
+			if s.options.MaxInFlightBytes > 0 && len(inFlight) > 0 && reserve > s.options.MaxInFlightBytes-bytesInFlight {
 				break
 			}
 
 			item.Attempt++
-			if !storeContextAccepted(assoc, planned) {
+			if selectionErr != nil {
 				item.Outcome = StoreOutcomeFailure
 				item.Err = newStoreError("negotiate", planned.SourceIndex, fmt.Errorf("%w: %w", ErrStorePresentationContextRejected, ExplainMissingPresentationContext(assoc, planned.Descriptor.SOPClassUID)), false)
 				result.Failed++
@@ -131,7 +152,8 @@ func (s *StoreSession) storeAssociationPipelined(
 						releaseErr := s.releasePipelinedSession(asyncSess)
 						s.clearActive(assoc)
 						if releaseErr != nil {
-							return position, completed, false, newStoreError("release", -1, ErrStoreAssociation, false)
+							result.ReleaseFailures++
+							return position, completed, false, storeReleaseError()
 						}
 						return position, completed, true, item.Err
 					}
@@ -140,13 +162,26 @@ func (s *StoreSession) storeAssociationPipelined(
 				continue
 			}
 
-			opened, openErr := openStoreSource(ctx, sources[planned.SourceIndex])
+			opened, pc, openErr := s.selectedStoreRepresentation(ctx, sources[planned.SourceIndex], assoc, planned.Descriptor, *remainingTotalBytes)
 			if openErr == nil {
 				openErr = validateOpenedStoreSource(planned.Descriptor, opened)
+			}
+			if openErr == nil {
+				s.observeStorePrepared(ctx, *item, opened, pc.TransferSyntaxUID)
+				openErr = checkStoreAccess(ctx, opened.BeforeStore)
 			}
 			if openErr != nil {
 				if opened.Close != nil {
 					_ = closeStoreSource(opened.Close)
+				}
+				if errors.Is(openErr, ErrStoreAccessDenied) {
+					accessErr = newStoreError("authorize", planned.SourceIndex, ErrStoreAccessDenied, false)
+					item.Err = accessErr
+					stopAdmit = true
+					break
+				}
+				if err := ctx.Err(); err != nil && opened.BeforeStore != nil {
+					return abortInFlight(err)
 				}
 				item.Outcome = StoreOutcomeFailure
 				item.Err = newStoreError("open", planned.SourceIndex, openErr, false)
@@ -162,7 +197,8 @@ func (s *StoreSession) storeAssociationPipelined(
 						releaseErr := s.releasePipelinedSession(asyncSess)
 						s.clearActive(assoc)
 						if releaseErr != nil {
-							return position, completed, false, newStoreError("release", -1, ErrStoreAssociation, false)
+							result.ReleaseFailures++
+							return position, completed, false, storeReleaseError()
 						}
 						return position, completed, true, item.Err
 					}
@@ -171,26 +207,8 @@ func (s *StoreSession) storeAssociationPipelined(
 				continue
 			}
 
-			pc, pcErr := AcceptedContextForSOPClassTransferSyntaxes(assoc, planned.Descriptor.SOPClassUID, planned.Descriptor.WritableTransferSyntaxUIDs)
-			if pcErr != nil {
-				_ = closeStoreSource(opened.Close)
-				item.Outcome = StoreOutcomeFailure
-				item.Err = newStoreError("negotiate", planned.SourceIndex, fmt.Errorf("%w: %w", ErrStorePresentationContextRejected, ExplainMissingPresentationContext(assoc, planned.Descriptor.SOPClassUID)), false)
-				result.Failed++
-				completed++
-				position++
-				if progressErr := s.reportProgress(ctx, *item, completed, len(sources)); progressErr != nil {
-					return abortInFlight(progressErr)
-				}
-				if !s.options.ContinueOnError {
-					stopAdmit = true
-					break
-				}
-				continue
-			}
-
 			item.Attempted = true
-			writeDataSet := s.boundedStoreWriter(opened.WriteDataSet, remainingTotalBytes)
+			writeDataSet := s.boundedStoreWriter(opened.WriteDataSet, remainingTotalBytes, storeWriterRepresentationBound(planned.Descriptor, pc.TransferSyntaxUID))
 			sourceIndex := planned.SourceIndex
 			closeFn := onceStoreCloser(opened.Close)
 			operation, startErr := asyncSess.StartCStoreEncoded(ctx, pc.ID, CStoreRequest{
@@ -207,13 +225,14 @@ func (s *StoreSession) storeAssociationPipelined(
 				}
 				if errors.Is(startErr, ErrAssociationStateUncertain) {
 					item.Outcome = StoreOutcomeUnknown
-					item.Err = newStoreError("transfer", sourceIndex, ErrStoreUncertain, true)
+					item.Err = newStoreError("transfer", sourceIndex, uncertainStoreCause(startErr), true)
 					result.Unknown++
 					completed++
 					position++
 					abortCtx, cancelAbort := context.WithTimeout(context.Background(), s.options.CleanupTimeout)
 					_ = asyncSess.Abort(abortCtx)
 					cancelAbort()
+					drainResponses()
 					s.clearActive(assoc)
 					return position, completed, false, nil
 				}
@@ -232,7 +251,9 @@ func (s *StoreSession) storeAssociationPipelined(
 			inFlight[sourceIndex] = pipelineFlight{sourceIndex: sourceIndex, reserved: reserve, close: closeFn}
 			bytesInFlight += reserve
 			position++
+			responseWorkers.Add(1)
 			go func(op *AsyncOperation, sourceIndex int, closeFn func() error, syntaxUID string) {
+				defer responseWorkers.Done()
 				message, waitErr := op.Wait(ctx)
 				closeErr := closeFn()
 				// StartCStoreEncoded already admitted/sent the command. Without
@@ -263,6 +284,9 @@ func (s *StoreSession) storeAssociationPipelined(
 		case <-ctx.Done():
 			return abortInFlight(ctx.Err())
 		}
+		if completion.response != nil {
+			s.observeStoreResponse(ctx, result.Items[completion.sourceIndex], completion.response.Status)
+		}
 		if err := s.contextOrClosed(ctx); err != nil {
 			return abortInFlight(err)
 		}
@@ -286,7 +310,7 @@ func (s *StoreSession) storeAssociationPipelined(
 		}
 
 		uncertain := completion.uncertain || errors.Is(completion.err, ErrAssociationStateUncertain)
-		if uncertain && !s.options.DisableReconnect && s.options.RetryUncertain && item.Attempt < s.options.MaxStoreAttempts {
+		if uncertain && accessErr == nil && !s.options.DisableReconnect && s.options.RetryUncertain && item.Attempt < s.options.MaxStoreAttempts {
 			item.Outcome = StoreOutcomeNotSent
 			item.Err = nil
 			item.Attempted = false
@@ -294,6 +318,7 @@ func (s *StoreSession) storeAssociationPipelined(
 			abortCtx, cancel := context.WithTimeout(context.Background(), s.options.CleanupTimeout)
 			_ = asyncSess.Abort(abortCtx)
 			cancel()
+			drainResponses()
 			s.clearActive(assoc)
 			for _, remaining := range inFlight {
 				if remaining.close != nil {
@@ -309,7 +334,7 @@ func (s *StoreSession) storeAssociationPipelined(
 				return abortInFlight(ctx.Err())
 			}
 			item.Outcome = StoreOutcomeUnknown
-			cause := error(ErrStoreUncertain)
+			cause := uncertainStoreCause(completion.err)
 			if errors.Is(completion.err, ErrStoreResourceLimit) {
 				cause = ErrStoreResourceLimit
 			}
@@ -343,11 +368,12 @@ func (s *StoreSession) storeAssociationPipelined(
 		if progressErr := s.reportProgress(ctx, *item, completed, len(sources)); progressErr != nil {
 			return abortInFlight(progressErr)
 		}
-		if usable && item.Err != nil && !s.options.ContinueOnError && len(inFlight) == 0 {
+		if usable && accessErr == nil && item.Err != nil && !s.options.ContinueOnError && len(inFlight) == 0 {
 			releaseErr := s.releasePipelinedSession(asyncSess)
 			s.clearActive(assoc)
 			if releaseErr != nil && usable {
-				return position, completed, false, newStoreError("release", -1, ErrStoreAssociation, false)
+				result.ReleaseFailures++
+				return position, completed, false, storeReleaseError()
 			}
 			return position, completed, usable, item.Err
 		}
@@ -355,18 +381,22 @@ func (s *StoreSession) storeAssociationPipelined(
 			abortCtx, cancel := context.WithTimeout(context.Background(), s.options.CleanupTimeout)
 			_ = asyncSess.Abort(abortCtx)
 			cancel()
+			drainResponses()
 			s.clearActive(assoc)
 			for _, remaining := range inFlight {
 				remItem := &result.Items[remaining.sourceIndex]
 				if remItem.Outcome == StoreOutcomeNotSent {
 					remItem.Outcome = StoreOutcomeUnknown
-					remItem.Err = newStoreError("transfer", remaining.sourceIndex, ErrStoreUncertain, true)
+					remItem.Err = newStoreError("transfer", remaining.sourceIndex, uncertainStoreCause(completion.err), true)
 					result.Unknown++
 					completed++
 				}
 				if remaining.close != nil {
 					_ = remaining.close()
 				}
+			}
+			if accessErr != nil {
+				return position, completed, false, accessErr
 			}
 			if !s.options.ContinueOnError {
 				return position, completed, false, item.Err
@@ -379,15 +409,27 @@ func (s *StoreSession) storeAssociationPipelined(
 		abortCtx, cancel := context.WithTimeout(context.Background(), s.options.CleanupTimeout)
 		_ = asyncSess.Abort(abortCtx)
 		cancel()
+		drainResponses()
 		s.clearActive(assoc)
 		return position, completed, false, nil
 	}
 	if err := s.releasePipelinedSession(asyncSess); err != nil {
 		s.clearActive(assoc)
-		return position, completed, false, newStoreError("release", -1, ErrStoreAssociation, false)
+		result.ReleaseFailures++
+		releaseErr := storeReleaseError()
+		if accessErr != nil {
+			return position, completed, false, errors.Join(accessErr, releaseErr)
+		}
+		if s.options.ContinueOnError {
+			// Every admitted item has its outcome: the lost release ends
+			// only this association, not the batch (#2000). StoreBatch
+			// reports it once the batch ends.
+			return position, completed, true, nil
+		}
+		return position, completed, false, releaseErr
 	}
 	s.clearActive(assoc)
-	return position, completed, true, nil
+	return position, completed, true, accessErr
 }
 
 func (s *StoreSession) releasePipelinedSession(session *AsyncSession) error {

@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"mime/multipart"
 	"strconv"
 	"strings"
 
+	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dicomjson"
 )
 
@@ -45,28 +45,105 @@ func decodeJSON(data []byte, out any) error {
 	return nil
 }
 
-func instanceRefsFromMetadata(data []byte, fallbackStudyUID, fallbackSeriesUID string) ([]InstanceRef, error) {
+func instanceRefsFromMetadata(data []byte, scope InstanceRef) ([]InstanceRef, error) {
 	datasets, err := datasetsFromDICOMJSON(data)
 	if err != nil {
 		return nil, err
 	}
-	return instanceRefsFromDatasets(datasets, fallbackStudyUID, fallbackSeriesUID)
+	return instanceRefsFromDatasets(datasets, scope)
 }
 
-func instanceRefsFromDatasets(datasets []Dataset, fallbackStudyUID, fallbackSeriesUID string) ([]InstanceRef, error) {
+// ErrInvalidMetadataIdentity indicates that WADO-RS metadata cannot be bound
+// to the requested study, series, or instance.
+var ErrInvalidMetadataIdentity = errors.New("invalid DICOMweb metadata identity")
+
+func instanceRefsFromDatasets(datasets []Dataset, scope InstanceRef) ([]InstanceRef, error) {
+	if scope.SOPInstanceUID != "" && len(datasets) > 1 {
+		return nil, fmt.Errorf("%w: instance response contains more than one dataset", ErrInvalidMetadataIdentity)
+	}
 	refs := make([]InstanceRef, 0, len(datasets))
+	var seen metadataIdentities
+	if scope.SeriesInstanceUID == "" {
+		seen = make(metadataIdentities)
+	}
 	for _, dataset := range datasets {
-		ref := InstanceRef{
-			StudyInstanceUID:  firstNonEmpty(dicomjson.ElementString(dataset, "0020000D"), fallbackStudyUID),
-			SeriesInstanceUID: firstNonEmpty(dicomjson.ElementString(dataset, "0020000E"), fallbackSeriesUID),
-			SOPInstanceUID:    dicomjson.ElementString(dataset, "00080018"),
+		ref, err := scopedMetadataRef(dataset, scope)
+		if err != nil {
+			return nil, err
 		}
-		if ref.StudyInstanceUID == "" || ref.SeriesInstanceUID == "" || ref.SOPInstanceUID == "" {
-			return nil, fmt.Errorf("metadata missing StudyInstanceUID, SeriesInstanceUID, or SOPInstanceUID")
+		if err := seen.record(ref); err != nil {
+			return nil, err
 		}
 		refs = append(refs, ref)
 	}
 	return refs, nil
+}
+
+type metadataIdentities map[string]InstanceRef
+
+func (seen metadataIdentities) record(ref InstanceRef) error {
+	if seen == nil {
+		return nil
+	}
+	if previous, exists := seen[ref.SOPInstanceUID]; exists && previous != ref {
+		return fmt.Errorf("%w: tag 00080018 occurs with conflicting parent UIDs", ErrInvalidMetadataIdentity)
+	}
+	seen[ref.SOPInstanceUID] = ref
+	return nil
+}
+
+func scopedMetadataRef(dataset Dataset, scope InstanceRef) (InstanceRef, error) {
+	// A noncanonical identity tag must not look like an absent parent.
+	for tag := range dataset {
+		canonical := strings.ToUpper(strings.TrimSpace(tag))
+		switch canonical {
+		case "0020000D", "0020000E", "00080018":
+			if tag != canonical {
+				return InstanceRef{}, fmt.Errorf("%w: noncanonical tag %s", ErrInvalidMetadataIdentity, canonical)
+			}
+		}
+	}
+	studyUID, err := scopedMetadataUID(dataset, "0020000D", scope.StudyInstanceUID, true)
+	if err != nil {
+		return InstanceRef{}, err
+	}
+	seriesUID, err := scopedMetadataUID(dataset, "0020000E", scope.SeriesInstanceUID, true)
+	if err != nil {
+		return InstanceRef{}, err
+	}
+	instanceUID, err := scopedMetadataUID(dataset, "00080018", scope.SOPInstanceUID, false)
+	if err != nil {
+		return InstanceRef{}, err
+	}
+	return InstanceRef{StudyInstanceUID: studyUID, SeriesInstanceUID: seriesUID, SOPInstanceUID: instanceUID}, nil
+}
+
+func scopedMetadataUID(dataset Dataset, tag, requested string, inheritParent bool) (string, error) {
+	element, present := dataset[tag]
+	var uid string
+	if present {
+		if element.VR != "UI" || len(element.Value) > 1 || element.InlineBinary != "" || element.BulkDataURI != "" {
+			return "", fmt.Errorf("%w: tag %s must contain one UID value", ErrInvalidMetadataIdentity, tag)
+		}
+		if len(element.Value) == 1 {
+			value, ok := element.Value[0].(string)
+			if !ok {
+				return "", fmt.Errorf("%w: tag %s must contain a UID string", ErrInvalidMetadataIdentity, tag)
+			}
+			uid = strings.TrimSpace(value)
+		}
+	}
+	requested = strings.TrimSpace(requested)
+	if uid == "" && inheritParent {
+		uid = requested
+	}
+	if !core.IsValidUID(uid) {
+		return "", fmt.Errorf("%w: tag %s is missing or invalid", ErrInvalidMetadataIdentity, tag)
+	}
+	if requested != "" && uid != requested {
+		return "", fmt.Errorf("%w: tag %s conflicts with the requested resource", ErrInvalidMetadataIdentity, tag)
+	}
+	return uid, nil
 }
 
 func objectPartsFromResponse(resp Response) ([]ObjectPart, error) {
@@ -91,36 +168,27 @@ func objectPartsFromResponseWithPolicy(resp Response, options Options, policy re
 		return nil, err
 	}
 	if mediaType == "multipart/related" {
-		boundary := params["boundary"]
-		body := newMultipartHeaderLimitReader(bytes.NewReader(resp.Body), boundary, limits.maxHeaderBytes)
-		reader := multipart.NewReader(body, boundary)
+		reader := newMultipartResponseReader(bytes.NewReader(resp.Body), params["boundary"], limits.maxHeaderBytes)
 		var parts []ObjectPart
 		for {
-			part, err := reader.NextRawPart()
+			part, err := reader.nextPart()
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
-				if body.Err() != nil {
-					return nil, body.Err()
-				}
 				return nil, multipartDecodeError(err)
 			}
 			if len(parts) >= limits.maxParts {
-				_ = part.Close()
 				return nil, &ResponseDecodeError{Kind: ResponseDecodePartLimit, Limit: int64(limits.maxParts), Value: int64(len(parts) + 1)}
 			}
 			if err := validatePartHeader(part.Header, limits); err != nil {
-				_ = part.Close()
 				return nil, err
 			}
 			partContentType := part.Header.Get("Content-Type")
 			if _, _, err := validatePartMediaType(partContentType, policy, limits); err != nil {
-				_ = part.Close()
 				return nil, err
 			}
 			data, err := readResponsePart(part, limits)
-			_ = part.Close()
 			if err != nil {
 				return nil, responsePartReadError(err)
 			}

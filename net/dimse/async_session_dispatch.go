@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/internal/netstore"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/object"
 )
@@ -59,7 +60,7 @@ func (s *AsyncSession) readLoop() {
 			s.shutdown(err)
 			return
 		default:
-			err := fmt.Errorf("%w: got %T at DIMSE message boundary", ul.ErrUnexpectedPDU, control)
+			err := ul.UnexpectedPDUError(control, "at a DIMSE message boundary")
 			s.shutdown(err)
 			return
 		}
@@ -469,6 +470,11 @@ retry:
 	slotHeld := false
 	if !s.wirePerformedUnlimited && !s.acquirePerformedSlotForRequest() {
 		s.mu.Lock()
+		if s.releaseSent || s.closed {
+			// Shutdown frees slots outside s.mu; that is not a peer violation.
+			s.mu.Unlock()
+			return false, 0, 0, ErrAsyncSessionReleasing
+		}
 		s.registry.metrics.WindowViolations++
 		s.mu.Unlock()
 		return false, 0, 0, ErrAsyncWindowExceeded
@@ -556,6 +562,16 @@ func (s *AsyncSession) dispatchPreparedRequest(message AsyncMessage) error {
 	s.mu.Unlock()
 	if !active || incoming.requestField != message.CommandField || incoming.pcID != message.PresentationContextID || incoming.generation != message.incomingGeneration {
 		return ErrAsyncOperationComplete
+	}
+	if message.CommandField == CStoreRQ {
+		pc, err := AcceptedContextByID(s.assoc, message.PresentationContextID)
+		if err != nil {
+			return err
+		}
+		classUID, _ := message.Command.GetUID(AffectedSOPClassUID)
+		if !netstore.CStoreContextMatches(classUID, pc) {
+			return s.respondAutomaticallyToIncoming(message, StatusCStoreDataSetDoesNotMatch)
+		}
 	}
 	go func() {
 		defer func() {
@@ -669,12 +685,18 @@ func acceptedRoleSelection(assoc *ul.Association, sopClassUID string) (ul.RoleSe
 
 func (s *AsyncSession) acquirePerformedSlotForRequest() bool {
 	for {
+		// Try the slot and inspect the registry under one lock. Terminal
+		// completion releases its slot and deletes its entry under s.mu, so
+		// an attempt made without the lock could fail just before that
+		// release and the scan below would then find neither a free slot nor
+		// a finishing operation, reporting a compliant peer as a violation.
+		s.mu.Lock()
 		select {
 		case s.performedSlots <- struct{}{}:
+			s.mu.Unlock()
 			return true
 		default:
 		}
-		s.mu.Lock()
 		finishing := false
 		for _, incoming := range s.registry.incoming {
 			// A compliant peer can observe the terminal bytes and send its next

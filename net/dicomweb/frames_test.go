@@ -386,15 +386,15 @@ func TestRetrieveFramesAcceptHeaderUsesTransferSyntaxMediaTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := retrieveFramesAcceptHeader(RetrieveOptions{TransferSyntaxUIDs: []string{tt.uid}})
+			got := retrieveFramesAccepts(RetrieveOptions{TransferSyntaxUIDs: []string{tt.uid}})[0]
 			want := `multipart/related; type="` + tt.mediaType + `"; transfer-syntax=` + tt.uid
 			if got != want {
-				t.Fatalf("retrieveFramesAcceptHeader() = %q, want %q", got, want)
+				t.Fatalf("first frame Accept = %q, want %q", got, want)
 			}
 		})
 	}
-	if got := retrieveFramesAcceptHeader(RetrieveOptions{}); got != `multipart/related; type="application/octet-stream"` {
-		t.Fatalf("default retrieveFramesAcceptHeader() = %q", got)
+	if got := retrieveFramesAccepts(RetrieveOptions{})[0]; got != `multipart/related; type="application/octet-stream"` {
+		t.Fatalf("default frame Accept = %q", got)
 	}
 }
 

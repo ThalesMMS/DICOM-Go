@@ -108,7 +108,7 @@ func ParseCStoreRequest(obj *object.Object) (*CStoreRequest, error) {
 		AffectedSOPInstanceUID: sopInstanceUID,
 	}
 	if originator, ok := obj.GetString(MoveOriginatorApplicationEntityTitle); ok {
-		req.MoveOriginatorAETitle = originator
+		req.MoveOriginatorAETitle = ul.NormalizeAETitle(originator)
 	}
 	originatorMessageID, err := optionalCommandUint16(obj, MoveOriginatorMessageID)
 	if err != nil {
@@ -124,7 +124,7 @@ func ParseCStoreResponse(obj *object.Object) (*CStoreResponse, error) {
 		return nil, err
 	}
 	if field != CStoreRSP {
-		return nil, fmt.Errorf("dicom dimse: command field 0x%04X, want C-STORE-RSP 0x%04X", field, CStoreRSP)
+		return nil, protocolViolationf("dicom dimse: command field 0x%04X, want C-STORE-RSP 0x%04X", field, CStoreRSP)
 	}
 	sopClassUID, err := commandUID(obj, AffectedSOPClassUID)
 	if err != nil {
@@ -209,13 +209,20 @@ func ReceiveCStoreRequestAny(assoc *ul.Association) (byte, *CStoreRequest, error
 }
 
 func SendCStoreResponse(assoc *ul.Association, pcID byte, rsp CStoreResponse) error {
+	return SendCStoreResponseWithContext(nil, assoc, pcID, rsp)
+}
+
+// SendCStoreResponseWithContext is SendCStoreResponse with a write that
+// observes ctx instead of the association's context; nil means the
+// association's.
+func SendCStoreResponseWithContext(ctx context.Context, assoc *ul.Association, pcID byte, rsp CStoreResponse) error {
 	if rsp.AffectedSOPClassUID == "" {
 		return fmt.Errorf("dicom dimse: missing C-STORE response Affected SOP Class UID")
 	}
 	if rsp.AffectedSOPInstanceUID == "" {
 		return fmt.Errorf("dicom dimse: missing C-STORE response Affected SOP Instance UID")
 	}
-	return SendCommandSet(assoc, pcID, rsp.CommandSet())
+	return SendCommandSetWithContext(ctx, assoc, pcID, rsp.CommandSet())
 }
 
 func ReceiveCStoreResponse(assoc *ul.Association, pcID byte) (*CStoreResponse, error) {
@@ -242,7 +249,7 @@ func SendDataSetWithContext(ctx context.Context, assoc *ul.Association, pcID byt
 	if err := object.WriteDataSet(writer, dataset, syntax); err != nil {
 		return fmt.Errorf("dicom dimse: send dataset: %w", err)
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.finishDataSet(syntax); err != nil {
 		return fmt.Errorf("dicom dimse: finish dataset P-DATA: %w", err)
 	}
 	return nil
@@ -272,7 +279,7 @@ func receiveDataSetWithContextAndLimits(ctx context.Context, assoc *ul.Associati
 func receiveDataSetWithContextLimitsAndSize(ctx context.Context, assoc *ul.Association, pcID byte, syntax transfer.Syntax, maxBytes int64, maxElements, maxDepth int) (*object.Object, int64, error) {
 	ctx = dataSetReadContext(ctx, assoc)
 	reader := newTypedPDataReaderWithContext(ctx, assoc, pcID, false)
-	dataset, err := object.ReadDataSetWithOptions(reader, syntax, object.ReadFileOptions{
+	dataset, err := readPDataDataSet(reader, syntax, object.ReadFileOptions{
 		MaxElementBytes:  maxBytes,
 		MaxTotalBytes:    maxBytes,
 		MaxElements:      maxElements,

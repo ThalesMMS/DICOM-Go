@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/dictionary/std"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/transfer"
@@ -104,7 +107,7 @@ func TestCMoveResponse_CommandSet_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCMoveResponse: %v", err)
 	}
-	if *parsed != rsp {
+	if !reflect.DeepEqual(*parsed, rsp) {
 		t.Fatalf("parsed=%+v want %+v", *parsed, rsp)
 	}
 }
@@ -306,4 +309,80 @@ func TestSendCMoveWithProgress_ReturnsCanceledContextBeforeSend(t *testing.T) {
 	if !errors.Is(err, ErrOperationCanceled) {
 		t.Fatalf("SendCMoveWithProgress() error = %v, want ErrOperationCanceled", err)
 	}
+}
+
+func TestRetrieveResponsesCarryFailedSOPInstanceUIDListInIdentifier(t *testing.T) {
+	failed := []string{"1.2.3.4.5", "1.2.3.4.6"}
+	caller := object.FromElements([]core.Element{newUIListElement(core.NewTag(0x0008, 0x0018), []string{"9.9"})}, std.Dictionary)
+	for _, tc := range []struct {
+		name         string
+		commandSet   func(uint16, *object.Object) []core.Element
+		identifier   func(uint16, *object.Object) *object.Object
+		status       uint16
+		wantListSent bool
+	}{
+		{"C-MOVE failure", cMoveTestCommandSet(failed), cMoveTestIdentifier(failed), StatusCMoveSubOperationsCompleteOneOrMoreFailures, true},
+		{"C-MOVE pending", cMoveTestCommandSet(failed), cMoveTestIdentifier(failed), StatusPending, false},
+		{"C-GET failure", cGetTestCommandSet(failed), cGetTestIdentifier(failed), StatusCGetSubOperationsCompleteOneOrMoreFailures, true},
+		{"C-GET cancel", cGetTestCommandSet(failed), cGetTestIdentifier(failed), StatusCGetCancel, true},
+		{"C-GET success", cGetTestCommandSet(failed), cGetTestIdentifier(failed), StatusSuccess, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, element := range tc.commandSet(tc.status, nil) {
+				if element.Header.Tag == FailedSOPInstanceUIDList {
+					t.Fatal("command set carries the Failed SOP Instance UID List")
+				}
+			}
+			identifier := tc.identifier(tc.status, caller)
+			got, ok := failedSOPInstanceUIDsFromIdentifier(identifier)
+			if ok != tc.wantListSent || (ok && !reflect.DeepEqual(got, failed)) {
+				t.Fatalf("identifier list = %v, %v; want sent=%v", got, ok, tc.wantListSent)
+			}
+			if tc.wantListSent {
+				if _, ok := identifier.GetString(core.NewTag(0x0008, 0x0018)); !ok {
+					t.Fatal("caller identifier elements were dropped")
+				}
+				dataSetType := commandSetUint16(t, tc.commandSet(tc.status, nil), CommandDataSetType)
+				if dataSetType == NoDataSet {
+					t.Fatal("CommandDataSetType says no dataset although the list is sent")
+				}
+			}
+			if _, ok := caller.Get(FailedSOPInstanceUIDList); ok {
+				t.Fatal("caller identifier was modified")
+			}
+		})
+	}
+}
+
+func cMoveTestCommandSet(failed []string) func(uint16, *object.Object) []core.Element {
+	return func(status uint16, identifier *object.Object) []core.Element {
+		return CMoveResponse{AffectedSOPClassUID: StudyRootMoveSOPClassUID, MessageIDBeingRespondedTo: 1, Status: status, Identifier: identifier, FailedSOPInstanceUIDListOrNil: failed}.CommandSet()
+	}
+}
+
+func cMoveTestIdentifier(failed []string) func(uint16, *object.Object) *object.Object {
+	return func(status uint16, identifier *object.Object) *object.Object {
+		return CMoveResponse{Status: status, Identifier: identifier, FailedSOPInstanceUIDListOrNil: failed}.identifier()
+	}
+}
+
+func cGetTestCommandSet(failed []string) func(uint16, *object.Object) []core.Element {
+	return func(status uint16, identifier *object.Object) []core.Element {
+		return CGetResponse{AffectedSOPClassUID: StudyRootGetSOPClassUID, MessageIDBeingRespondedTo: 1, Status: status, Identifier: identifier, FailedSOPInstanceUIDListOrNil: failed}.CommandSet()
+	}
+}
+
+func cGetTestIdentifier(failed []string) func(uint16, *object.Object) *object.Object {
+	return func(status uint16, identifier *object.Object) *object.Object {
+		return CGetResponse{Status: status, Identifier: identifier, FailedSOPInstanceUIDListOrNil: failed}.identifier()
+	}
+}
+
+func commandSetUint16(t *testing.T, elements []core.Element, tag core.Tag) uint16 {
+	t.Helper()
+	value, err := CommandUint16(object.FromElements(elements, std.Dictionary), tag)
+	if err != nil {
+		t.Fatalf("CommandUint16(%s): %v", tag, err)
+	}
+	return value
 }

@@ -141,6 +141,27 @@ func TestNonPatientSequenceAndBinaryKeys(t *testing.T) {
 	}
 }
 
+func TestNonPatientProjectionUsesInheritedCharacterSet(t *testing.T) {
+	model := HangingProtocolModel
+	sequenceTag, codeTag := npTag(0x72, 0x0e), npTag(8, 0x100)
+	encodedCode := core.NewRawElement(codeTag, core.VRSH, []byte("Clé"))
+	candidate := npInstance(model, 8)
+	candidate.Put(npString(npTag(8, 5), core.VRCS, "ISO_IR 192"))
+	candidate.Put(npSequence(sequenceTag, encodedCode))
+	query := npObject(npString(npTag(8, 5), core.VRCS, "ISO_IR 192"), npSequence(sequenceTag, encodedCode))
+	projection, match, err := model.Match(context.Background(), query, candidate)
+	if err != nil || !match {
+		t.Fatalf("match = %v, error = %v", match, err)
+	}
+	items, _ := projection.GetSequence(sequenceTag)
+	if len(items) != 1 {
+		t.Fatalf("projected items = %d, want 1", len(items))
+	}
+	if got, ok := items[0].GetString(codeTag); !ok || got != "Clé" {
+		t.Fatalf("projected Code Value = %q", got)
+	}
+}
+
 func TestNonPatientRetrieveIdentifiersAndBounds(t *testing.T) {
 	for _, model := range []NonPatientModel{HangingProtocolModel, ColorPaletteModel} {
 		for _, values := range [][]string{{"1.2.3"}, {"1.2.3", "1.2.4"}} {

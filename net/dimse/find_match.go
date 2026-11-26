@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dictionary/std"
 	"github.com/ThalesMMS/dicom-go/dictionary/tags"
 	"github.com/ThalesMMS/dicom-go/object"
+	"github.com/ThalesMMS/dicom-go/personname/fuzzy"
 	"github.com/ThalesMMS/dicom-go/qrmatch"
 )
 
@@ -50,11 +52,20 @@ func StudyRootFindMatchingTags(level string) []core.Tag {
 
 // MemoryFindIndex is an in-memory Study Root C-FIND handler. Candidates are
 // already-extracted datasets; IMAGE matching does not open Part 10 files.
+// FuzzyPersonNames is applied to PN keys when the request's association
+// negotiated fuzzy semantic matching; accept it with
+// CFindExtendedNegotiationHandler. Combined date-time matching and timezone
+// query adjustment (qrmatch.Options.CombinedDateTime and TimezoneAdjustment)
+// apply when they were negotiated too; CandidateTimezone is the zone of
+// candidates without Timezone Offset From UTC. Empty and multiple value
+// matching apply when negotiated with the requestor.
 type MemoryFindIndex struct {
 	Candidates        []*object.Object
 	RetrieveAETitle   string
 	SupportedMatching []core.Tag
 	Limits            qrmatch.Limits
+	FuzzyPersonNames  fuzzy.FuzzyStr
+	CandidateTimezone *time.Location
 }
 
 func (idx MemoryFindIndex) Find(ctx context.Context, req CFindRequestContext) ([]*object.Object, error) {
@@ -66,9 +77,28 @@ func (idx MemoryFindIndex) Find(ctx context.Context, req CFindRequestContext) ([
 		supported = StudyRootFindMatchingTags(req.QueryRetrieveLevel)
 	}
 	options := qrmatch.Options{
-		Context:           ctx,
-		Limits:            idx.Limits,
-		SupportedMatching: supported,
+		Context:               ctx,
+		Limits:                idx.Limits,
+		SupportedMatching:     supported,
+		CombinedDateTime:      req.ExtendedNegotiation.CombinedDateTimeMatching,
+		EmptyValueMatching:    req.ExtendedNegotiation.EmptyValueMatching,
+		MultipleValueMatching: req.ExtendedNegotiation.MultipleValueMatching,
+	}
+	if req.ExtendedNegotiation.FuzzySemanticMatching {
+		options.FuzzyPersonNames = idx.FuzzyPersonNames
+	}
+	if req.ExtendedNegotiation.TimezoneQueryAdjustment {
+		options.TimezoneAdjustment = true
+		options.CandidateTimezone = idx.CandidateTimezone
+	}
+	if len(idx.Candidates) == 0 && (options.EmptyValueMatching || options.MultipleValueMatching) {
+		// Invalid matching keys must be diagnosed even for an empty index.
+		if _, err := qrmatch.Match(req.Identifier, object.New(std.Dictionary), options); err != nil {
+			if errors.Is(err, qrmatch.ErrCanceled) {
+				return nil, err
+			}
+			return nil, NewCFindSCPError(CFindStatusUnableToProcess, err.Error(), err)
+		}
 	}
 	var matches []*object.Object
 	for _, candidate := range idx.Candidates {
@@ -108,6 +138,10 @@ func ProjectFindResponse(query, candidate *object.Object, retrieveAETitle string
 	}
 	response := object.New(std.Dictionary)
 	seen := make(map[core.Tag]struct{})
+	unsupportedKeys := make(map[core.Tag]struct{}, len(unsupported))
+	for _, tag := range unsupported {
+		unsupportedKeys[tag] = struct{}{}
+	}
 	for _, element := range query.Elements() {
 		tag := element.Tag()
 		seen[tag] = struct{}{}
@@ -125,7 +159,7 @@ func ProjectFindResponse(query, candidate *object.Object, retrieveAETitle string
 			})
 			continue
 		}
-		if candidate != nil {
+		if _, unsupported := unsupportedKeys[tag]; !unsupported && candidate != nil {
 			if value, ok := candidate.Get(tag); ok {
 				response.Put(value)
 				continue

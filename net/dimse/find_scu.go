@@ -128,6 +128,17 @@ func FindWithOptions(options OperationOptions, assoc *ul.Association, pcID byte,
 				errCh <- applyOperationErrorPolicy(assoc, options.ErrorPolicy, newOperationError("C-FIND", err, true))
 				return
 			}
+			if rsp.MessageIDBeingRespondedTo != req.MessageID {
+				err := protocolViolationf("dicom dimse: C-FIND response message ID %d, want %d", rsp.MessageIDBeingRespondedTo, req.MessageID)
+				errCh <- applyOperationErrorPolicy(assoc, options.ErrorPolicy, newOperationError("C-FIND", err, true))
+				return
+			}
+			if id == nil && CategorizeCFindStatus(rsp.Status) == CFindStatusPending {
+				// PS3.4 C.4.1.3: every pending response carries one match.
+				err := protocolViolationf("dicom dimse: pending C-FIND response without an Identifier")
+				errCh <- applyOperationErrorPolicy(assoc, options.ErrorPolicy, newOperationError("C-FIND", err, true))
+				return
+			}
 
 			// Emit the response.
 			select {

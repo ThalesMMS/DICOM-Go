@@ -1,11 +1,14 @@
 // Package dicomweb provides neutral DICOMweb client and embeddable server
-// primitives for QIDO-RS, WADO-RS, and STOW-RS endpoints.
+// primitives for QIDO-RS, WADO-RS, STOW-RS, and UPS-RS (workitems with a
+// WebSocket event channel) endpoints.
 //
 // The package owns reusable request construction, response parsing, typed
 // HTTP/DICOMweb errors, and bearer-token injection. TokenManager provides an
 // in-memory access-token cache with serialized refresh and one safe retry after
-// a challenged replayable request. Applications remain responsible for endpoint
-// profiles, OAuth2/OIDC protocol flows, OS-protected credential persistence,
+// a challenged replayable request. The optional subpackage net/dicomweb/oidc
+// adds OpenID Connect discovery, native-app logins, refresh-token exchange and
+// JWT/JWKS verification; this package does not import it. Applications remain
+// responsible for endpoint profiles, OS-protected credential persistence,
 // authorization policy, jobs, archive import/export, and user-facing state.
 //
 // Server is deny-by-default: callers must provide an Authorizer or explicitly

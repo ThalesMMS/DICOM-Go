@@ -24,13 +24,15 @@ import (
 const explicitVRLittleEndianUID = "1.2.840.10008.1.2.1"
 
 type stagedStoreMIMEPart struct {
-	path            string
-	contentType     string
-	contentLocation string
-	contentID       string
-	size            int64
-	digest          [sha256.Size]byte
-	info            os.FileInfo
+	path              string
+	contentType       string
+	transferSyntaxUID string
+	semanticFailure   bool
+	contentLocation   string
+	contentID         string
+	size              int64
+	digest            [sha256.Size]byte
+	info              os.FileInfo
 }
 
 type storeMetadataInstance struct {
@@ -45,7 +47,8 @@ func (s *Server) stageStoreMetadataRequest(w http.ResponseWriter, r *http.Reques
 		return nil, newServerStatusError(http.StatusUnsupportedMediaType, "unsupported_media_type", ErrUnsupported)
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.limits.MaxRequestBytes)
-	reader := multipart.NewReader(r.Body, outerParams["boundary"])
+	observedBody := &responseReadErrorObserver{reader: r.Body}
+	reader := multipart.NewReader(observedBody, outerParams["boundary"])
 
 	var rawParts []stagedStoreMIMEPart
 	cleanupRaw := true
@@ -109,7 +112,8 @@ func (s *Server) stageStoreMetadataRequest(w http.ResponseWriter, r *http.Reques
 				return nil, ErrInvalidRequest
 			}
 		} else {
-			if partType != "application/octet-stream" || !validBulkPartParameters(partParams) {
+			_, whole := storeWholeProfile(partType)
+			if !storeBulkPartParameters(partType, partParams) && !whole && !strings.HasPrefix(partType, "video/") {
 				_ = part.Close()
 				return nil, newServerStatusError(http.StatusUnsupportedMediaType, "unsupported_media_type", ErrUnsupported)
 			}
@@ -124,6 +128,8 @@ func (s *Server) stageStoreMetadataRequest(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return nil, err
 		}
+		staged.transferSyntaxUID = transfer.NormalizeUID(partParams["transfer-syntax"])
+		staged.semanticFailure = !isMetadata && !storeBulkPartParameters(partType, partParams)
 		rawParts = append(rawParts, staged)
 		if isMetadata {
 			metadataBytes += staged.size
@@ -140,6 +146,18 @@ func (s *Server) stageStoreMetadataRequest(w http.ResponseWriter, r *http.Reques
 			return nil, ErrInvalidRequest
 		}
 		bulkByLocation[staged.contentLocation] = staged
+	}
+	if observedBody.err != nil {
+		return nil, classifyMultipartError(observedBody.err)
+	}
+	if _, err := copyBounded(r.Context(), io.Discard, observedBody, s.limits.MaxRequestBytes); err != nil {
+		return nil, classifyMultipartError(err)
+	}
+	if observedBody.err != nil {
+		return nil, classifyMultipartError(observedBody.err)
+	}
+	if err := r.Context().Err(); err != nil {
+		return nil, err
 	}
 	if len(metadataParts) == 0 || len(rawParts) == 0 {
 		return nil, ErrInvalidRequest
@@ -167,13 +185,19 @@ func (s *Server) stageStoreMetadataRequest(w http.ResponseWriter, r *http.Reques
 	referenceCounts := make(map[string]int)
 	for _, instance := range instances {
 		for _, ref := range instance.refs {
-			referenceCounts[ref]++
-			if _, ok := bulkByLocation[ref]; !ok {
-				return nil, ErrInvalidRequest
+			parts, err := storeReferencedParts(instance, ref, bulkByLocation, s.limits.MaxParts)
+			if err != nil {
+				return nil, err
+			}
+			for _, part := range parts {
+				referenceCounts[part.contentLocation]++
 			}
 		}
 	}
 	for location := range bulkByLocation {
+		if _, whole := storeWholeProfile(bulkByLocation[location].contentType); (whole || bulkByLocation[location].semanticFailure) && referenceCounts[location] != 1 {
+			return nil, ErrInvalidRequest
+		}
 		if referenceCounts[location] < 1 {
 			return nil, ErrInvalidRequest
 		}
@@ -192,6 +216,9 @@ func (s *Server) stageStoreMetadataRequest(w http.ResponseWriter, r *http.Reques
 			return nil, ErrResourceLimit
 		}
 		candidate, err := s.writeStagedMetadataInstance(r.Context(), instance, bulkByLocation, routeStudyUID, maximumBytes)
+		if err != nil && storeInstanceUsesWholeBulk(instance, bulkByLocation) && (errors.Is(err, ErrInvalidRequest) || errors.Is(err, ErrUnsupported)) {
+			candidate, err = s.failedWholeStoreInstance(instance, routeStudyUID)
+		}
 		if err != nil {
 			_ = cleanupStagedParts(stagedInstances)
 			return nil, err
@@ -266,10 +293,10 @@ func hasContentCoding(header http.Header) bool {
 }
 
 func (s *Server) stageStoreMIMEPart(ctx context.Context, part *multipart.Part, contentType, contentID string, maximumBytes int64) (stagedStoreMIMEPart, error) {
-	temporary, err := os.CreateTemp(s.options.SpoolDirectory, ".dicomweb-stow-metadata-*")
+	temporary, err := s.createSpoolFile(".dicomweb-stow-metadata-*")
 	if err != nil {
 		_ = part.Close()
-		return stagedStoreMIMEPart{}, newServerStatusError(http.StatusServiceUnavailable, "spool_failure", ErrBackend)
+		return stagedStoreMIMEPart{}, spoolFailure()
 	}
 	path := temporary.Name()
 	removeOnError := true
@@ -283,8 +310,12 @@ func (s *Server) stageStoreMIMEPart(ctx context.Context, part *multipart.Part, c
 		}
 	}()
 	hash := sha256.New()
-	size, copyErr := copyBounded(ctx, io.MultiWriter(temporary, hash), part, maximumBytes)
+	spool := &spoolWriter{file: temporary}
+	size, copyErr := copyBounded(ctx, io.MultiWriter(spool, hash), part, maximumBytes)
 	partCloseErr := part.Close()
+	if spool.err != nil {
+		return stagedStoreMIMEPart{}, spoolFailure()
+	}
 	if copyErr != nil {
 		return stagedStoreMIMEPart{}, classifyMultipartError(copyErr)
 	}
@@ -295,13 +326,16 @@ func (s *Server) stageStoreMIMEPart(ctx context.Context, part *multipart.Part, c
 		return stagedStoreMIMEPart{}, ErrInvalidRequest
 	}
 	info, err := temporary.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() != size {
+	if err != nil {
+		return stagedStoreMIMEPart{}, spoolFailure()
+	}
+	if !info.Mode().IsRegular() || info.Size() != size {
 		return stagedStoreMIMEPart{}, ErrBackend
 	}
 	closeErr := temporary.Close()
 	temporaryOpen = false
 	if closeErr != nil {
-		return stagedStoreMIMEPart{}, ErrBackend
+		return stagedStoreMIMEPart{}, spoolFailure()
 	}
 	removeOnError = false
 	var digest [sha256.Size]byte
@@ -437,9 +471,20 @@ func storeMetadataValueLimit(limits ServerLimits) int {
 }
 
 func (s *Server) writeStagedMetadataInstance(ctx context.Context, instance storeMetadataInstance, bulk map[string]stagedStoreMIMEPart, routeStudyUID string, maximumBytes int64) (stagedStorePart, error) {
-	temporary, err := os.CreateTemp(s.options.SpoolDirectory, ".dicomweb-stow-*")
+	instance, wholeSyntax, wholePixelRef, documentRef, err := s.prepareWholeStore(ctx, instance, bulk)
 	if err != nil {
-		return stagedStorePart{}, newServerStatusError(http.StatusServiceUnavailable, "spool_failure", ErrBackend)
+		return stagedStorePart{}, err
+	}
+	instance, syntax, compressedFrames, pixelRef, err := s.prepareCompressedStore(ctx, instance, bulk)
+	if wholePixelRef != "" {
+		syntax, pixelRef = wholeSyntax, wholePixelRef
+	}
+	if err != nil {
+		return stagedStorePart{}, err
+	}
+	temporary, err := s.createSpoolFile(".dicomweb-stow-*")
+	if err != nil {
+		return stagedStorePart{}, spoolFailure()
 	}
 	path := temporary.Name()
 	removeOnError := true
@@ -455,13 +500,13 @@ func (s *Server) writeStagedMetadataInstance(ctx context.Context, instance store
 	hash := sha256.New()
 	limited := &storeMetadataLimitWriter{writer: io.MultiWriter(temporary, hash), maximum: maximumBytes}
 	resolvedCounts := make(map[string]int)
-	file := &object.File{Dataset: instance.object, TransferSyntax: transfer.ExplicitVRLittleEndian}
-	err = object.WriteFileWithOptions(limited, file, object.WriteFileOptions{BulkDataResolver: func(value core.BulkDataValue) (object.BulkDataSource, error) {
+	file := &object.File{Dataset: instance.object, TransferSyntax: syntax}
+	writeOptions := object.WriteFileOptions{BulkDataResolver: func(value core.BulkDataValue) (object.BulkDataSource, error) {
 		if err := ctx.Err(); err != nil {
 			return object.BulkDataSource{}, err
 		}
 		part, ok := bulk[value.URI]
-		if !ok {
+		if !ok || (part.contentType != "application/octet-stream" && value.URI != documentRef) {
 			return object.BulkDataSource{}, ErrInvalidRequest
 		}
 		reader, err := openStagedStoreMIMEPart(ctx, part)
@@ -470,18 +515,30 @@ func (s *Server) writeStagedMetadataInstance(ctx context.Context, instance store
 		}
 		resolvedCounts[value.URI]++
 		return object.BulkDataSource{Reader: reader, Size: part.size}, nil
-	}})
+	}}
+	if compressedFrames != nil {
+		err = object.WriteFileFrames(limited, file, compressedFrames, object.FrameWriteOptions{WriteFileOptions: writeOptions, MaxFragments: s.limits.MaxParts})
+	} else {
+		err = object.WriteFileWithOptions(limited, file, writeOptions)
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrResourceLimit) {
 			return stagedStorePart{}, err
 		}
-		if errors.Is(err, ErrBackend) || limited.writeErr != nil {
+		// The limit writer's only write failures are the spool's.
+		if limited.writeErr != nil {
+			return stagedStorePart{}, spoolFailure()
+		}
+		if errors.Is(err, ErrBackend) {
 			return stagedStorePart{}, ErrBackend
 		}
 		return stagedStorePart{}, ErrInvalidRequest
 	}
 	expectedCounts := make(map[string]int, len(resolvedCounts))
 	for _, ref := range instance.refs {
+		if ref == pixelRef {
+			continue
+		}
 		expectedCounts[ref]++
 	}
 	if len(expectedCounts) != len(resolvedCounts) {
@@ -493,19 +550,22 @@ func (s *Server) writeStagedMetadataInstance(ctx context.Context, instance store
 		}
 	}
 	if err := temporary.Sync(); err != nil {
-		return stagedStorePart{}, ErrBackend
+		return stagedStorePart{}, spoolFailure()
 	}
 	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
-		return stagedStorePart{}, ErrBackend
+		return stagedStorePart{}, spoolFailure()
 	}
 	info, err := temporary.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() != limited.written {
+	if err != nil {
+		return stagedStorePart{}, spoolFailure()
+	}
+	if !info.Mode().IsRegular() || info.Size() != limited.written {
 		return stagedStorePart{}, ErrBackend
 	}
 	var digest [32]byte
 	copy(digest[:], hash.Sum(nil))
 	candidate := stagedStorePart{
-		path: path, contentType: "application/dicom", transferSyntaxUID: explicitVRLittleEndianUID,
+		path: path, contentType: "application/dicom", transferSyntaxUID: syntax.UID,
 		size: limited.written, digest: digest, info: info,
 	}
 	if err := s.inspectStagedStorePart(ctx, &candidate, routeStudyUID, temporary); err != nil {
@@ -514,7 +574,7 @@ func (s *Server) writeStagedMetadataInstance(ctx context.Context, instance store
 	closeErr := temporary.Close()
 	temporaryOpen = false
 	if closeErr != nil {
-		return stagedStorePart{}, ErrBackend
+		return stagedStorePart{}, spoolFailure()
 	}
 	removeOnError = false
 	return candidate, nil
@@ -544,8 +604,11 @@ func readStagedStoreMIMEPart(ctx context.Context, part stagedStoreMIMEPart, maxi
 	if err != nil {
 		return nil, err
 	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maximum+1))
+	data, readErr := io.ReadAll(io.LimitReader(bulkContextReader{ctx: ctx, reader: file}, maximum+1))
 	closeErr := file.Close()
+	if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
+		return nil, readErr
+	}
 	if readErr != nil || closeErr != nil {
 		return nil, ErrBackend
 	}

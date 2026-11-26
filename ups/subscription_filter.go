@@ -140,8 +140,12 @@ func validSubscriptionMatchingValue(vr core.VR, value string) bool {
 	if vr != core.VRDA && vr != core.VRDT && vr != core.VRTM {
 		return true
 	}
-	if _, _, rangeOK := parseTemporalRange(vr, value, ""); rangeOK {
+	switch _, _, readings := parseTemporalRange(vr, value, ""); {
+	case readings == 1:
 		return true
+	case readings > 1:
+		// Splits validly at more than one '-': ambiguous.
+		return false
 	}
 	_, valueOK := parseTemporalValue(vr, value, "")
 	return valueOK
@@ -173,12 +177,12 @@ func subscriptionFilterMatches(filter *SubscriptionFilter, step Step) bool {
 	if value, present := dataSetString(step.Attributes, TagTimezoneOffsetFromUTC); present {
 		candidateTimezone = value
 	}
+	candidate := stepQueryMatcher{attributes: step.Attributes}
 	for _, key := range filter.Keys {
 		if key.Tag == TagSpecificCharacterSet || key.Tag == TagTimezoneOffsetFromUTC {
 			continue
 		}
-		element, present := dataSetElement(step.Attributes, key.Tag)
-		if !present || !queryValuesMatch(element, key.Values, queryTimezone, candidateTimezone) {
+		if !candidate.matches(key.Tag, key.Values, queryTimezone, candidateTimezone) {
 			return false
 		}
 	}

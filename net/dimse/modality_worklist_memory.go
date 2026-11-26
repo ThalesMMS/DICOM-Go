@@ -11,12 +11,28 @@ import (
 
 type inMemoryModalityWorklistHandler struct {
 	records []*object.Object
+	options InMemoryModalityWorklistOptions
+}
+
+// InMemoryModalityWorklistOptions configure NewInMemoryModalityWorklistHandlerWithOptions.
+type InMemoryModalityWorklistOptions struct {
+	// UniversalQueryMatchesAll answers an Identifier without a non-universal
+	// matching key with every record, as PS3.4 universal matching and DCMTK
+	// wlmscpfs do. By default such a query matches nothing, so a bare return
+	// key request cannot enumerate the whole worklist.
+	UniversalQueryMatchesAll bool
 }
 
 // NewInMemoryModalityWorklistHandler snapshots synthetic/test MWL records and
 // returns a deterministic streaming handler. Production RIS/PACS adapters can
 // implement ModalityWorklistHandler directly without materializing results.
 func NewInMemoryModalityWorklistHandler(records []*object.Object) (ModalityWorklistHandler, error) {
+	return NewInMemoryModalityWorklistHandlerWithOptions(records, InMemoryModalityWorklistOptions{})
+}
+
+// NewInMemoryModalityWorklistHandlerWithOptions is
+// NewInMemoryModalityWorklistHandler with options.
+func NewInMemoryModalityWorklistHandlerWithOptions(records []*object.Object, options InMemoryModalityWorklistOptions) (ModalityWorklistHandler, error) {
 	cloned := make([]*object.Object, len(records))
 	for i, record := range records {
 		if record == nil {
@@ -24,7 +40,7 @@ func NewInMemoryModalityWorklistHandler(records []*object.Object) (ModalityWorkl
 		}
 		cloned[i] = cloneMWLObject(record)
 	}
-	return &inMemoryModalityWorklistHandler{records: cloned}, nil
+	return &inMemoryModalityWorklistHandler{records: cloned, options: options}, nil
 }
 
 func (handler *inMemoryModalityWorklistHandler) Find(ctx context.Context, request ModalityWorklistRequest, yield ModalityWorklistYield) error {
@@ -34,7 +50,7 @@ func (handler *inMemoryModalityWorklistHandler) Find(ctx context.Context, reques
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if !modalityWorklistHasMatchingKey(request.Identifier.Query) {
+	if !handler.options.UniversalQueryMatchesAll && !modalityWorklistHasMatchingKey(request.Identifier.Query) {
 		return nil
 	}
 	for _, record := range handler.records {

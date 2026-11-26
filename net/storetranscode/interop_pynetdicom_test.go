@@ -46,6 +46,13 @@ func TestStoreTranscodeLossyAgainstPynetdicomAndPillow(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.CommandContext(ctx, python, "-u", "-c", lossyStorePeer, inputPath, outputPath)
+	peerLog := filepath.Join(dir, "peer.stderr")
+	stderr, err := os.Create(peerLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	command.Stderr = stderr
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +102,8 @@ func TestStoreTranscodeLossyAgainstPynetdicomAndPillow(t *testing.T) {
 	result, sendErr := session.StoreBatch(ctx, []dimse.StoreSource{source})
 	closeErr := session.Close(ctx)
 	if sendErr != nil || closeErr != nil || result.Succeeded != 1 {
-		t.Fatalf("independent C-STORE: send=%v close=%v result=%+v", sendErr, closeErr, result.Items)
+		log, _ := os.ReadFile(peerLog)
+		t.Fatalf("independent C-STORE: send=%v close=%v result=%+v\npeer:\n%s", sendErr, closeErr, result.Items, log)
 	}
 	got, err := os.ReadFile(outputPath)
 	if err != nil {
@@ -116,7 +124,7 @@ func TestStoreTranscodeLossyAgainstPynetdicomAndPillow(t *testing.T) {
 }
 
 const lossyStorePeer = `
-import io, sys
+import io, sys, traceback
 import pydicom
 from PIL import Image
 from pydicom.encaps import generate_frames
@@ -124,7 +132,12 @@ from pynetdicom import AE, evt
 
 source = pydicom.dcmread(sys.argv[1])
 expected = source.to_json_dict()
-ignored = ['7FE00010', '00080018', '00080008', '00282110', '00282112', '00282114']
+# The attributes the lossy step changes or adds are checked one by one; every
+# other attribute must arrive unchanged. The derivation (Derivation
+# Description, Source Image Sequence, Derivation Code Sequence) is recorded
+# since 72d2702c.
+ignored = ['7FE00010', '00080018', '00080008', '00282110', '00282112', '00282114',
+           '00082111', '00082112', '00089215']
 for tag in ignored:
     expected.pop(tag, None)
 
@@ -138,7 +151,18 @@ def store(event):
         assert ds.LossyImageCompression == '01'
         assert str(ds.ImageType[0]) == 'DERIVED'
         assert ds.LossyImageCompressionMethod == 'ISO_10918_1'
-        assert float(ds.LossyImageCompressionRatio) > 0
+        ratio = float(ds.LossyImageCompressionRatio)
+        assert ratio > 0
+        assert ds.DerivationDescription.startswith('Lossy compression ISO_10918_1, compression ratio '), ds.DerivationDescription
+        assert abs(float(ds.DerivationDescription.rsplit(' ', 1)[1]) - ratio) <= ratio * 1e-3
+        codes = [(c.CodeValue, c.CodingSchemeDesignator) for c in ds.DerivationCodeSequence]
+        assert codes == [('113040', 'DCM')], codes
+        assert len(ds.SourceImageSequence) == 1
+        predecessor = ds.SourceImageSequence[0]
+        assert predecessor.ReferencedSOPClassUID == source.SOPClassUID
+        assert predecessor.ReferencedSOPInstanceUID == source.SOPInstanceUID
+        purpose = [(c.CodeValue, c.CodingSchemeDesignator) for c in predecessor.PurposeOfReferenceCodeSequence]
+        assert purpose == [('121320', 'DCM')], purpose
         actual = ds.to_json_dict()
         for tag in ignored:
             actual.pop(tag, None)
@@ -153,6 +177,7 @@ def store(event):
             output.write(b''.join(reconstructed))
         return 0x0000
     except Exception:
+        traceback.print_exc()
         return 0xC000
 
 ae = AE(ae_title='PY_STORE')

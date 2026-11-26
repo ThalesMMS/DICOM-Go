@@ -991,3 +991,56 @@ func TestStorageCommitmentPurgeCompletedIsBoundedAndPreservesActive(t *testing.T
 		t.Fatalf("PurgeCompleted above batch limit error = %v", err)
 	}
 }
+
+// A committer whose transaction store is full answers N-ACTION with the
+// Resource limitation status 0213H (PS3.7 10.1.4.1.10), not 0110H.
+func TestStorageCommitmentFullStoreAnswersResourceLimitation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	listener, err := ul.Listen(ul.ListenOptions{Address: "127.0.0.1:0", Context: ctx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	full, err := NewMemoryStorageCommitmentStore(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := full.Create(ctx, StorageCommitmentTransaction{TransactionUID: "2.25.900", Direction: StorageCommitmentDirectionCommitter, State: StorageCommitmentStateDelivered}); err != nil {
+		t.Fatal(err)
+	}
+	committer := newStorageCommitmentTestWorkflow(t, StorageCommitmentWorkflowOptions{Store: full})
+	serverDone := make(chan error, 1)
+	go func() {
+		assoc, err := listener.AcceptAssociation(ul.AcceptOptions{
+			AETitle: "COMMITTER", Context: ctx,
+			SupportedAbstractSyntaxes: []string{StorageCommitmentPushModelSOPClassUID},
+			SupportedTransferSyntaxes: []string{ul.ImplicitVRLittleEndian},
+		})
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		defer assoc.Close()
+		serverDone <- committer.ServeAssociation(ctx, assoc, SCPControls{})
+	}()
+	assoc, err := ul.DialContext(ctx, listener.Addr().String(), ul.DialOptions{
+		CalledAETitle: "COMMITTER", CallingAETitle: "REQUESTOR",
+		Contexts: []ul.PresentationContext{{AbstractSyntaxUID: StorageCommitmentPushModelSOPClassUID, TransferSyntaxUIDs: []string{ul.ImplicitVRLittleEndian}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer assoc.Close()
+	requestStore := newStorageCommitmentTestStore(t)
+	requestor := newStorageCommitmentTestWorkflow(t, StorageCommitmentWorkflowOptions{Store: requestStore})
+	if _, err := requestor.Request(ctx, assoc, storageCommitmentTestReferences, StorageCommitmentRequestOptions{TransactionUID: "2.25.901"}); err == nil {
+		t.Fatal("request accepted by a full committer")
+	}
+	rejected, err := requestStore.Get(ctx, "2.25.901")
+	if err != nil || rejected.LastDIMSEStatus != StatusStorageCommitmentResourceLimitation {
+		t.Fatalf("requestor record %+v %v", rejected, err)
+	}
+	_ = assoc.Release(ctx)
+	<-serverDone
+}

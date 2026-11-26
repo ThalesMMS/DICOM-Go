@@ -1,0 +1,4 @@
+# Patient's Name wildcard matching
+(0010,0010) PN [M*]
+(0010,0020) LO []
+(0008,0050) SH []

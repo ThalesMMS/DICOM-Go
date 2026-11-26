@@ -19,6 +19,17 @@ type AssociationSCPOptions struct {
 	CMoveHandler  CMoveHandler
 	CGetHandler   CGetHandler
 	NormalizedSCP *NormalizedSCPOptions
+	// CheckCFindIdentifier makes the Patient and Study Root C-FIND SCP check
+	// each Identifier with ValidateCFindIdentifier before the handler runs:
+	// hierarchical rules unless relational queries were negotiated for the
+	// SOP Class. A refused Identifier is answered with 0xA900 (Identifier
+	// does not match SOP Class). False keeps the lenient default.
+	CheckCFindIdentifier bool
+	// CheckCGetIdentifier validates Patient and Study Root C-GET Identifiers
+	// before invoking the handler. It uses the accepted options for the exact
+	// C-GET SOP Class and returns 0xA900 for an invalid Identifier. False
+	// leaves Identifier validation with the handler.
+	CheckCGetIdentifier bool
 }
 
 // ServeAssociation dispatches DIMSE requests received on one accepted
@@ -39,6 +50,12 @@ func ServeAssociation(ctx context.Context, assoc *ul.Association, opts Associati
 		return err
 	}
 	ctx = withSCPControls(ctx, opts.Controls)
+	if opts.CheckCFindIdentifier {
+		ctx = withCFindIdentifierCheck(ctx)
+	}
+	if opts.CheckCGetIdentifier {
+		ctx = withCGetIdentifierCheck(ctx)
+	}
 
 	for {
 		pcID, command, released, err := receiveStorageCommandOrRelease(commandReadContext(ctx), assoc)
@@ -84,9 +101,9 @@ func ServeAssociation(ctx context.Context, assoc *ul.Association, opts Associati
 func serveAssociationCommand(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object, field uint16, opts AssociationSCPOptions) error {
 	switch field {
 	case CEchoRQ:
-		return serveStorageCEcho(ctx, assoc, pcID, command)
+		return ServeCEchoCommand(ctx, assoc, pcID, command)
 	case CStoreRQ:
-		if opts.StoreHandler == nil {
+		if opts.StoreHandler == nil && opts.StreamSink == nil {
 			return fmt.Errorf("dicom dimse: missing C-STORE handler")
 		}
 		return serveStorageCStore(ctx, assoc, pcID, command, opts.StorageSCPOptions)

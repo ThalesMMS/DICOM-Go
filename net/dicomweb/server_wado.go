@@ -34,7 +34,7 @@ func (s *Server) serveMetadata(w *serverResponseWriter, r *http.Request) (int, e
 		}
 	}()
 	err = safeMetadata(backend, r.Context(), request, func(dataset Dataset) error {
-		if err := r.Context().Err(); err != nil {
+		if err := CheckReadLease(r.Context()); err != nil {
 			return err
 		}
 		if spool.count >= s.limits.MaxResults {
@@ -98,6 +98,9 @@ func (s *Server) serveRetrieve(w *serverResponseWriter, r *http.Request, operati
 	if err != nil {
 		return 0, err
 	}
+	if s.options.RetrieveTranscode != nil {
+		return s.servePreparedRetrieve(w, r, request, false)
+	}
 	var writer *multipart.Writer
 	responseMultipart := request.Level != RetrieveLevelInstance
 	count := 0
@@ -106,7 +109,7 @@ func (s *Server) serveRetrieve(w *serverResponseWriter, r *http.Request, operati
 			return ErrBackend
 		}
 		return withReaderClosed(part.Reader, func() error {
-			if err := r.Context().Err(); err != nil {
+			if err := CheckReadLease(r.Context()); err != nil {
 				return err
 			}
 			if count >= s.limits.MaxResults || part.Size < -1 || part.Size > s.limits.MaxPartBytes {
@@ -262,6 +265,9 @@ func hasMultipartFramePreference(preferences []MediaPreference) bool {
 }
 
 func (s *Server) serveFrames(w *serverResponseWriter, r *http.Request) (int, error) {
+	if s.options.RetrieveTranscode != nil {
+		return s.servePreparedFrames(w, r)
+	}
 	backend, ok := s.options.Backend.(FrameBackend)
 	if !ok {
 		return 0, newServerStatusError(http.StatusNotImplemented, "not_implemented", ErrUnsupported)
@@ -294,6 +300,9 @@ func (s *Server) serveFrames(w *serverResponseWriter, r *http.Request) (int, err
 			return ErrBackend
 		}
 		return withReaderClosed(part.Reader, func() error {
+			if err := CheckReadLease(r.Context()); err != nil {
+				return err
+			}
 			if part.Size < -1 || part.Size > s.limits.MaxPartBytes {
 				return ErrResourceLimit
 			}
@@ -377,6 +386,9 @@ func (s *Server) serveBulkData(w *serverResponseWriter, r *http.Request) (int, e
 		return 0, ErrBackend
 	}
 	err = withReaderClosed(part.Reader, func() error {
+		if err := CheckReadLease(r.Context()); err != nil {
+			return err
+		}
 		if part.Size < -1 || part.Size > s.limits.MaxPartBytes {
 			return ErrResourceLimit
 		}
@@ -390,6 +402,9 @@ func (s *Server) serveBulkData(w *serverResponseWriter, r *http.Request) (int, e
 		}
 		multipartResponse := preference.Multipart || preference.MediaType == "*/*"
 		if !multipartResponse {
+			if s.options.EnableBulkDataRanges {
+				return s.serveBulkRange(w, r, part, contentType)
+			}
 			w.Header().Set("Content-Type", contentType)
 			_, copyErr := copyBounded(r.Context(), w, part.Reader, s.limits.MaxPartBytes)
 			return copyErr

@@ -114,13 +114,16 @@ func (w *StorageCommitmentWorkflow) NormalizedOptions(assoc *ul.Association) Nor
 			information, err := ParseStorageCommitmentActionInformation(dataSet)
 			if err != nil {
 				if errors.Is(err, ErrStorageCommitmentResourceLimit) {
-					return NormalizedActionSCPResult{Response: NormalizedActionResponse{Status: StatusStorageCommitmentProcessingFailure}}, err
+					return NormalizedActionSCPResult{Response: NormalizedActionResponse{Status: StatusStorageCommitmentResourceLimitation}}, err
 				}
 				return NormalizedActionSCPResult{Response: NormalizedActionResponse{Status: StatusStorageCommitmentProcessingFailure}}, ErrStorageCommitmentInvalidRequest
 			}
 			transaction, err := w.acceptRequest(ctx, assoc, request.MessageID, information)
 			if err != nil {
 				status = StatusStorageCommitmentProcessingFailure
+				if errors.Is(err, ErrStorageCommitmentResourceLimit) {
+					status = StatusStorageCommitmentResourceLimitation
+				}
 				return NormalizedActionSCPResult{Response: NormalizedActionResponse{Status: status}}, err
 			}
 			stopHeartbeat := w.startCommitterAcceptanceHeartbeat(ctx, transaction)
@@ -177,6 +180,9 @@ func (w *StorageCommitmentWorkflow) ServeAction(ctx context.Context, assoc *ul.A
 		}
 		transaction, err := w.acceptRequest(handlerCtx, assoc, request.Request.MessageID, information)
 		if err != nil {
+			if errors.Is(err, ErrStorageCommitmentResourceLimit) {
+				return StorageCommitmentActionResult{Status: StatusStorageCommitmentResourceLimitation}, err
+			}
 			return StorageCommitmentActionResult{Status: StatusStorageCommitmentProcessingFailure}, err
 		}
 		accepted = transaction
@@ -200,7 +206,12 @@ func (w *StorageCommitmentWorkflow) ServeAssociation(ctx context.Context, assoc 
 }
 
 // StorageCommitmentListenerOptions configures a bounded callback receiver. The
-// listener remains owned by the caller.
+// listener remains owned by the caller. MaxConcurrentAssociations, zero for 8,
+// includes connections still negotiating. A zero Accept.NegotiationTimeout
+// selects ul.DefaultServerNegotiationTimeout, so a silent peer cannot hold a
+// slot indefinitely. OnError, when set, receives the failures that do not
+// stop the receiver: an accept failure that leaves the listener usable, a
+// failed negotiation and a failed association.
 type StorageCommitmentListenerOptions struct {
 	Accept                    ul.AcceptOptions
 	Controls                  SCPControls
@@ -209,13 +220,26 @@ type StorageCommitmentListenerOptions struct {
 }
 
 // ServeListener accepts callback associations until ctx is canceled. Every
-// accepted association is owned, released by the peer or closed by this loop.
+// accepted connection is negotiated on its own goroutine and every
+// association is owned, released by the peer or closed by this loop. A
+// failure confined to one connection is reported to OnError and the loop
+// keeps serving; an accept failure that leaves the listener usable, such as
+// running out of descriptors, is reported and retried after a pause (see
+// ul.Listener.AcceptContext). ServeListener returns ctx's error once ctx ends
+// and a protocol-class StorageCommitmentDeliveryError when the listener fails
+// otherwise, for example after it is closed.
 func (w *StorageCommitmentWorkflow) ServeListener(ctx context.Context, listener *ul.Listener, options StorageCommitmentListenerOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if listener == nil || options.MaxConcurrentAssociations < 0 {
 		return ErrStorageCommitmentInvalidRequest
+	}
+	for _, timeout := range []time.Duration{options.Accept.NegotiationTimeout, options.Accept.IdleTimeout, options.Accept.ReadProgressTimeout, options.Accept.WriteProgressTimeout, options.Accept.ReleaseTimeout} {
+		// Every negotiation would fail; refuse the options before accepting.
+		if timeout < 0 {
+			return ErrStorageCommitmentInvalidRequest
+		}
 	}
 	maxConcurrent := options.MaxConcurrentAssociations
 	if maxConcurrent == 0 {
@@ -226,6 +250,14 @@ func (w *StorageCommitmentWorkflow) ServeListener(ctx context.Context, listener 
 	acceptOptions.SupportedAbstractSyntaxes = []string{StorageCommitmentPushModelSOPClassUID}
 	acceptOptions.SupportedTransferSyntaxes = []string{ul.ExplicitVRLittleEndian, ul.ImplicitVRLittleEndian}
 	acceptOptions.RoleSelections = []ul.RoleSelectionItem{{SopClassUID: StorageCommitmentPushModelSOPClassUID, SCPRole: true}}
+	if acceptOptions.NegotiationTimeout == 0 {
+		acceptOptions.NegotiationTimeout = ul.DefaultServerNegotiationTimeout
+	}
+	report := func(err error) {
+		if ctx.Err() == nil && options.OnError != nil {
+			callStorageCommitmentErrorCallback(options.OnError, sanitizedStorageCommitmentWorkflowError(StorageCommitmentFailureProtocol, err))
+		}
+	}
 	sem := make(chan struct{}, maxConcurrent)
 	var workers sync.WaitGroup
 	defer workers.Wait()
@@ -235,7 +267,7 @@ func (w *StorageCommitmentWorkflow) ServeListener(ctx context.Context, listener 
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		assoc, err := listener.AcceptAssociation(acceptOptions)
+		conn, err := listener.AcceptContext(ctx, report)
 		if err != nil {
 			<-sem
 			if ctx.Err() != nil {
@@ -247,10 +279,17 @@ func (w *StorageCommitmentWorkflow) ServeListener(ctx context.Context, listener 
 		go func() {
 			defer workers.Done()
 			defer func() { <-sem }()
+			// A connection that fails negotiation, such as one that sends
+			// no A-ASSOCIATE-RQ, ends here and does not stop the receiver.
+			assoc, err := ul.Accept(conn, acceptOptions)
+			if err != nil {
+				_ = conn.Close()
+				report(err)
+				return
+			}
 			defer func() { _ = assoc.Close() }()
-			serveErr := w.ServeAssociation(ctx, assoc, options.Controls)
-			if serveErr != nil && ctx.Err() == nil && options.OnError != nil {
-				callStorageCommitmentErrorCallback(options.OnError, sanitizedStorageCommitmentWorkflowError(StorageCommitmentFailureProtocol, serveErr))
+			if serveErr := w.ServeAssociation(ctx, assoc, options.Controls); serveErr != nil {
+				report(serveErr)
 			}
 		}()
 	}
@@ -337,8 +376,8 @@ func (w *StorageCommitmentWorkflow) acceptRequest(ctx context.Context, assoc *ul
 		LeaseToken: acceptanceLeaseToken, LeaseUntil: now.Add(w.leaseDuration),
 	}
 	if assoc != nil {
-		transaction.RequestorAETitle = strings.TrimSpace(assoc.CallingAETitle)
-		transaction.CommitterAETitle = strings.TrimSpace(assoc.CalledAETitle)
+		transaction.RequestorAETitle = ul.NormalizeAETitle(assoc.CallingAETitle)
+		transaction.CommitterAETitle = ul.NormalizeAETitle(assoc.CalledAETitle)
 	}
 	transaction.RequestDigest = storageCommitmentRequestDigest(transaction)
 	created, err := w.storeCreate(ctx, transaction)
@@ -670,11 +709,11 @@ func (w *StorageCommitmentWorkflow) receiveResult(ctx context.Context, assoc *ul
 	callingAE := ""
 	calledAE := ""
 	if assoc != nil {
-		callingAE = strings.TrimSpace(assoc.CallingAETitle)
-		calledAE = strings.TrimSpace(assoc.CalledAETitle)
+		callingAE = ul.NormalizeAETitle(assoc.CallingAETitle)
+		calledAE = ul.NormalizeAETitle(assoc.CalledAETitle)
 	}
-	separateCallback := callingAE == transaction.CommitterAETitle && calledAE == transaction.RequestorAETitle
-	originalAssociation := callingAE == transaction.RequestorAETitle && calledAE == transaction.CommitterAETitle
+	separateCallback := ul.EqualAETitles(callingAE, transaction.CommitterAETitle) && ul.EqualAETitles(calledAE, transaction.RequestorAETitle)
+	originalAssociation := ul.EqualAETitles(callingAE, transaction.RequestorAETitle) && ul.EqualAETitles(calledAE, transaction.CommitterAETitle)
 	if transaction.Direction != StorageCommitmentDirectionRequestor || assoc == nil ||
 		(!separateCallback && !originalAssociation) || !storageCommitmentAssociationRolesValid(assoc, transaction) {
 		return sanitizedStorageCommitmentWorkflowError(StorageCommitmentFailureProtocol, ErrStorageCommitmentInvalidResult)
@@ -815,7 +854,7 @@ func (w *StorageCommitmentWorkflow) callbackAttempt(ctx context.Context, transac
 	if options.CalledAETitle == "" {
 		options.CalledAETitle = transaction.RequestorAETitle
 	}
-	if strings.TrimSpace(options.CallingAETitle) != transaction.CommitterAETitle || strings.TrimSpace(options.CalledAETitle) != transaction.RequestorAETitle {
+	if !ul.EqualAETitles(options.CallingAETitle, transaction.CommitterAETitle) || !ul.EqualAETitles(options.CalledAETitle, transaction.RequestorAETitle) {
 		return newStorageCommitmentDeliveryError(ErrStorageCommitmentCallbackUnknown, 0)
 	}
 	options.Contexts = []ul.PresentationContext{{
@@ -849,7 +888,7 @@ func (w *StorageCommitmentWorkflow) DeliverOnAssociation(ctx context.Context, tr
 		return StorageCommitmentTransaction{}, err
 	}
 	if ready.Direction != StorageCommitmentDirectionCommitter || ready.DeliveryMode != StorageCommitmentDeliverySameAssociation || ready.Result == nil ||
-		assoc == nil || assoc.CallingAETitle != ready.RequestorAETitle || assoc.CalledAETitle != ready.CommitterAETitle ||
+		assoc == nil || !ul.EqualAETitles(assoc.CallingAETitle, ready.RequestorAETitle) || !ul.EqualAETitles(assoc.CalledAETitle, ready.CommitterAETitle) ||
 		!storageCommitmentAssociationRolesValid(assoc, ready) {
 		return StorageCommitmentTransaction{}, ErrStorageCommitmentTransactionConflict
 	}
@@ -1039,8 +1078,8 @@ func storageCommitmentAssociationRolesValid(assoc *ul.Association, transaction S
 	if assoc == nil {
 		return false
 	}
-	originalAssociation := assoc.CallingAETitle == transaction.RequestorAETitle && assoc.CalledAETitle == transaction.CommitterAETitle
-	separateCallback := assoc.CallingAETitle == transaction.CommitterAETitle && assoc.CalledAETitle == transaction.RequestorAETitle
+	originalAssociation := ul.EqualAETitles(assoc.CallingAETitle, transaction.RequestorAETitle) && ul.EqualAETitles(assoc.CalledAETitle, transaction.CommitterAETitle)
+	separateCallback := ul.EqualAETitles(assoc.CallingAETitle, transaction.CommitterAETitle) && ul.EqualAETitles(assoc.CalledAETitle, transaction.RequestorAETitle)
 	for _, role := range assoc.AcceptedRoleSelections {
 		if role.SopClassUID != StorageCommitmentPushModelSOPClassUID {
 			continue

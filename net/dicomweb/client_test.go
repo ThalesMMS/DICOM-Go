@@ -1003,6 +1003,9 @@ func TestWADOHonorsMaxBodyBytes(t *testing.T) {
 
 			err := tt.call(client)
 			assertErrorKind(t, err, ErrorKindRequestFailure)
+			if tt.name != "study metadata" && !errors.Is(err, ErrResponseBodyLimit) {
+				t.Fatalf("error = %v, want ErrResponseBodyLimit", err)
+			}
 		})
 	}
 }

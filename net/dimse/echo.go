@@ -39,6 +39,7 @@ func SendCommandSetWithContext(ctx context.Context, assoc *ul.Association, pcID 
 		return err
 	}
 	writer := NewPDataWriterWithContext(ctx, assoc, pcID, true, peerMaxPDUWithHeader(assoc))
+	defer writer.discard()
 	if _, err := writer.Write(data); err != nil {
 		return err
 	}
@@ -116,7 +117,7 @@ func ParseCEchoResponse(obj *object.Object) (*CEchoResponse, error) {
 		return nil, err
 	}
 	if field != CEchoRSP {
-		return nil, fmt.Errorf("dicom dimse: command field 0x%04X, want C-ECHO-RSP 0x%04X", field, CEchoRSP)
+		return nil, protocolViolationf("dicom dimse: command field 0x%04X, want C-ECHO-RSP 0x%04X", field, CEchoRSP)
 	}
 	messageID, err := CommandUint16(obj, MessageIDBeingRespondedTo)
 	if err != nil {
@@ -127,7 +128,7 @@ func ParseCEchoResponse(obj *object.Object) (*CEchoResponse, error) {
 		return nil, err
 	}
 	if dataSetType != NoDataSet {
-		return nil, fmt.Errorf("dicom dimse: C-ECHO response dataset type 0x%04X, want no dataset 0x%04X", dataSetType, NoDataSet)
+		return nil, protocolViolationf("dicom dimse: C-ECHO response dataset type 0x%04X, want no dataset 0x%04X", dataSetType, NoDataSet)
 	}
 	status, err := CommandUint16(obj, Status)
 	if err != nil {
@@ -137,11 +138,18 @@ func ParseCEchoResponse(obj *object.Object) (*CEchoResponse, error) {
 }
 
 func SendCEcho(assoc *ul.Association, pcID byte, messageID uint16) (*CEchoResponse, error) {
+	return SendCEchoWithContext(nil, assoc, pcID, messageID)
+}
+
+// SendCEchoWithContext is SendCEcho with a caller-supplied context that
+// bounds the request write and the wait for the response. A nil context
+// leaves both to the association's own context and timeouts.
+func SendCEchoWithContext(ctx context.Context, assoc *ul.Association, pcID byte, messageID uint16) (*CEchoResponse, error) {
 	req := CEchoRequest{MessageID: messageID}
-	if err := SendCommandSet(assoc, pcID, req.CommandSet()); err != nil {
+	if err := SendCommandSetWithContext(ctx, assoc, pcID, req.CommandSet()); err != nil {
 		return nil, err
 	}
-	obj, err := ReceiveCommandSet(assoc, pcID)
+	obj, err := receiveCommandSetWithContext(ctx, assoc, pcID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,10 +158,10 @@ func SendCEcho(assoc *ul.Association, pcID byte, messageID uint16) (*CEchoRespon
 		return nil, err
 	}
 	if resp.MessageIDBeingRespondedTo != messageID {
-		return nil, fmt.Errorf("dicom dimse: response message ID %d, want %d", resp.MessageIDBeingRespondedTo, messageID)
+		return nil, protocolViolationf("dicom dimse: response message ID %d, want %d", resp.MessageIDBeingRespondedTo, messageID)
 	}
 	if resp.Status != StatusSuccess {
-		return nil, fmt.Errorf("dicom dimse: C-ECHO failed with status 0x%04X", resp.Status)
+		return nil, &classifiedError{class: ErrCEchoStatus, message: fmt.Sprintf("dicom dimse: C-ECHO failed with status 0x%04X", resp.Status)}
 	}
 	return resp, nil
 }
@@ -173,7 +181,7 @@ func ReceiveCEchoResponse(assoc *ul.Association, pcID byte, messageID uint16) (u
 		return 0, err
 	}
 	if resp.MessageIDBeingRespondedTo != messageID {
-		return 0, fmt.Errorf("dicom dimse: response message ID %d, want %d", resp.MessageIDBeingRespondedTo, messageID)
+		return 0, protocolViolationf("dicom dimse: response message ID %d, want %d", resp.MessageIDBeingRespondedTo, messageID)
 	}
 	return resp.Status, nil
 }
@@ -183,12 +191,38 @@ func ReceiveCEcho(assoc *ul.Association, pcID byte) (uint16, error) {
 	if err != nil {
 		return 0, err
 	}
+	return validateCEchoRequest(nil, assoc, pcID, command)
+}
+
+// ServeCEchoCommand handles a received C-ECHO request on its negotiated
+// Verification presentation context.
+func ServeCEchoCommand(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object) error {
+	messageID, err := validateCEchoRequest(ctx, assoc, pcID, command)
+	if err != nil {
+		return err
+	}
+	return sendWithSCPResponseContext(ctx, assoc, func(responseCtx context.Context) error {
+		return SendCEchoResponseWithContext(responseCtx, assoc, pcID, messageID, StatusSuccess)
+	})
+}
+
+func validateCEchoRequest(ctx context.Context, assoc *ul.Association, pcID byte, command *object.Object) (uint16, error) {
+	if _, err := requireSCPPresentationContext(ctx, assoc, pcID, VerificationSOPClassUID); err != nil {
+		return 0, err
+	}
 	field, err := CommandUint16(command, CommandField)
 	if err != nil {
 		return 0, err
 	}
 	if field != CEchoRQ {
 		return 0, fmt.Errorf("dicom dimse: command field 0x%04X, want C-ECHO-RQ 0x%04X", field, CEchoRQ)
+	}
+	classUID, err := commandUID(command, AffectedSOPClassUID)
+	if err != nil {
+		return 0, err
+	}
+	if classUID != VerificationSOPClassUID {
+		return 0, fmt.Errorf("%w: C-ECHO affected SOP Class UID %q, want Verification", ErrPresentationContextMismatch, classUID)
 	}
 	dataSetType, err := CommandUint16(command, CommandDataSetType)
 	if err != nil {
@@ -221,10 +255,8 @@ func HandleCEcho(assoc *ul.Association) error {
 	return SendCEchoResponse(assoc, pc.ID, messageID, StatusSuccess)
 }
 
+// peerMaxPDUWithHeader is the largest P-DATA-TF PDU to send, header
+// included (ul.Association.SendPDULimit).
 func peerMaxPDUWithHeader(assoc *ul.Association) int {
-	maxPDU := ul.DefaultMaxPDU
-	if assoc != nil && assoc.PeerMaxPDU > 0 && assoc.PeerMaxPDU < maxPDU {
-		maxPDU = assoc.PeerMaxPDU
-	}
-	return int(maxPDU + ul.PDUHeaderSize)
+	return int(assoc.SendPDULimit() + ul.PDUHeaderSize)
 }

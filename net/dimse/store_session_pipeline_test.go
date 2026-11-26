@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/internal/dicomtest"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/transfer"
@@ -216,6 +217,162 @@ func TestStoreSessionPipelineHonorsInFlightByteBudget(t *testing.T) {
 	if err := waitPipelineServer(serverDone); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestStoreSessionSendsAnObjectAboveTheByteBudgetAlone sends small objects
+// around one larger than MaxInFlightBytes (#1956): the large object is sent
+// with nothing else outstanding instead of failing the batch, and the small
+// ones still share the budget, so no more than two are outstanding at once.
+func TestStoreSessionSendsAnObjectAboveTheByteBudgetAlone(t *testing.T) {
+	const big = 2
+	sizes := []int{4 << 10, 4 << 10, 64 << 10, 4 << 10, 4 << 10}
+	paths := make([]string, len(sizes))
+	uids := make([]string, len(sizes))
+	dir := t.TempDir()
+	for i, size := range sizes {
+		uids[i] = fmt.Sprintf("1.2.826.0.1.3680043.10.543.1956.%d", i+1)
+		data, err := dicomtest.Part10File(transfer.ExplicitVRLittleEndian,
+			dicomtest.NewUIElement(core.NewTag(0x0008, 0x0016), dicomtest.TestSOPClassUID),
+			dicomtest.NewUIElement(core.NewTag(0x0008, 0x0018), uids[i]),
+			dicomtest.NewPNElement(core.NewTag(0x0010, 0x0010), "TEST^BUDGET"),
+			dicomtest.NewOBElement(core.NewTag(0x0042, 0x0011), make([]byte, size)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths[i] = filepath.Join(dir, fmt.Sprintf("source-%d.dcm", i))
+		if err := os.WriteFile(paths[i], data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	small, err := os.Stat(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two small objects fit the budget, three do not; the large one alone
+	// is several times the budget.
+	budget := 2 * small.Size()
+	for _, invoked := range []int{0, 4} {
+		t.Run(fmt.Sprintf("invoked-%d", invoked), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			peer := startStoreBudgetSCP(t, ctx, uids[big], 30*time.Millisecond)
+			session, err := NewStoreSession(peer.address, StoreSessionOptions{
+				DialOptions:          ul.DialOptions{CalledAETitle: "STORESCP", CallingAETitle: "STORESCU"},
+				MaxInvokedOperations: invoked,
+				MaxInFlightBytes:     budget,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := session.StoreBatch(ctx, pathStoreSources(paths))
+			if err != nil {
+				t.Fatalf("StoreBatch() error = %v (items %+v)", err, result.Items)
+			}
+			if result.Succeeded != len(paths) || !result.Complete || result.Associations != 1 {
+				t.Fatalf("result = %#v", result)
+			}
+			if err := waitPipelineServer(peer.done); err != nil {
+				t.Fatal(err)
+			}
+			peer.mu.Lock()
+			defer peer.mu.Unlock()
+			if len(peer.received) != len(paths) {
+				t.Fatalf("the peer received %v, want each of the %d objects once", peer.received, len(paths))
+			}
+			for _, uid := range uids {
+				if peer.received[uid] != 1 {
+					t.Fatalf("the peer received %s %d times", uid, peer.received[uid])
+				}
+			}
+			if peer.sharedBig {
+				t.Fatal("the object above the budget was outstanding together with another")
+			}
+			want := 1
+			if invoked > 1 {
+				want = 2
+			}
+			if peer.peak != want {
+				t.Fatalf("peak outstanding = %d, want %d", peer.peak, want)
+			}
+		})
+	}
+}
+
+type storeBudgetSCP struct {
+	address   string
+	done      chan error
+	mu        sync.Mutex
+	active    map[string]bool
+	received  map[string]int
+	peak      int
+	sharedBig bool
+}
+
+// startStoreBudgetSCP accepts one association with a window of four and
+// records, per SOP Instance UID, the requests outstanding at the same time.
+func startStoreBudgetSCP(t *testing.T, ctx context.Context, bigUID string, delay time.Duration) *storeBudgetSCP {
+	t.Helper()
+	listener, err := ul.Listen(ul.ListenOptions{Address: "127.0.0.1:0", Context: ctx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	peer := &storeBudgetSCP{address: listener.Addr().String(), done: make(chan error, 1), active: map[string]bool{}, received: map[string]int{}}
+	go func() {
+		assoc, err := listener.AcceptAssociation(ul.AcceptOptions{
+			AETitle:                      "STORESCP",
+			Context:                      ctx,
+			SupportedAbstractSyntaxes:    []string{dicomtest.TestSOPClassUID},
+			SupportedTransferSyntaxes:    []string{transfer.ExplicitVRLittleEndian.UID, transfer.ImplicitVRLittleEndian.UID},
+			AsynchronousOperationsWindow: &ul.AsynchronousOperationsWindow{MaximumInvoked: 4, MaximumPerformed: 4},
+		})
+		if err != nil {
+			peer.done <- err
+			return
+		}
+		session, err := NewAsyncSession(assoc, AsyncSessionOptions{})
+		if err != nil {
+			_ = assoc.Close()
+			peer.done <- err
+			return
+		}
+		defer func() { _ = session.Close() }()
+		session.Handle(CStoreRQ, func(handlerCtx context.Context, async *AsyncSession, message AsyncMessage) error {
+			request, err := ParseCStoreRequest(message.Command)
+			if err != nil {
+				return err
+			}
+			uid := request.AffectedSOPInstanceUID
+			peer.mu.Lock()
+			peer.received[uid]++
+			peer.active[uid] = true
+			peer.peak = max(peer.peak, len(peer.active))
+			if peer.active[bigUID] && len(peer.active) > 1 {
+				peer.sharedBig = true
+			}
+			peer.mu.Unlock()
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-handlerCtx.Done():
+				timer.Stop()
+			}
+			peer.mu.Lock()
+			delete(peer.active, uid)
+			peer.mu.Unlock()
+			if handlerCtx.Err() != nil {
+				return handlerCtx.Err()
+			}
+			return async.Respond(handlerCtx, message, (CStoreResponse{
+				AffectedSOPClassUID:    request.AffectedSOPClassUID,
+				AffectedSOPInstanceUID: uid,
+				Status:                 StatusSuccess,
+			}).CommandSet(), nil)
+		})
+		<-session.Done()
+		peer.done <- session.Err()
+	}()
+	return peer
 }
 
 func writeStoreFixtures(t *testing.T, count int) []string {

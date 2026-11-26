@@ -555,6 +555,44 @@ func TestAsyncSessionStartedTerminalWriteBackpressuresFiniteWindow(t *testing.T)
 	<-session.performedSlots
 }
 
+// A compliant peer may send its next request as soon as it has read a
+// terminal response. When that terminal write completes and releases its
+// performed slot concurrently with the next request's admission, the request
+// must take the freed slot rather than be counted as a window violation.
+func TestAsyncSessionTerminalCompletionRacingAdmissionIsNotAViolation(t *testing.T) {
+	for iteration := 0; iteration < 20000; iteration++ {
+		session := &AsyncSession{
+			performedSlots: make(chan struct{}, 1),
+			registry:       newAsyncOperationRegistry(),
+			done:           make(chan struct{}),
+		}
+		session.performedSlots <- struct{}{}
+		session.registry.incoming[1] = asyncIncomingOperation{
+			requestField: CEchoRQ,
+			finishing:    true,
+			writeStarted: true,
+			generation:   1,
+			slotHeld:     true,
+		}
+		session.registry.metrics.ActivePerformed = 1
+		start := make(chan struct{})
+		finished := make(chan bool, 1)
+		go func() {
+			<-start
+			session.markIncomingWriteCompleted(1, CEchoRQ, 1)
+			finished <- session.finishIncomingOperation(1, CEchoRQ, 1)
+		}()
+		close(start)
+		if !session.acquirePerformedSlotForRequest() {
+			t.Fatalf("iteration %d: admission racing a completing terminal write was treated as a window violation", iteration)
+		}
+		if !<-finished {
+			t.Fatal("terminal operation did not finish")
+		}
+		<-session.performedSlots
+	}
+}
+
 func TestAsyncSessionReleaseWaitIncludesBackpressuredIncomingAdmission(t *testing.T) {
 	session := &AsyncSession{
 		assoc: &ul.Association{AcceptedContexts: []ul.AcceptedContext{{
@@ -803,6 +841,57 @@ func TestAsyncOperationDiscardResponsesReleasesQueuedMessageBudget(t *testing.T)
 	operation.DiscardResponses()
 	if metrics := client.Snapshot(); metrics.QueuedMessageBytes != 0 {
 		t.Fatalf("DiscardResponses retained queued budget: %+v", metrics)
+	}
+}
+
+// A peer that invokes beyond the negotiated window while every performed
+// operation is still running (no terminal response on the wire) is a real
+// violation; so is one whose only finishing operation has not started writing.
+func TestAsyncSessionRequestBeyondWindowIsAViolation(t *testing.T) {
+	for _, writeStarted := range []bool{false, true} {
+		session := &AsyncSession{
+			assoc: &ul.Association{AcceptedContexts: []ul.AcceptedContext{{
+				ID: 1, AbstractSyntaxUID: VerificationSOPClassUID, TransferSyntaxUID: transfer.ImplicitVRLittleEndian.UID,
+			}}},
+			ctx:            context.Background(),
+			options:        AsyncSessionOptions{MaxPendingRequests: 2},
+			performedSlots: make(chan struct{}, 1),
+			registry:       newAsyncOperationRegistry(),
+			done:           make(chan struct{}),
+		}
+		session.performedSlots <- struct{}{}
+		session.registry.incoming[1] = asyncIncomingOperation{
+			cancel: func() {}, ctx: context.Background(), requestField: CEchoRQ, pcID: 1, generation: 1, slotHeld: true,
+			finishing: writeStarted, writeStarted: writeStarted,
+		}
+		session.registry.metrics.ActivePerformed = 1
+		command := object.FromElements((CEchoRequest{MessageID: 2}).CommandSet(), nil)
+		if writeStarted {
+			// The terminal is on the wire: admission waits for it instead of
+			// failing, then takes the released slot.
+			result := make(chan error, 1)
+			go func() {
+				_, _, _, err := session.prepareIncomingRequest(1, command)
+				result <- err
+			}()
+			select {
+			case err := <-result:
+				t.Fatalf("admission did not wait for the terminal write: %v", err)
+			case <-time.After(20 * time.Millisecond):
+			}
+			session.finishIncomingOperation(1, CEchoRQ, 1)
+			if err := <-result; err != nil {
+				t.Fatalf("admission after terminal completion: %v", err)
+			}
+			continue
+		}
+		prepared, _, _, err := session.prepareIncomingRequest(1, command)
+		if prepared || !errors.Is(err, ErrAsyncWindowExceeded) {
+			t.Fatalf("request beyond the window = prepared:%t err:%v", prepared, err)
+		}
+		if metrics := session.Snapshot(); metrics.WindowViolations != 1 {
+			t.Fatalf("violation not counted: %+v", metrics)
+		}
 	}
 }
 

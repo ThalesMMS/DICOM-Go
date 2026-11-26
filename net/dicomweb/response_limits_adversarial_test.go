@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -71,7 +70,7 @@ func TestWADOResponseHeaderLimitCountsRawHeaderBytes(t *testing.T) {
 	assertAdversarialResponseDecodeKind(t, err, ResponseDecodeHeaderBytes)
 }
 
-func TestMultipartHeaderLimitStopsNextRawPartBeforeLargeHeaderIsParsed(t *testing.T) {
+func TestMultipartHeaderLimitStopsPartBeforeLargeHeaderIsParsed(t *testing.T) {
 	const (
 		boundary = "bounded-header"
 		limit    = 64
@@ -81,11 +80,10 @@ func TestMultipartHeaderLimitStopsNextRawPartBeforeLargeHeaderIsParsed(t *testin
 		"X-Adversarial: " + strings.Repeat("x", 1<<20) + "\r\n" +
 		"\r\npayload\r\n--" + boundary + "--\r\n"
 
-	wire := newMultipartHeaderLimitReader(strings.NewReader(body), boundary, limit)
-	part, err := multipart.NewReader(wire, boundary).NextRawPart()
+	reader := newMultipartResponseReader(strings.NewReader(body), boundary, limit)
+	part, err := reader.nextPart()
 	if part != nil {
-		_ = part.Close()
-		t.Fatal("NextRawPart returned a parsed MIME part after the raw header limit")
+		t.Fatal("nextPart returned a parsed MIME part after the raw header limit")
 	}
 	decodeErr := assertAdversarialResponseDecodeKind(t, err, ResponseDecodeHeaderBytes)
 	if decodeErr.Limit != limit || decodeErr.Value != limit+1 {

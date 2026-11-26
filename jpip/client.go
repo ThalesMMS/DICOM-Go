@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ThalesMMS/dicom-go/internal/sourceport"
 	"github.com/ThalesMMS/dicom-go/net/dicomweb"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
 )
@@ -55,14 +56,27 @@ type ByteRange struct {
 	End   int64
 }
 
+// StreamType is a JPIP return type requested with the type field.
+type StreamType string
+
+const (
+	// StreamTypeJPP requests precinct data-bins (image/jpp-stream).
+	StreamTypeJPP StreamType = "jpp-stream"
+	// StreamTypeJPT requests tile data-bins (image/jpt-stream).
+	StreamTypeJPT StreamType = "jpt-stream"
+)
+
 // Request describes one JPIP representation. Frame is zero-based and becomes
-// the DICOM/JPIP one-based stream query parameter.
+// the DICOM/JPIP one-based stream query parameter. Type, when set, asks for
+// a JPP or JPT data-bin stream instead of the server's default
+// representation.
 type Request struct {
 	Reference pixeldata.JPIPReference
 	Frame     int
 	Size      Size
 	Region    Region
 	Range     *ByteRange
+	Type      StreamType
 }
 
 // Response is one bounded server representation.
@@ -119,10 +133,10 @@ func NewClient(config Config) (*Client, error) {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{
+				DialContext: sourceport.DialContext(&net.Dialer{
 					Timeout:   10 * time.Second,
 					KeepAlive: 30 * time.Second,
-				}).DialContext,
+				}),
 				ForceAttemptHTTP2: true,
 				TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
 			},
@@ -425,6 +439,9 @@ func requestURL(request Request) (*url.URL, error) {
 	if request.Range != nil && (request.Range.Start < 0 || request.Range.End < request.Range.Start) {
 		return nil, &Error{Kind: ErrorKindInvalidRequest, Operation: "build request", Err: ErrInvalidRequest}
 	}
+	if request.Type != "" && request.Type != StreamTypeJPP && request.Type != StreamTypeJPT {
+		return nil, &Error{Kind: ErrorKindInvalidRequest, Operation: "build request", Err: ErrInvalidRequest}
+	}
 	u, err := parseEndpointURL(request.Reference.PixelDataProviderURL)
 	if err != nil {
 		return nil, &Error{Kind: ErrorKindInvalidRequest, Operation: "build request", Err: ErrInvalidRequest}
@@ -437,6 +454,9 @@ func requestURL(request Request) (*url.URL, error) {
 	if hasRegion {
 		query.Set("roff", fmt.Sprintf("%d,%d", request.Region.X, request.Region.Y))
 		query.Set("rsiz", fmt.Sprintf("%d,%d", request.Region.Width, request.Region.Height))
+	}
+	if request.Type != "" {
+		query.Set("type", string(request.Type))
 	}
 	u.RawQuery = query.Encode()
 	return u, nil

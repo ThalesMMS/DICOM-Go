@@ -18,7 +18,9 @@ const (
 )
 
 // MaxPresentationContexts is the number of unique odd presentation context
-// IDs available in one association (1, 3, ..., 255).
+// IDs available in one association (1, 3, ..., 255). It also bounds the
+// contexts accepted from a peer, whose IDs may be even (see
+// validPeerPresentationContextID).
 const MaxPresentationContexts = 128
 
 const (
@@ -57,8 +59,11 @@ const (
 	SubItemRoleSelection               byte = 0x54
 	SubItemImplementationVersionName   byte = 0x55
 	SubItemSopClassExtendedNegotiation byte = 0x56
-	SubItemUserIdentity                byte = 0x58
-	SubItemUserIdentityResponse        byte = 0x59
+	// SubItemSopClassCommonExtendedNegotiation is PS3.7 D.3.3.6; its header's
+	// reserved byte carries the Sub-Item-version.
+	SubItemSopClassCommonExtendedNegotiation byte = 0x57
+	SubItemUserIdentity                      byte = 0x58
+	SubItemUserIdentityResponse              byte = 0x59
 )
 
 const (
@@ -276,8 +281,24 @@ func PDUTypeOf(pdu PDU) PDUType {
 	return pdu.pduType()
 }
 
+// validPresentationContextID reports whether id may be proposed by this
+// library acting as association requestor. PS3.8 9.3.2.2 restricts proposed
+// presentation context IDs to the odd integers 1 to 255, and every
+// A-ASSOCIATE-RQ the library encodes follows that rule.
 func validPresentationContextID(id byte) bool {
 	return id != 0 && id%2 == 1
+}
+
+// validPeerPresentationContextID reports whether id is tolerated when the
+// peer chose it. Some requestors propose even IDs (dcm4che 5.35.2 stgcmtscu
+// uses 2); aborting the whole association for that one octet would break
+// interoperability without protecting anything, so the decoder accepts any
+// non-zero ID and the acceptor echoes the peer's ID unchanged in its
+// A-ASSOCIATE-AC and in P-DATA. Zero stays invalid, duplicates are still
+// refused, and a requestor still rejects an A-ASSOCIATE-AC result whose ID
+// it did not propose.
+func validPeerPresentationContextID(id byte) bool {
+	return id != 0
 }
 
 func validReject(result, source, reason byte) bool {

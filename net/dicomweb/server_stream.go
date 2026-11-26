@@ -1,6 +1,7 @@
 package dicomweb
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ type jsonArraySpool struct {
 	size      int64
 	count     int
 	finalized bool
+	failed    error
 }
 
 type responseSpool struct {
@@ -84,7 +86,15 @@ func newJSONArraySpool(directory string, maximum int64) (*jsonArraySpool, error)
 	return spool, nil
 }
 
-func (s *jsonArraySpool) Append(data []byte) error {
+func (s *jsonArraySpool) Append(data []byte) (err error) {
+	if s != nil && s.failed != nil {
+		return s.failed
+	}
+	defer func() {
+		if s != nil && err != nil {
+			s.failed = err
+		}
+	}()
 	if s == nil || s.file == nil || s.finalized {
 		return ErrBackend
 	}
@@ -109,7 +119,63 @@ func (s *jsonArraySpool) Append(data []byte) error {
 	return nil
 }
 
+// AppendEncoded stages one dataset without an intermediate encoded byte slice.
+// On failure the response spool must be discarded; callers never publish it.
+func (s *jsonArraySpool) AppendEncoded(encode func(io.Writer) error) (err error) {
+	if s != nil && s.failed != nil {
+		return s.failed
+	}
+	defer func() {
+		if s != nil && err != nil {
+			s.failed = err
+		}
+	}()
+	if s == nil || s.file == nil || s.finalized || encode == nil {
+		return ErrBackend
+	}
+	if s.count > 0 {
+		if _, err := s.Write([]byte{','}); err != nil {
+			return err
+		}
+	}
+	writer := bufio.NewWriterSize(s, 32<<10)
+	if err := encode(writer); err != nil {
+		return err
+	}
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	s.count++
+	return nil
+}
+func (s *jsonArraySpool) Write(data []byte) (n int, err error) {
+	if s != nil && s.failed != nil {
+		return 0, s.failed
+	}
+	defer func() {
+		if s != nil && err != nil {
+			s.failed = err
+		}
+	}()
+	if s == nil || s.file == nil || s.finalized {
+		return 0, ErrBackend
+	}
+	// Reserve the closing bracket even while an individual dataset is streamed.
+	if s.size >= s.maximum || int64(len(data)) > s.maximum-1-s.size {
+		return 0, ErrResourceLimit
+	}
+	n, err = s.file.Write(data)
+	s.size += int64(n)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	return n, err
+}
+
 func (s *jsonArraySpool) Finalize() error {
+	if s != nil && s.failed != nil {
+		return s.failed
+	}
 	if s == nil || s.file == nil || s.finalized {
 		return ErrBackend
 	}
@@ -150,10 +216,11 @@ func copyBounded(ctx context.Context, destination io.Writer, source io.Reader, m
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	lease, _ := ctx.Value(readLeaseKey{}).(*requestReadLease)
 	buffer := make([]byte, 32<<10)
 	var total int64
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := lease.check(ctx); err != nil {
 			return total, err
 		}
 		remaining := maximum - total
@@ -166,6 +233,11 @@ func copyBounded(ctx context.Context, destination io.Writer, source io.Reader, m
 		}
 		n, readErr := source.Read(buffer[:readSize])
 		if n > 0 {
+			if lease != nil {
+				if err := lease.check(ctx); err != nil {
+					return total, err
+				}
+			}
 			if total+int64(n) > maximum {
 				return total, ErrResourceLimit
 			}

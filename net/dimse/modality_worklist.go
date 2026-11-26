@@ -94,6 +94,25 @@ type ModalityWorklistQuery struct {
 	RequestedProcedureID          MWLKey
 	RequestedProcedureDescription MWLKey
 	ScheduledProcedureStep        *ModalityWorklistScheduledProcedureStep
+
+	// Optional standard matching keys. Their zero values omit the attributes.
+	IssuerOfPatientID                   MWLKey
+	StudyDate                           MWLKey
+	StudyTime                           MWLKey
+	StudyInstanceUID                    MWLKey
+	RequestingPhysician                 MWLKey
+	ReferringPhysicianName              MWLKey
+	AdmissionID                         MWLKey
+	RequestedProcedurePriority          MWLKey
+	RequestedProcedureCodeSequence      MWLSequenceKey
+	IssuerOfAccessionNumberSequence     MWLSequenceKey
+	IssuerOfAdmissionIDSequence         MWLSequenceKey
+	IssuerOfPatientIDQualifiersSequence MWLSequenceKey
+	OtherPatientIDsSequence             MWLSequenceKey
+
+	// Veterinary selects the documented Standard Extended matching profile.
+	// Raw SCP requests require Parse.EnableVeterinaryMatching as well.
+	Veterinary *ModalityWorklistVeterinaryQuery
 }
 
 // BuildModalityWorklistIdentifier builds an MWL C-FIND Identifier without
@@ -154,6 +173,10 @@ func BuildModalityWorklistIdentifier(query ModalityWorklistQuery) (*object.Objec
 	if err != nil {
 		return nil, err
 	}
+	elements, err = appendMWLOptionalKeys(elements, query)
+	if err != nil {
+		return nil, err
+	}
 	if query.ScheduledProcedureStep != nil {
 		item, itemErr := buildModalityWorklistScheduledProcedureStep(*query.ScheduledProcedureStep)
 		if itemErr != nil {
@@ -164,11 +187,23 @@ func BuildModalityWorklistIdentifier(query ModalityWorklistQuery) (*object.Objec
 			Value:  core.SequenceValue{Items: []core.DataSet{{Elements: item}}},
 		})
 	}
-	return object.FromElements(elements, std.Dictionary), nil
+	result := object.FromElements(elements, std.Dictionary)
+	if mwlOptionalKeysPresent(query) {
+		if err := validateModalityWorklistObjectLimits(result, defaultModalityWorklistIdentifierElements, defaultModalityWorklistIdentifierDepth); err != nil {
+			return nil, err
+		}
+		remaining := MaxIdentifierBytes
+		for _, element := range elements {
+			if err := mwlSequenceInputBytes(element, &remaining); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return result, nil
 }
 
 func modalityWorklistQueryHasTemporalKey(query ModalityWorklistQuery) bool {
-	return query.ScheduledProcedureStep != nil &&
+	return query.StudyDate.Present || query.StudyTime.Present || query.ScheduledProcedureStep != nil &&
 		(query.ScheduledProcedureStep.ScheduledProcedureStepStartDate.Present ||
 			query.ScheduledProcedureStep.ScheduledProcedureStepStartTime.Present)
 }
@@ -284,6 +319,7 @@ const (
 	mwlMatchWildcard
 	mwlMatchDateRange
 	mwlMatchTimeRange
+	mwlMatchWildcardSensitive
 )
 
 // MatchModalityWorklist reports whether candidate satisfies every present,
@@ -320,6 +356,9 @@ func MatchModalityWorklist(query ModalityWorklistQuery, candidate *object.Object
 		if err != nil || !matched {
 			return matched, err
 		}
+	}
+	if matched, err := matchMWLOptionalKeys(query, candidate); err != nil || !matched {
+		return matched, err
 	}
 	if query.ScheduledProcedureStep == nil {
 		return true, nil
@@ -486,6 +525,8 @@ func matchMWLValue(query, candidate string, kind mwlMatchingKind) (bool, error) 
 		return query == candidate, nil
 	case mwlMatchWildcard:
 		return matchMWLWildcard(query, candidate), nil
+	case mwlMatchWildcardSensitive:
+		return matchMWLWildcardCase(query, candidate, false), nil
 	case mwlMatchDateRange:
 		return matchMWLTemporalRange(query, candidate, core.VRDA)
 	case mwlMatchTimeRange:
@@ -496,8 +537,15 @@ func matchMWLValue(query, candidate string, kind mwlMatchingKind) (bool, error) 
 }
 
 func matchMWLWildcard(pattern, value string) bool {
-	patternRunes := []rune(strings.ToUpper(pattern))
-	valueRunes := []rune(strings.ToUpper(value))
+	return matchMWLWildcardCase(pattern, value, true)
+}
+
+func matchMWLWildcardCase(pattern, value string, fold bool) bool {
+	if fold {
+		pattern, value = strings.ToUpper(pattern), strings.ToUpper(value)
+	}
+	patternRunes := []rune(pattern)
+	valueRunes := []rune(value)
 	patternIndex, valueIndex := 0, 0
 	starIndex, starValueIndex := -1, 0
 	for valueIndex < len(valueRunes) {

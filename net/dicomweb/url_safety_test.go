@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -142,6 +143,91 @@ func TestDICOMwebOperationalErrorsKeepOnlySafeURLAndStatus(t *testing.T) {
 	})
 }
 
+func TestMalformedDICOMwebRedirectDoesNotExposeLocation(t *testing.T) {
+	const (
+		querySecret      = "synthetic-private-redirect-query"
+		credentialSecret = "synthetic-private-url-credential"
+	)
+	var destinationRequests, callbackCalls atomic.Int32
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		destinationRequests.Add(1)
+	}))
+	defer destination.Close()
+	privateLocation := "http://test:" + credentialSecret + "@" + strings.TrimPrefix(destination.URL, "http://") + "/%zz?key=" + querySecret
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", privateLocation)
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+
+	httpClient := *server.Client()
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		callbackCalls.Add(1)
+		return nil
+	}
+	client := Client{
+		Endpoint: Endpoint{BaseURL: server.URL},
+		Options:  Options{HTTPClient: &httpClient, RedirectPolicy: RedirectPolicySameOrigin},
+	}
+	_, err := client.SearchStudies(context.Background(), nil)
+	if destinationRequests.Load() != 0 || callbackCalls.Load() != 0 {
+		t.Fatalf("malformed redirect reached callback or destination: %d / %d", callbackCalls.Load(), destinationRequests.Load())
+	}
+	if err := assertSafeDICOMwebError(t, err, server.URL, querySecret, credentialSecret, "%zz"); err.Kind != ErrorKindRequestFailure {
+		t.Fatalf("classified malformed Location as %q", err.Kind)
+	}
+	var httpErr *url.Error
+	if !errors.As(err, &httpErr) || httpErr.URL != server.URL {
+		t.Fatalf("missing redacted HTTP diagnostic: %#v", httpErr)
+	}
+	for cause := error(httpErr); cause != nil; cause = errors.Unwrap(cause) {
+		assertNoSensitiveText(t, fmt.Sprintf("%v %+v %#v", cause, cause, cause), querySecret, credentialSecret, "%zz")
+	}
+}
+
+func TestDICOMwebRedactedTransportCausePreservesClassification(t *testing.T) {
+	const private = "synthetic-private-transport-diagnostic"
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		kind    ErrorKind
+		timeout bool
+	}{
+		{"canceled", context.Canceled, ErrorKindRequestFailure, false},
+		{"timeout", context.DeadlineExceeded, ErrorKindTimeout, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := &testHTTPDiagnostic{cause: tc.cause, text: private, timeout: tc.timeout}
+			httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, failure
+			})}
+			const origin = "https://pacs.example.test"
+			client := Client{Endpoint: Endpoint{BaseURL: origin}, Options: Options{HTTPClient: httpClient}}
+			_, err := client.SearchStudies(context.Background(), nil)
+			if webErr := assertSafeDICOMwebError(t, err, origin, private); webErr.Kind != tc.kind || !errors.Is(err, tc.cause) {
+				t.Fatalf("kind=%q cause=%v", webErr.Kind, webErr.Err)
+			}
+			var httpErr *url.Error
+			var typed *testHTTPDiagnostic
+			if !errors.As(err, &typed) || typed != failure || !errors.As(err, &httpErr) || httpErr.Timeout() != tc.timeout || httpErr.Temporary() != tc.timeout {
+				t.Fatal("redaction changed the transport type or timeout flags")
+			}
+			assertNoSensitiveText(t, fmt.Sprintf("%v %+v %#v", httpErr, httpErr, httpErr), private)
+		})
+	}
+}
+
+type testHTTPDiagnostic struct {
+	cause   error
+	text    string
+	timeout bool
+}
+
+func (e *testHTTPDiagnostic) Error() string   { return e.text }
+func (e *testHTTPDiagnostic) Unwrap() error   { return e.cause }
+func (e *testHTTPDiagnostic) Timeout() bool   { return e.timeout }
+func (e *testHTTPDiagnostic) Temporary() bool { return e.timeout }
+
 func TestDICOMwebErrorRemovesUIDPathSegments(t *testing.T) {
 	const uid = "1.2.840.113619.2.55.3.604688123.781.1599722341.467"
 	err := newDICOMwebError(ErrorKindDecodeResponse,
@@ -221,7 +307,7 @@ func TestErrorFormattingIsDefensiveAndUnwrapIsPreserved(t *testing.T) {
 	}
 }
 
-func assertSafeDICOMwebError(t *testing.T, err error, wantURL string, secrets ...string) {
+func assertSafeDICOMwebError(t *testing.T, err error, wantURL string, secrets ...string) *Error {
 	t.Helper()
 	if err == nil {
 		t.Fatal("operation error = nil")
@@ -237,6 +323,7 @@ func assertSafeDICOMwebError(t *testing.T, err error, wantURL string, secrets ..
 		assertNoSensitiveText(t, fmt.Sprintf(format, err), secrets...)
 	}
 	assertNoSensitiveText(t, typed.URL, secrets...)
+	return typed
 }
 
 func assertNoSensitiveText(t *testing.T, value string, secrets ...string) {

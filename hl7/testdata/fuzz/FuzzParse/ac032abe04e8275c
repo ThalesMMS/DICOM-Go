@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("MSH|!\"|||||\x86|||||||||||BIG-5|0")
