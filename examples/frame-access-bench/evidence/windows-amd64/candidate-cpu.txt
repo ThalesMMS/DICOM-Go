@@ -1,0 +1,28 @@
+File: frame-access-go.exe
+Type: cpu
+Time: 2026-11-15 23:54:00 -03
+Duration: 3.18s, Total samples = 3.07s (96.69%)
+Showing nodes accounting for 2.93s, 95.44% of 3.07s total
+Dropped 51 nodes (cum <= 0.02s)
+Showing top 20 nodes out of 49
+      flat  flat%   sum%        cum   cum%
+     0.64s 20.85% 20.85%      0.64s 20.85%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).updateRegular
+     0.41s 13.36% 34.20%      0.47s 15.31%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.readLimitedGolomb
+     0.37s 12.05% 46.25%      2.72s 88.60%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.decodeLine
+     0.36s 11.73% 57.98%      2.12s 69.06%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.decodeRegular
+     0.22s  7.17% 65.15%      0.22s  7.17%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).quantize (inline)
+     0.20s  6.51% 71.66%      0.20s  6.51%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.contextIndex (inline)
+     0.17s  5.54% 77.20%      0.18s  5.86%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.emitNativeRow
+     0.15s  4.89% 82.08%      0.17s  5.54%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).reconstruct (inline)
+     0.12s  3.91% 85.99%      0.12s  3.91%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).unmapRegular (inline)
+     0.09s  2.93% 88.93%      0.09s  2.93%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.predict (inline)
+     0.08s  2.61% 91.53%      0.08s  2.61%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.clampInt (inline)
+     0.05s  1.63% 93.16%      0.05s  1.63%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*bitReader).fill
+     0.03s  0.98% 94.14%      0.03s  0.98%  runtime.cgocall
+     0.02s  0.65% 94.79%      0.02s  0.65%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.readEntropy
+     0.02s  0.65% 95.44%      0.02s  0.65%  runtime.memmove
+         0     0% 95.44%      3.05s 99.35%  github.com/ThalesMMS/dicom-go/pixeldata.(*FrameReader).FrameInto
+         0     0% 95.44%      0.05s  1.63%  github.com/ThalesMMS/dicom-go/pixeldata.(*FrameReader).RawFrame
+         0     0% 95.44%      0.02s  0.65%  github.com/ThalesMMS/dicom-go/pixeldata.(*FrameReader).bufferLayout
+         0     0% 95.44%      3.05s 99.35%  github.com/ThalesMMS/dicom-go/pixeldata.(*FrameReader).into
+         0     0% 95.44%      0.05s  1.63%  github.com/ThalesMMS/dicom-go/pixeldata/encapsulated.(*Plan).Frame

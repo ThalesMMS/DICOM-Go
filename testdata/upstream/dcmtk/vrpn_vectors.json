@@ -1,0 +1,123 @@
+{
+ "description": "DCMTK DcmPersonName vectors (tvrpn.cc): the component group string returned for a group index ('ok' false when DCMTK reports the group as absent) and the five name components of a group. Strings are ISO 8859-1.",
+ "component_groups": [
+  {
+   "line": 33,
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 0,
+   "ok": true,
+   "result": "Eichelberg^Marco^^Dr."
+  },
+  {
+   "line": 35,
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 1,
+   "ok": true,
+   "result": "Onken^Michael^"
+  },
+  {
+   "line": 37,
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 2,
+   "ok": true,
+   "result": "Riesmeier^Jörg^^Dr.^"
+  },
+  {
+   "line": 40,
+   "value": "=Onken^Michael^",
+   "group": 1,
+   "ok": true,
+   "result": "Onken^Michael^"
+  },
+  {
+   "line": 42,
+   "value": "==Riesmeier^Jörg^^Dr.^",
+   "group": 2,
+   "ok": true,
+   "result": "Riesmeier^Jörg^^Dr.^"
+  },
+  {
+   "line": 45,
+   "value": "",
+   "group": 0,
+   "ok": true,
+   "result": ""
+  },
+  {
+   "line": 47,
+   "value": "Riesmeier^Jörg^^Dr.^==",
+   "group": 0,
+   "ok": true,
+   "result": "Riesmeier^Jörg^^Dr.^"
+  },
+  {
+   "line": 50,
+   "value": "Eichelberg^Marco",
+   "group": 1,
+   "ok": false
+  },
+  {
+   "line": 51,
+   "value": "Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 2,
+   "ok": false
+  },
+  {
+   "line": 52,
+   "value": "=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 0,
+   "ok": true,
+   "result": ""
+  }
+ ],
+ "name_components": [
+  {
+   "line": 59,
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 0,
+   "components": {
+    "family": "Eichelberg",
+    "given": "Marco",
+    "middle": "",
+    "prefix": "Dr.",
+    "suffix": ""
+   }
+  },
+  {
+   "line": 66,
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 1,
+   "components": {
+    "family": "Onken",
+    "given": "Michael",
+    "middle": "",
+    "prefix": "",
+    "suffix": ""
+   }
+  },
+  {
+   "line": 73,
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 2,
+   "components": {
+    "family": "Riesmeier",
+    "given": "Jörg",
+    "middle": "",
+    "prefix": "Dr.",
+    "suffix": ""
+   }
+  },
+  {
+   "line": 80,
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "group": 2,
+   "components": {
+    "family": "Riesmeier",
+    "given": "Jörg",
+    "middle": "",
+    "prefix": "Dr.",
+    "suffix": ""
+   }
+  }
+ ]
+}

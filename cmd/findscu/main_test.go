@@ -181,9 +181,18 @@ func TestParseArgsModelLevelValidation(t *testing.T) {
 }
 
 func TestParseArgsUsageError(t *testing.T) {
-	_, err := parseArgs([]string{"extra"}, &bytes.Buffer{})
-	if !errors.Is(err, errUsage) {
-		t.Fatalf("parseArgs(extra) error = %v, want errUsage", err)
+	opts, err := parseArgs([]string{"extra"}, &bytes.Buffer{})
+	if err != nil || len(opts.query.Files) != 1 || opts.query.Files[0] != "extra" {
+		t.Fatalf("trailing query file parse=%v", err)
+	}
+	// A missing query file is refused during preflight, before dialing.
+	if _, err := buildFindQueries(context.Background(), opts); err == nil {
+		t.Fatal("missing query file admitted")
+	}
+	for _, args := range [][]string{{"-query-file-syntax", "unknown"}, {"-k", "ContentSequence.PatientID=1"}} {
+		if _, err := parseArgs(args, &bytes.Buffer{}); !errors.Is(err, errUsage) {
+			t.Fatalf("invalid query arguments admitted: %v", args)
+		}
 	}
 
 	_, err = parseArgs([]string{"-h"}, &bytes.Buffer{})
@@ -482,4 +491,53 @@ func startCancelingFindSCP(t *testing.T) (string, <-chan struct{}, <-chan error)
 		serverDone <- assoc.WritePDU(&ul.ReleaseRP{})
 	}()
 	return listener.Addr().String(), requestReceived, serverDone
+}
+
+func TestPathQueryKeys(t *testing.T) {
+	flat, paths, err := splitQueryKeys([]string{"PatientID=1234", "ReferencedSeriesSequence[0].SeriesInstanceUID=", "(0008,0050)=A1"})
+	if err != nil || flat["PatientID"] != "1234" || len(paths) != 2 {
+		t.Fatalf("split: %v %v %v", flat, paths, err)
+	}
+	identifier := object.FromElements(nil, std.Dictionary)
+	if err := applyPathKeys(identifier, paths); err != nil {
+		t.Fatal(err)
+	}
+	items, ok := identifier.GetSequence(core.NewTag(0x0008, 0x1115))
+	if !ok || len(items) != 1 || !items[0].Has(core.NewTag(0x0020, 0x000E)) {
+		t.Fatalf("nested return key missing: %v", items)
+	}
+	if accession, _ := identifier.GetString(core.NewTag(0x0008, 0x0050)); accession != "A1" {
+		t.Fatalf("accession %q", accession)
+	}
+	if _, err := parseArgs([]string{"-host", "h", "-port", "1", "-k", "ContentSequence.PatientID=1"}, &bytes.Buffer{}); !errors.Is(err, errUsage) {
+		t.Fatalf("invalid path accepted: %v", err)
+	}
+}
+
+func TestPathQueryMatchingValues(t *testing.T) {
+	_, paths, err := splitQueryKeys([]string{
+		"(0008,0020)=20260101-20261231",
+		"ScheduledProcedureStepSequence[0].ScheduledProcedureStepStartTime=120000-130000",
+		"ScheduledProcedureStepSequence[0].Modality=C*",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier := object.FromElements(nil, std.Dictionary)
+	if err := applyPathKeys(identifier, paths); err != nil {
+		t.Fatal(err)
+	}
+	if date, _ := identifier.GetString(core.NewTag(0x0008, 0x0020)); date != "20260101-20261231" {
+		t.Fatalf("Study Date = %q", date)
+	}
+	items, ok := identifier.GetSequence(core.NewTag(0x0040, 0x0100))
+	if !ok || len(items) != 1 {
+		t.Fatalf("scheduled procedure steps = %v", items)
+	}
+	if start, _ := items[0].GetString(core.NewTag(0x0040, 0x0003)); start != "120000-130000" {
+		t.Fatalf("start time = %q", start)
+	}
+	if modality, _ := items[0].GetString(core.NewTag(0x0008, 0x0060)); modality != "C*" {
+		t.Fatalf("modality = %q", modality)
+	}
 }

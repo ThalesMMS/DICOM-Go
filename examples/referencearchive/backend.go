@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"os"
@@ -39,6 +40,9 @@ type storedInstance struct {
 	name   string
 	info   os.FileInfo
 	record index.Record
+	// digest is the SHA-256 of the file as admitted, after publication or at
+	// restart. Storage Commitment re-reads the file and compares it.
+	digest [sha256.Size]byte
 }
 type archive struct {
 	root              string
@@ -213,7 +217,7 @@ func (a *archive) inspect(ctx context.Context, name string) (storedInstance, err
 	if _, err := incomingRecord(parsed.Dataset); err != nil {
 		return storedInstance{}, errArchive
 	}
-	if parsed.TransferSyntax.UID != transfer.ImplicitVRLittleEndian.UID && parsed.TransferSyntax.UID != transfer.ExplicitVRLittleEndian.UID {
+	if !archiveTransferSyntax(parsed.TransferSyntax.UID) || parsed.Dataset.CheckPixelDataEncoding(parsed.TransferSyntax) != nil {
 		return storedInstance{}, errArchive
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -235,7 +239,16 @@ func (a *archive) inspect(ctx context.Context, name string) (storedInstance, err
 	if record.FileMeta.MediaStorageSOPClassUID != record.Instance.SOPClassUID || record.FileMeta.MediaStorageSOPInstanceUID != record.Instance.SOPInstanceUID {
 		return storedInstance{}, errArchive
 	}
-	return storedInstance{name: name, info: info, record: record}, nil
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return storedInstance{}, errArchive
+	}
+	hash := sha256.New()
+	if n, err := io.Copy(hash, contextReader{ctx, io.LimitReader(f, a.limits.instanceBytes+1)}); err != nil || n != info.Size() {
+		return storedInstance{}, errArchive
+	}
+	item := storedInstance{name: name, info: info, record: record}
+	hash.Sum(item.digest[:0])
+	return item, nil
 }
 func validRecord(r index.Record) bool {
 	supported := false
@@ -300,7 +313,7 @@ func (a *archive) Store(ctx context.Context, request dimse.CStoreRequestContext)
 	if err := a.recordConflict(preflight); err != nil {
 		return dimse.StatusCStoreDataSetDoesNotMatch, err
 	}
-	if request.DataSetSyntax.UID != transfer.ImplicitVRLittleEndian.UID && request.DataSetSyntax.UID != transfer.ExplicitVRLittleEndian.UID {
+	if !archiveTransferSyntax(request.DataSetSyntax.UID) || request.DataSet.CheckPixelDataEncoding(request.DataSetSyntax) != nil {
 		return dimse.StatusCStoreCannotUnderstand, errArchive
 	}
 	// Validate/index the representation without keeping an encoded byte buffer.

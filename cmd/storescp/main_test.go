@@ -86,6 +86,7 @@ func TestParseArgsCustomResourceLimitsAndTimeouts(t *testing.T) {
 		"-write-progress-timeout", "6s",
 		"-release-timeout", "7s",
 		"-shutdown-timeout", "8s",
+		"-max-associate-pdu-bytes", "65536",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +97,8 @@ func TestParseArgsCustomResourceLimitsAndTimeouts(t *testing.T) {
 		opts.limits.maxPixelDataBytes != 4096 || opts.limits.maxPixelDataFragments != 9 ||
 		opts.limits.negotiationTimeout != 3*time.Second || opts.limits.idleTimeout != 4*time.Second ||
 		opts.limits.readProgressTimeout != 5*time.Second || opts.limits.writeProgressTimeout != 6*time.Second ||
-		opts.limits.releaseTimeout != 7*time.Second || opts.limits.shutdownTimeout != 8*time.Second {
+		opts.limits.releaseTimeout != 7*time.Second || opts.limits.shutdownTimeout != 8*time.Second ||
+		opts.limits.maxAssociatePDU != 65536 {
 		t.Fatalf("custom storescp limits = %#v", opts.limits)
 	}
 	accept := storescpAcceptOptions(opts)
@@ -742,9 +744,9 @@ func TestHandleAssociationReturnsOutOfResourcesWithoutFatalError(t *testing.T) {
 
 func TestSupportedTransferSyntaxUIDsIncludesNativeSyntaxes(t *testing.T) {
 	got := supportedTransferSyntaxUIDs()
-	want := []string{transfer.ImplicitVRLittleEndian.UID, transfer.ExplicitVRLittleEndian.UID}
-	if len(got) != len(want) {
-		t.Fatalf("supportedTransferSyntaxUIDs() = %#v, want %#v", got, want)
+	want := []string{transfer.ImplicitVRLittleEndian.UID, transfer.ExplicitVRLittleEndian.UID, transfer.DeflatedExplicitVRLittleEndian.UID}
+	if len(got) <= len(want) {
+		t.Fatalf("supportedTransferSyntaxUIDs() = %#v, want native prefix and compressed syntaxes", got)
 	}
 	for i := range want {
 		if got[i] != want[i] {

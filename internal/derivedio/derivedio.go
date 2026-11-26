@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"strconv"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -105,89 +105,54 @@ func SH(tag core.Tag, value string) core.Element {
 	return Str(tag, core.VRSH, value)
 }
 
-// IS builds a DICOM Integer String (IS) element from the provided integers.
+// IS builds an Integer String element (object.FormatIS). A value outside
+// the signed 32-bit range cannot be encoded and is left empty.
 func IS(tag core.Tag, values ...int) core.Element {
 	out := make([]string, len(values))
 	for i, value := range values {
-		out[i] = strconv.Itoa(value)
+		out[i], _ = object.FormatIS(int64(value))
 	}
 	return Strings(tag, core.VRIS, out)
 }
 
-// DS constructs a DICOM element with Decimal String VR from the provided float64 values.
+// DS builds a Decimal String element (object.FormatDS). NaN and infinities
+// cannot be encoded and are left empty.
 func DS(tag core.Tag, values ...float64) core.Element {
 	out := make([]string, len(values))
 	for i, value := range values {
-		out[i] = formatDS(value)
+		out[i], _ = object.FormatDS(value)
 	}
 	return Strings(tag, core.VRDS, out)
 }
 
-func formatDS(value float64) string {
-	const maxLength = 16
-
-	formatted := strconv.FormatFloat(value, 'g', -1, 64)
-	if len(formatted) <= maxLength {
-		return formatted
-	}
-	for precision := maxLength; precision > 0; precision-- {
-		formatted = strconv.FormatFloat(value, 'g', precision, 64)
-		if len(formatted) <= maxLength {
-			if _, err := strconv.ParseFloat(formatted, 64); err != nil {
-				continue
-			}
-			return formatted
-		}
-	}
-	// Scientific notation with seven significant digits fits even with a sign
-	// and a three-digit float64 exponent. The loop above normally finds a more
-	// precise representation; this is the bounded fallback for finite values.
-	return strconv.FormatFloat(value, 'e', 6, 64)
-}
-
-// US constructs an Unsigned Short element using little-endian binary values.
+// US constructs an Unsigned Short element in Little Endian, the byte order
+// of the Explicit VR Little Endian objects this package builds.
 func US(tag core.Tag, values ...uint16) core.Element {
-	raw := make([]byte, len(values)*2)
-	for i, value := range values {
-		binary.LittleEndian.PutUint16(raw[i*2:], value)
-	}
-	return Raw(tag, core.VRUS, raw)
+	return object.USElement(tag, binary.LittleEndian, values...)
 }
 
-// UL constructs an Unsigned Long element using little-endian binary values.
+// UL constructs an Unsigned Long element in Little Endian.
 func UL(tag core.Tag, values ...uint32) core.Element {
-	raw := make([]byte, len(values)*4)
-	for i, value := range values {
-		binary.LittleEndian.PutUint32(raw[i*4:], value)
-	}
-	return Raw(tag, core.VRUL, raw)
+	return object.ULElement(tag, binary.LittleEndian, values...)
 }
 
-// SL constructs a Signed Long element using little-endian binary values.
+// SL constructs a Signed Long element in Little Endian.
 func SL(tag core.Tag, values ...int32) core.Element {
-	raw := make([]byte, len(values)*4)
-	for i, value := range values {
-		binary.LittleEndian.PutUint32(raw[i*4:], uint32(value))
-	}
-	return Raw(tag, core.VRSL, raw)
+	return object.SLElement(tag, binary.LittleEndian, values...)
 }
 
-// FL constructs a Floating Point Single element using little-endian binary values.
+// FL constructs a Floating Point Single element in Little Endian.
 func FL(tag core.Tag, values ...float64) core.Element {
-	raw := make([]byte, len(values)*4)
+	single := make([]float32, len(values))
 	for i, value := range values {
-		binary.LittleEndian.PutUint32(raw[i*4:], math.Float32bits(float32(value)))
+		single[i] = float32(value)
 	}
-	return Raw(tag, core.VRFL, raw)
+	return object.FLElement(tag, binary.LittleEndian, single...)
 }
 
-// FD constructs a Floating Point Double element using little-endian binary values.
+// FD constructs a Floating Point Double element in Little Endian.
 func FD(tag core.Tag, values ...float64) core.Element {
-	raw := make([]byte, len(values)*8)
-	for i, value := range values {
-		binary.LittleEndian.PutUint64(raw[i*8:], math.Float64bits(value))
-	}
-	return Raw(tag, core.VRFD, raw)
+	return object.FDElement(tag, binary.LittleEndian, values...)
 }
 
 // Raw constructs a DICOM element with the specified tag, value representation, and raw binary data.
@@ -203,8 +168,17 @@ func Seq(tag core.Tag, items ...core.DataSet) core.Element {
 	}
 }
 
-// DataSet returns a DataSet containing the provided elements.
+// DataSet returns a DataSet containing the provided elements in ascending
+// tag order, as PS3.5 7.1 requires of every data set, sequence items
+// included.
 func DataSet(elements ...core.Element) core.DataSet {
+	sort.SliceStable(elements, func(i, j int) bool {
+		a, b := elements[i].Tag(), elements[j].Tag()
+		if a.Group != b.Group {
+			return a.Group < b.Group
+		}
+		return a.Element < b.Element
+	})
 	return core.DataSet{Elements: elements}
 }
 
@@ -254,79 +228,7 @@ func LookupInts(obj *object.Object, tag core.Tag) ([]int64, error) {
 	if obj == nil {
 		return nil, fmt.Errorf("dicom derived: nil object for %s", tag)
 	}
-	element, ok := obj.Get(tag)
-	if !ok {
-		return nil, fmt.Errorf("dicom derived: missing element %s", tag)
-	}
-	if element.VR() == core.VRIS {
-		values, err := obj.GetInts(tag)
-		if err != nil {
-			return nil, err
-		}
-		return values, nil
-	}
-	switch values := element.Value.(type) {
-	case core.Uint16Value:
-		out := make([]int64, len(values))
-		for i, value := range values {
-			out[i] = int64(value)
-		}
-		return out, nil
-	case core.Int32Value:
-		out := make([]int64, len(values))
-		for i, value := range values {
-			out[i] = int64(value)
-		}
-		return out, nil
-	case core.Uint32Value:
-		out := make([]int64, len(values))
-		for i, value := range values {
-			out[i] = int64(value)
-		}
-		return out, nil
-	}
-	raw, ok := element.RawBytes()
-	if !ok {
-		return nil, fmt.Errorf("dicom derived: element %s with VR %s is not raw integer data", tag, element.VR())
-	}
-	order := obj.ValueByteOrder()
-	var width int
-	switch element.VR() {
-	case core.VRUS, core.VRSS:
-		width = 2
-	case core.VRUL, core.VRSL:
-		width = 4
-	case core.VRUV, core.VRSV:
-		width = 8
-	default:
-		return nil, fmt.Errorf("dicom derived: element %s has unsupported integer VR %s", tag, element.VR())
-	}
-	if len(raw)%width != 0 {
-		return nil, fmt.Errorf("dicom derived: element %s has %d bytes, want a multiple of %d for VR %s", tag, len(raw), width, element.VR())
-	}
-	out := make([]int64, len(raw)/width)
-	for i := range out {
-		offset := i * width
-		switch element.VR() {
-		case core.VRUS:
-			out[i] = int64(order.Uint16(raw[offset:]))
-		case core.VRSS:
-			out[i] = int64(int16(order.Uint16(raw[offset:])))
-		case core.VRUL:
-			out[i] = int64(order.Uint32(raw[offset:]))
-		case core.VRSL:
-			out[i] = int64(int32(order.Uint32(raw[offset:])))
-		case core.VRUV:
-			value := order.Uint64(raw[offset:])
-			if value > math.MaxInt64 {
-				return nil, fmt.Errorf("dicom derived: element %s unsigned value overflows int64", tag)
-			}
-			out[i] = int64(value)
-		case core.VRSV:
-			out[i] = int64(order.Uint64(raw[offset:]))
-		}
-	}
-	return out, nil
+	return obj.GetInts(tag)
 }
 
 // Floats retrieves values from DS strings or FL/FD binary elements. It returns
@@ -345,54 +247,7 @@ func LookupFloats(obj *object.Object, tag core.Tag) ([]float64, error) {
 	if obj == nil {
 		return nil, fmt.Errorf("dicom derived: nil object for %s", tag)
 	}
-	element, ok := obj.Get(tag)
-	if !ok {
-		return nil, fmt.Errorf("dicom derived: missing element %s", tag)
-	}
-	if element.VR() == core.VRDS {
-		values, err := obj.GetFloats(tag)
-		if err != nil {
-			return nil, err
-		}
-		return values, nil
-	}
-	switch values := element.Value.(type) {
-	case core.Float32Value:
-		out := make([]float64, len(values))
-		for i, value := range values {
-			out[i] = float64(value)
-		}
-		return out, nil
-	case core.Float64Value:
-		return append([]float64(nil), values...), nil
-	}
-	raw, ok := element.RawBytes()
-	if !ok {
-		return nil, fmt.Errorf("dicom derived: element %s with VR %s is not raw floating-point data", tag, element.VR())
-	}
-	order := obj.ValueByteOrder()
-	switch element.VR() {
-	case core.VRFL:
-		if len(raw)%4 != 0 {
-			return nil, fmt.Errorf("dicom derived: element %s has %d bytes, want a multiple of 4 for VR FL", tag, len(raw))
-		}
-		out := make([]float64, len(raw)/4)
-		for i := range out {
-			out[i] = float64(math.Float32frombits(order.Uint32(raw[i*4:])))
-		}
-		return out, nil
-	case core.VRFD:
-		if len(raw)%8 != 0 {
-			return nil, fmt.Errorf("dicom derived: element %s has %d bytes, want a multiple of 8 for VR FD", tag, len(raw))
-		}
-		out := make([]float64, len(raw)/8)
-		for i := range out {
-			out[i] = math.Float64frombits(order.Uint64(raw[i*8:]))
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf("dicom derived: element %s has unsupported floating-point VR %s", tag, element.VR())
-	}
+	return obj.GetFloats(tag)
 }
 
 // Sequence retrieves a sequence element from the object by tag. It returns nil if the element is missing, otherwise returns the sequence items.
@@ -425,4 +280,78 @@ func Uint16s(data []byte) []uint16 {
 // SamePosition reports whether a and b are within 0.001 of each other.
 func SamePosition(a, b float64) bool {
 	return math.Abs(a-b) <= 1e-3
+}
+
+// DerivedUID returns a deterministic UID under the 2.25 root (PS3.5 B.2)
+// for an object derived from parts, such as a Dimension Organization UID of
+// an instance: core.NameUID of the parts.
+func DerivedUID(parts ...string) string {
+	return core.NameUID(parts...)
+}
+
+var (
+	TagSeriesNumber       = core.NewTag(0x0020, 0x0011)
+	TagInstanceNumber     = core.NewTag(0x0020, 0x0013)
+	TagContentLabel       = core.NewTag(0x0070, 0x0080)
+	TagContentDescription = core.NewTag(0x0070, 0x0081)
+	TagContentCreatorName = core.NewTag(0x0070, 0x0084)
+)
+
+// Identification holds the Series Number, Instance Number and Content
+// Identification Macro (PS3.3 10.9) of a derived object.
+type Identification struct {
+	SeriesNumber       int
+	InstanceNumber     int
+	ContentLabel       string
+	ContentDescription string
+	ContentCreatorName string
+}
+
+// Elements encodes the identification: Series and Instance Number default
+// to 1 and Content Label to defaultLabel; Content Description and Content
+// Creator's Name are written empty when unset (Type 2).
+func (id Identification) Elements(defaultLabel string) ([]core.Element, error) {
+	label := id.ContentLabel
+	if label == "" {
+		label = defaultLabel
+	}
+	if !validCodeString(label) {
+		return nil, fmt.Errorf("dicom derived: Content Label %q is not a CS value", label)
+	}
+	if id.SeriesNumber < 0 || id.InstanceNumber < 0 {
+		return nil, fmt.Errorf("dicom derived: negative Series or Instance Number")
+	}
+	series, instance := max(id.SeriesNumber, 1), max(id.InstanceNumber, 1)
+	return []core.Element{
+		IS(TagSeriesNumber, series),
+		IS(TagInstanceNumber, instance),
+		CS(TagContentLabel, label),
+		LO(TagContentDescription, id.ContentDescription),
+		Str(TagContentCreatorName, core.VRPN, id.ContentCreatorName),
+	}, nil
+}
+
+// ReadIdentification reads the fields Identification.Elements writes.
+func ReadIdentification(obj *object.Object) Identification {
+	return Identification{
+		SeriesNumber:       Int(obj, TagSeriesNumber),
+		InstanceNumber:     Int(obj, TagInstanceNumber),
+		ContentLabel:       CleanString(obj, TagContentLabel),
+		ContentDescription: CleanString(obj, TagContentDescription),
+		ContentCreatorName: CleanString(obj, TagContentCreatorName),
+	}
+}
+
+// validCodeString reports a single CS value: 1 to 16 upper-case letters,
+// digits, spaces or underscores.
+func validCodeString(value string) bool {
+	if value == "" || len(value) > 16 || strings.TrimSpace(value) == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == ' ' || r == '_') {
+			return false
+		}
+	}
+	return true
 }

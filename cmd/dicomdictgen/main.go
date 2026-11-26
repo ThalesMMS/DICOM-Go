@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 
 	"github.com/ThalesMMS/dicom-go/internal/clidiag"
 )
@@ -38,13 +39,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	generatedAt, err := dictionaryTimestamp(opts.input)
+	header, err := scanHeader(opts.input)
 	if err != nil {
 		clidiag.Fprintln(stderr, "dicomdictgen", err)
 		return 1
 	}
 
-	source, err := generateSource(opts.input, entries, generatedAt)
+	source, err := generateSource(opts.input, opts.commit, entries, header)
 	if err != nil {
 		clidiag.Fprintln(stderr, "dicomdictgen", err)
 		return 1
@@ -59,11 +60,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-var errUsage = errors.New("usage error")
+var (
+	errUsage      = errors.New("usage error")
+	commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
 
 type options struct {
 	input  string
 	output string
+	commit string
 }
 
 func parseArgs(args []string, stderr io.Writer) (options, error) {
@@ -76,6 +81,7 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.input, "input", defaultInputPath, "path to the versioned dicom.dic source file")
 	fs.StringVar(&opts.output, "output", defaultOutputPath, "path to the generated Go output file")
+	fs.StringVar(&opts.commit, "commit", "", "DCMTK commit the dicom.dic source was vendored from (recorded in the source URL)")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Usage: %s [flags]\n\nGenerate dictionary/std from a DCMTK dicom.dic source file.\n\nFlags:\n", fs.Name())
 		fs.PrintDefaults()
@@ -89,6 +95,10 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	}
 	if fs.NArg() != 0 {
 		fs.Usage()
+		return opts, errUsage
+	}
+	if opts.commit != "" && !commitPattern.MatchString(opts.commit) {
+		_, _ = fmt.Fprintf(stderr, "-commit must be a full 40-hex commit, got %q\n", opts.commit)
 		return opts, errUsage
 	}
 

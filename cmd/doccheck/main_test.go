@@ -1,11 +1,59 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
+
+const (
+	helpProbeExitEnv = "DOCCHECK_TEST_HELP_EXIT"
+	helpProbeReadme  = "```sh\ngo run ./cmd/probe -h\n```\n"
+)
+
+func TestMain(m *testing.M) {
+	if exit := os.Getenv(helpProbeExitEnv); exit != "" {
+		os.Exit(runHelpProbe(exit))
+	}
+	os.Exit(m.Run())
+}
+
+func runHelpProbe(exit string) int {
+	if !slices.Equal(os.Args[1:], []string{"run", "./cmd/probe", "-h"}) {
+		fmt.Fprintln(os.Stderr, "unexpected probe arguments:", os.Args[1:])
+		return 3
+	}
+	document, err := os.ReadFile("README.md")
+	if err != nil || string(document) != helpProbeReadme {
+		fmt.Fprintln(os.Stderr, "probe did not run in the fixture module")
+		return 3
+	}
+	if os.Getenv("GOPROXY") != "off" || os.Getenv("GOSUMDB") != "off" {
+		fmt.Fprintln(os.Stderr, "module services were not disabled")
+		return 3
+	}
+	for _, key := range []string{"HTTP_PROXY", "DICOMGO_DOCCHECK_TEST", "PACS_DOCCHECK_TEST"} {
+		if _, exists := os.LookupEnv(key); exists {
+			fmt.Fprintln(os.Stderr, "unexpected inherited environment variable:", key)
+			return 3
+		}
+	}
+	switch exit {
+	case "0":
+		fmt.Fprintln(os.Stdout, "Usage: probe")
+		return 0
+	case "2":
+		fmt.Fprintln(os.Stderr, "Usage: probe")
+		return 2
+	default:
+		fmt.Fprintln(os.Stderr, "invalid probe exit status:", exit)
+		return 3
+	}
+}
 
 func TestCheckLinksReportsMissingTargetsAndAnchorsWithLines(t *testing.T) {
 	repository := t.TempDir()
@@ -206,27 +254,7 @@ func TestCheckCurrentSectionUsesHeadingBoundsAndIssueAllowlist(t *testing.T) {
 }
 
 func TestCheckHelpDocumentExecutesDocumentedCommandOffline(t *testing.T) {
-	repository := t.TempDir()
-	module := filepath.Join(repository, "module")
-	writeTestFile(t, filepath.Join(module, "go.mod"), "module example.test/docs\n\ngo 1.22\n")
-	writeTestFile(t, filepath.Join(module, "cmd", "probe", "main.go"), `package main
-
-import (
-	"flag"
-	"fmt"
-)
-
-func main() {
-	flag.Parse()
-	fmt.Println("Usage: probe")
-}
-`)
-	writeTestFile(t, filepath.Join(module, "README.md"), "```sh\ngo run ./cmd/probe -h\n```\n")
-
-	validation := newTestChecker(repository, "module", []string{"README.md"})
-	validation.configuration.HelpCommands = []helpCommand{{
-		Document: "README.md", Argv: []string{"go", "run", "./cmd/probe", "-h"}, Contains: "usage", TimeoutSeconds: 10,
-	}}
+	validation := newHelpProbeChecker(t, "0")
 	if err := validation.run(); err != nil {
 		t.Fatal(err)
 	}
@@ -239,33 +267,52 @@ func main() {
 }
 
 func TestCheckHelpDocumentAcceptsDocumentedHelpExitStatus(t *testing.T) {
-	repository := t.TempDir()
-	module := filepath.Join(repository, "module")
-	writeTestFile(t, filepath.Join(module, "go.mod"), "module example.test/docs\n\ngo 1.22\n")
-	writeTestFile(t, filepath.Join(module, "cmd", "probe", "main.go"), `package main
-
-import (
-	"fmt"
-	"os"
-)
-
-func main() {
-	fmt.Println("Usage: probe")
-	os.Exit(2)
-}
-`)
-	writeTestFile(t, filepath.Join(module, "README.md"), "```sh\ngo run ./cmd/probe -h\n```\n")
-
-	validation := newTestChecker(repository, "module", []string{"README.md"})
-	validation.configuration.HelpCommands = []helpCommand{{
-		Document: "README.md", Argv: []string{"go", "run", "./cmd/probe", "-h"}, Contains: "usage", TimeoutSeconds: 10,
-	}}
+	validation := newHelpProbeChecker(t, "2")
 	if err := validation.run(); err != nil {
 		t.Fatal(err)
 	}
 	if len(validation.diagnostics) != 0 || validation.helpCount != 1 {
 		t.Fatalf("diagnostics/helpCount = %#v / %d, want no diagnostics and 1", validation.diagnostics, validation.helpCount)
 	}
+}
+
+func newHelpProbeChecker(t *testing.T, exit string) *checker {
+	t.Helper()
+	repository := t.TempDir()
+	writeTestFile(t, filepath.Join(repository, "module", "README.md"), helpProbeReadme)
+
+	// Let doccheck resolve the documented Go command normally, with the
+	// already compiled test binary standing in for the toolchain.
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	name := "go"
+	if runtime.GOOS == "windows" {
+		name = "go.exe"
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	if err := os.WriteFile(filepath.Join(binDir, name), binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv(helpProbeExitEnv, exit)
+	t.Setenv("GOPROXY", "https://modules.example.invalid")
+	t.Setenv("GOSUMDB", "sum.example.invalid")
+	t.Setenv("HTTP_PROXY", "https://proxy.example.invalid")
+	t.Setenv("DICOMGO_DOCCHECK_TEST", "fixture")
+	t.Setenv("PACS_DOCCHECK_TEST", "fixture")
+
+	validation := newTestChecker(repository, "module", []string{"README.md"})
+	validation.configuration.HelpCommands = []helpCommand{{
+		Document: "README.md", Argv: []string{"go", "run", "./cmd/probe", "-h"}, Contains: "usage", TimeoutSeconds: 10,
+	}}
+	return validation
 }
 
 func TestCheckPathReferenceRequiresDocumentedTextAndExistingTarget(t *testing.T) {

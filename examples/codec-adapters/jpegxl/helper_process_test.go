@@ -59,10 +59,13 @@ func TestHelperProcessCrashDoesNotKillCaller(t *testing.T) {
 
 func TestHelperProcessHangTimesOutWithoutMalformed(t *testing.T) {
 	session := openTestSession(t, SessionConfig{
-		Timeout: 80 * time.Millisecond,
+		Timeout: 10 * time.Second,
 		Dial:    testBinaryDial(t, "hang"),
 	})
-	frame, err := session.Decoder().(ContextDecoder).DecodeFrameContext(context.Background(), []byte("jxl"), gray8Meta())
+	// Start the short decode deadline after the subprocess handshake.
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	frame, err := session.Decoder().(ContextDecoder).DecodeFrameContext(ctx, []byte("jxl"), gray8Meta())
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
 	}

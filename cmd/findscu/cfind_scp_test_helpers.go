@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/ThalesMMS/dicom-go/net/dimse"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/object"
-	"github.com/ThalesMMS/dicom-go/parser"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
@@ -34,16 +32,5 @@ func sendCFindResponse(assoc *ul.Association, pcID byte, rsp dimse.CFindResponse
 	if identifier == nil {
 		return nil
 	}
-	var buf bytes.Buffer
-	w := parser.NewWriter(&buf, syntax)
-	for _, el := range identifier.Elements() {
-		if err := w.WriteElement(el); err != nil {
-			return err
-		}
-	}
-	dw := dimse.NewPDataWriter(assoc, pcID, false, 0)
-	if _, err := dw.Write(buf.Bytes()); err != nil {
-		return err
-	}
-	return dw.Finish()
+	return dimse.SendDataSet(assoc, pcID, identifier, syntax)
 }

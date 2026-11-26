@@ -119,7 +119,7 @@ func TestJSONMarshalObjectIncludesKnownUIDNames(t *testing.T) {
 func TestJSONMarshalObjectOmitsUnknownUIDNames(t *testing.T) {
 	obj := object.FromDataSet(core.DataSet{
 		Elements: []core.Element{
-			dicomtest.NewUIElement(core.NewTag(0x0008, 0x0016), "9.8.7.6.5"),
+			dicomtest.NewUIElement(core.NewTag(0x0008, 0x0016), "1.2.826.0.1.3680043.10.543.99.1"),
 		},
 	}, std.Dictionary)
 

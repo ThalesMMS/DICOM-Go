@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check vet test build docs-check race leak fuzz-smoke pydicom-interop benchmark-large benchmark-compare benchstat-install codec-policy-check codec-optional-check codec-jpeg2000-profile-check codec-jpeg2000-openjpeg-check codec-jpegls-charls-check codec-jpegxl-djxl-check codec-jpegxl-helper codecfull-check codec-conformance-check codec-manifest-check codec-fixture-bench jpegxl-inventory jpegxl-inventory-verify codec-cost-measure check
+.PHONY: fmt fmt-check vet test build docs-check provenance-check race leak fuzz-smoke pydicom-interop benchmark-large benchmark-compare benchstat-install codec-policy-check codec-optional-check codec-jpeg2000-profile-check codec-jpeg2000-openjpeg-check codec-jpegls-charls-check codec-jpegxl-djxl-check codec-jpegxl-helper codecfull-check codec-conformance-check codec-manifest-check codec-fixture-bench jpegxl-inventory jpegxl-inventory-verify codec-cost-measure check
 
 JPEGXL_FIXTURE_DIR ?= ../JPEGXL-Fixture
 JPEGXL_MANIFEST ?= pixeldata/codecfixture/testdata/codecs/jpegxl_manifest.json
@@ -13,6 +13,7 @@ FUZZ_SMOKE_PARALLEL ?= 2
 FUZZ_SMOKE_MEMORY ?= 1GiB
 FUZZ_SMOKE_GOCACHE ?=
 DICOMWEB_FUZZ_TARGETS ?= FuzzDICOMwebMetadataJSONInstanceRefs FuzzDICOMwebMetadataReferences FuzzWADOResponseParsing
+RLE_FUZZ_TARGETS ?= FuzzDecodeRLEFrame FuzzDecodeRLEObject FuzzRLERoundTrip
 PYDICOM_INTEROP_PYTHON ?= python3
 PYDICOM_INTEROP_TIMEOUT ?= 10m
 BENCH_COUNT ?= 6
@@ -30,9 +31,13 @@ LIFECYCLE_TEST_PATTERN ?= ^Test(Server(GracefulServeAndShutdown|ShutdownTimeoutC
 fmt:
 	gofmt -w .
 
-# Inspect without mutation; distinguish tool errors from unformatted files.
+# Inspect tracked/new source without mutating or checking ignored artifacts.
 fmt-check:
-	@unformatted="$$(gofmt -l .)"; rc=$$?; \
+	@paths=$$(mktemp) || exit 1; trap 'rm -f "$$paths"' EXIT; \
+	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		git ls-files -z --cached --others --exclude-standard -- '*.go' > "$$paths" || exit 1; \
+		unformatted="$$(xargs -0 gofmt -l < "$$paths")"; \
+	else unformatted="$$(gofmt -l .)"; fi; rc=$$?; \
 	if [ $$rc -ne 0 ]; then echo "gofmt failed (exit $$rc)" >&2; exit $$rc; fi; \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need gofmt:"; \
@@ -53,6 +58,11 @@ build:
 docs-check:
 	go run ./cmd/doccheck -root .. -config .doccheck.json
 
+# Also part of test/check. Set DICOMGO_REFERENCE_ROOT to recompute source
+# hashes from pinned reference checkouts.
+provenance-check:
+	go test -count=1 ./internal/provenance
+
 # Opt-in concurrency gates intentionally exclude native codecs and external
 # interoperability suites. Override *_COUNT for longer local stress runs.
 race:
@@ -61,8 +71,9 @@ race:
 leak:
 	go test -count=$(LEAK_COUNT) -timeout=$(LEAK_TIMEOUT) -run '$(LIFECYCLE_TEST_PATTERN)' $(LIFECYCLE_TEST_PACKAGES)
 
-# Opt-in, bounded client-side DICOMweb fuzz smoke. Targets run separately
-# because the Go fuzz driver accepts one -fuzz expression per invocation.
+# Opt-in, bounded client-side DICOMweb and RLE decoder fuzz smoke. Targets run
+# separately because the Go fuzz driver accepts one -fuzz expression per
+# invocation.
 # Hard input/parser limits live in each target; GOMEMLIMIT is an additional
 # soft process safeguard for local and CI smoke runs.
 fuzz-smoke:
@@ -72,12 +83,17 @@ fuzz-smoke:
 	if [ -z "$$cache_dir" ]; then cache_dir="$$(mktemp -d)"; remove_cache=true; fi; \
 	if [ "$$remove_cache" = true ]; then trap 'rm -rf -- "$$cache_dir"' EXIT; fi; \
 	mkdir -p -- "$$cache_dir"; \
-	available_targets="$$(GOCACHE="$$cache_dir" GOMEMLIMIT="$(FUZZ_SMOKE_MEMORY)" go test ./net/dicomweb -list '^Fuzz')"; \
-	for target in $(DICOMWEB_FUZZ_TARGETS); do \
-		if ! printf '%s\n' "$$available_targets" | grep -Fqx -- "$$target"; then echo "fuzz-smoke: missing target $$target" >&2; exit 1; fi; \
-		echo "fuzz-smoke: package=./net/dicomweb target=$$target fuzztime=$(FUZZ_SMOKE_TIME) timeout=$(FUZZ_SMOKE_TIMEOUT) parallel=$(FUZZ_SMOKE_PARALLEL) memory=$(FUZZ_SMOKE_MEMORY) isolated_cache=true"; \
-		GOCACHE="$$cache_dir" GOMEMLIMIT="$(FUZZ_SMOKE_MEMORY)" go test ./net/dicomweb -run '^$$' -fuzz="^$${target}$$" -fuzztime="$(FUZZ_SMOKE_TIME)" -timeout="$(FUZZ_SMOKE_TIMEOUT)" -parallel="$(FUZZ_SMOKE_PARALLEL)"; \
-	done
+	fuzz_package() { \
+		package="$$1"; shift; \
+		available_targets="$$(GOCACHE="$$cache_dir" GOMEMLIMIT="$(FUZZ_SMOKE_MEMORY)" go test "$$package" -list '^Fuzz')"; \
+		for target in "$$@"; do \
+			if ! printf '%s\n' "$$available_targets" | grep -Fqx -- "$$target"; then echo "fuzz-smoke: missing target $$target" >&2; exit 1; fi; \
+			echo "fuzz-smoke: package=$$package target=$$target fuzztime=$(FUZZ_SMOKE_TIME) timeout=$(FUZZ_SMOKE_TIMEOUT) parallel=$(FUZZ_SMOKE_PARALLEL) memory=$(FUZZ_SMOKE_MEMORY) isolated_cache=true"; \
+			GOCACHE="$$cache_dir" GOMEMLIMIT="$(FUZZ_SMOKE_MEMORY)" go test "$$package" -run '^$$' -fuzz="^$${target}$$" -fuzztime="$(FUZZ_SMOKE_TIME)" -timeout="$(FUZZ_SMOKE_TIMEOUT)" -parallel="$(FUZZ_SMOKE_PARALLEL)"; \
+		done; \
+	}; \
+	fuzz_package ./net/dicomweb $(DICOMWEB_FUZZ_TARGETS); \
+	fuzz_package ./pixeldata/rle $(RLE_FUZZ_TARGETS)
 
 # Opt-in independent Part 10 matrix. The selected interpreter must come from
 # the pinned environment in scripts/requirements-pydicom-interop.txt.
@@ -86,7 +102,12 @@ pydicom-interop:
 	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_PART10=1 go test ./object -run 'PydicomPart10' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
 	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_CHARSET=1 go test ./object -run '^TestPydicomISO2022Interop$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
 	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_RLE=1 go test ./pixeldata -run '^TestPydicomRLETranscodeInterop$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
+	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_WIDE_ENDIAN=1 go test ./pixeldata -run '^TestPydicomWideSampleEndianInterop$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
+	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_JSON_TEXT=1 go test ./dicomjson -run '^TestPydicomJSONTextOracle$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
 	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_DICOMDIR=1 go test ./dicomdir -run '^TestDICOMDIRPydicomInterop$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
+	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_DICOMDIR=1 go test ./object -run '^TestPydicomDICOMDIRNoOffsetOracle$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
+	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_CHARSET=1 PYTHONIOENCODING=utf-8 go test ./object -run '^TestPydicomCharsetConversionOracle$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
+	DICOM_GO_PYTHON="$(PYDICOM_INTEROP_PYTHON)" DICOM_GO_PYDICOM_STORED_SAMPLES=1 go test ./pixeldata -run '^TestPydicomStoredSamplesOracle$$' -count=1 -timeout=$(PYDICOM_INTEROP_TIMEOUT) -v
 
 # Informational large-data benchmarks. Run baseline and candidate on the same
 # host with identical variables, then compare through benchmark-compare.

@@ -63,30 +63,46 @@ func newOpenJPHDecoder(options ...OpenJPHOption) openJPHDecoder {
 	return decoder
 }
 
-// RegisterClinical registers all JPEG 2000 Part 1/2 and HTJ2K syntaxes with
-// the fail-closed OpenJPH backend.
+// RegisterClinical registers JPEG 2000 Part 1/2 and HTJ2K with the CLI backends.
 func RegisterClinical(registry pixeldata.Registry, options ...OpenJPHOption) error {
+	return RegisterClinicalWithNativeSessions(registry, nil, options...)
+}
+
+// RegisterClinicalWithNativeSessions optionally routes qualified Part 1 and
+// HTJ2K frames to caller-owned persistent sessions. The CLI decoders keep all
+// other profiles, including Part 2. Lookup may return nil when a session is
+// unavailable or closed. The caller must keep its sessions alive during use.
+func RegisterClinicalWithNativeSessions(registry pixeldata.Registry, lookup func(NativeBackend) *NativeSession, options ...OpenJPHOption) error {
 	if registry == nil {
 		return pixeldata.ErrCodecRegistryNil
 	}
-	openJPEGCodec := NewOpenJPEGCodec()
-	for _, uid := range []string{
-		transfer.JPEG2000LosslessOnly.UID,
-		transfer.JPEG2000.UID,
-		transfer.JPEG2000Part2Lossless.UID,
-		transfer.JPEG2000Part2.UID,
+	openJPEG := newOpenJPEGDecoder()
+	openJPH := newOpenJPHDecoder(options...)
+	part2 := NewWithDecoder(openJPEG)
+	part1, htj2k := part2, NewWithDecoder(openJPH)
+	if lookup != nil {
+		part1 = NewWithDecoder(clinicalDecoder{lookup: lookup, engine: NativeOpenJPEG, cli: openJPEG})
+		htj2k = NewWithDecoder(clinicalDecoder{lookup: lookup, engine: NativeOpenJPH, cli: openJPH})
+	}
+	for _, item := range []struct {
+		uid   string
+		codec *Codec
+	}{
+		{transfer.JPEG2000LosslessOnly.UID, part1},
+		{transfer.JPEG2000.UID, part1},
+		{transfer.JPEG2000Part2Lossless.UID, part2},
+		{transfer.JPEG2000Part2.UID, part2},
 	} {
-		if err := registry.RegisterCodec(uid, openJPEGCodec); err != nil {
+		if err := registry.RegisterCodec(item.uid, item.codec); err != nil {
 			return err
 		}
 	}
-	openJPHCodec := NewWithDecoder(NewOpenJPHDecoder(options...))
 	for _, uid := range []string{
 		transfer.HTJ2KLossless.UID,
 		transfer.HTJ2KLosslessRPCL.UID,
 		transfer.HTJ2K.UID,
 	} {
-		if err := registry.RegisterCodec(uid, openJPHCodec); err != nil {
+		if err := registry.RegisterCodec(uid, htj2k); err != nil {
 			return err
 		}
 	}

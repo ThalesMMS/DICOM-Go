@@ -13,9 +13,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ThalesMMS/dicom-go/internal/decoderecovery"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
 	"github.com/ThalesMMS/dicom-go/pixeldata/encapsulated"
+	purejls "github.com/ThalesMMS/dicom-go/pixeldata/jpegls"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
@@ -32,6 +34,9 @@ var (
 type DecoderInput struct {
 	Metadata     pixeldata.Metadata
 	NearLossless bool
+	// AllowHPColorTransforms enables only lossless unsigned RGB8/RGB16
+	// HP1/HP2/HP3 with ILV=1/2. The default remains strict.
+	AllowHPColorTransforms bool
 }
 
 // Decoder is implemented by a dependency-specific JPEG-LS backend.
@@ -139,6 +144,8 @@ func (c *Codec) DecodeContext(ctx context.Context, pixel pixeldata.PixelData, ob
 		return pixeldata.Frames{}, fmt.Errorf("%w: %w: request working set exceeds limit", ErrUnsupportedMetadata, encapsulated.ErrResourceLimit)
 	}
 	frames := make([][]byte, codestreams.Len())
+	var result pixeldata.Frames
+	allowHP := decoderecovery.From(ctx).JPEGLSHPColorTransforms
 	for i := range frames {
 		if err := ctx.Err(); err != nil {
 			return pixeldata.Frames{}, err
@@ -150,9 +157,21 @@ func (c *Codec) DecodeContext(ctx context.Context, pixel pixeldata.PixelData, ob
 			}
 			return pixeldata.Frames{}, fmt.Errorf("%w: %w", ErrUnsupportedFragmentLayout, err)
 		}
+		var hp int
+		if allowHP {
+			info, err := purejls.InspectCodestream(ctx, view.Data, 0)
+			if err != nil {
+				return pixeldata.Frames{}, fmt.Errorf("%w: frame %d: %w", ErrMalformedFrame, i, err)
+			}
+			hp = info.HPColorTransform
+			if hp != 0 && (c.nearLossless || metadata.PixelRepresentation != 0 || metadata.HighBit != metadata.BitsStored-1 || int(metadata.BitsAllocated) != info.Precision || int(metadata.BitsStored) != info.Precision) {
+				return pixeldata.Frames{}, fmt.Errorf("%w: HP transforms require Lossless RGB at full container precision", ErrUnsupportedMetadata)
+			}
+		}
 		decoded, err := c.decoder.DecodeJPEGLS(view.Data, DecoderInput{
-			Metadata:     metadata,
-			NearLossless: c.nearLossless,
+			Metadata:               metadata,
+			NearLossless:           c.nearLossless,
+			AllowHPColorTransforms: allowHP,
 		})
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -187,16 +206,19 @@ func (c *Codec) DecodeContext(ctx context.Context, pixel pixeldata.PixelData, ob
 			)
 		}
 		frames[i] = append([]byte(nil), decoded...)
+		if hp != 0 {
+			result.AddDiagnostic([]string{"", pixeldata.DiagnosticJPEGLSHP1, pixeldata.DiagnosticJPEGLSHP2, pixeldata.DiagnosticJPEGLSHP3}[hp])
+			if _, native := c.decoder.(charLSDecoder); native {
+				result.AddDiagnostic(pixeldata.DiagnosticJPEGLSHPBackendCharLS)
+			}
+		}
 	}
 
 	if err := ctx.Err(); err != nil {
 		return pixeldata.Frames{}, err
 	}
-	return pixeldata.Frames{
-		Rows:    int(metadata.Rows),
-		Columns: int(metadata.Columns),
-		Data:    frames,
-	}, nil
+	result.Rows, result.Columns, result.Data = int(metadata.Rows), int(metadata.Columns), frames
+	return result, nil
 }
 
 func validateMetadata(metadata pixeldata.Metadata) error {

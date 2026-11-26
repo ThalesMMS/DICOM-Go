@@ -16,7 +16,9 @@ import (
 	"github.com/ThalesMMS/dicom-go/internal/dimsecli"
 	"github.com/ThalesMMS/dicom-go/internal/testutil"
 	"github.com/ThalesMMS/dicom-go/net/dimse"
+	"github.com/ThalesMMS/dicom-go/net/storetranscode"
 	"github.com/ThalesMMS/dicom-go/net/ul"
+	"github.com/ThalesMMS/dicom-go/pixeldata"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
@@ -53,6 +55,71 @@ func TestParseArgsTranscodeRequiresExplicitConsistentPolicy(t *testing.T) {
 	}
 }
 
+func TestParseArgsLossyVerificationPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  *float64
+		block int
+	}{
+		{name: "default disabled"},
+		{name: "explicit disabled", flags: []string{"-max-pixel-error", "-1"}},
+		{name: "zero limit", flags: []string{"-transcode-to", transfer.JPEGBaseline.UID, "-max-pixel-error", "0"}, want: storeFloatPointer(0)},
+		{name: "block limit", flags: []string{"-transcode-to", transfer.JPEGBaseline.UID, "-allow-lossy", "-max-pixel-error", "0.25", "-average-block-size", "3"}, want: storeFloatPointer(0.25), block: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := parseArgs(append(append([]string(nil), tc.flags...), "127.0.0.1:104", "synthetic.dcm"), &bytes.Buffer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy, err := storeTranscodeOptions(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (policy.Transcode.MaxPixelError == nil) != (tc.want == nil) || policy.Transcode.AverageBlockSize != tc.block ||
+				(tc.want != nil && *policy.Transcode.MaxPixelError != *tc.want) {
+				t.Fatalf("flags not wired: max=%v block=%d", policy.Transcode.MaxPixelError, policy.Transcode.AverageBlockSize)
+			}
+			if policy.Transcode.AllowLossy != opts.allowLossy {
+				t.Fatal("verification changed lossy authorization")
+			}
+		})
+	}
+	for _, flags := range [][]string{
+		{"-max-pixel-error", "NaN"}, {"-max-pixel-error", "+Inf"}, {"-max-pixel-error", "-Inf"},
+		{"-max-pixel-error", "-0.5"}, {"-max-pixel-error", "-2"},
+		{"-average-block-size", "-1"}, {"-average-block-size", "1"},
+		{"-max-pixel-error", "-1", "-average-block-size", "2"},
+		{"-max-pixel-error", "0"}, {"-max-pixel-error", "1", "-average-block-size", "3"},
+	} {
+		var stderr bytes.Buffer
+		if _, err := parseArgs(append(append([]string(nil), flags...), "127.0.0.1:104", "synthetic.dcm"), &stderr); !errors.Is(err, errUsage) {
+			t.Fatalf("invalid verification flags accepted: %v err=%v stderr=%q", flags, err, stderr.String())
+		}
+	}
+}
+
+func storeFloatPointer(value float64) *float64 { return &value }
+
+func TestReportStoreLossyVerificationContainsOnlyMetrics(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	reportStoreVerification(&stdout, &stderr, 2, storetranscode.Report{LossyVerification: &pixeldata.LossyVerificationReport{
+		MaximumError: 0.25, MaximumSampleError: 2, Limit: 0.5, AverageBlockSize: 3, Frames: 2, Blocks: 18,
+	}})
+	want := "C-STORE lossy verification source=2 maximum-error=0.25 maximum-sample-error=2 limit=0.5 average-block-size=3 frames=2 blocks=18\n"
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Fatalf("accepted report: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	reportStoreVerification(&stdout, &stderr, 2, storetranscode.Report{VerificationFailure: &pixeldata.LossyVerificationError{
+		Frame: 1, Measured: 0.75, Limit: 0.5, AverageBlockSize: 3,
+	}})
+	want = "C-STORE lossy verification failed source=2 frame=1 maximum-error=0.75 limit=0.5 average-block-size=3\n"
+	if stdout.Len() != 0 || stderr.String() != want {
+		t.Fatalf("failed report: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
 func TestParseArgsCustomValues(t *testing.T) {
 	opts, err := parseArgs([]string{
 		"-called", "SCP",
@@ -73,13 +140,14 @@ func TestParseArgsPipelineFlags(t *testing.T) {
 	opts, err := parseArgs([]string{
 		"-max-invoked", "4",
 		"-max-in-flight-bytes", "1048576",
+		"-max-send-pdu", "16384",
 		"127.0.0.1:104",
 		"file.dcm",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("parseArgs() error = %v", err)
 	}
-	if opts.maxInvoked != 4 || opts.maxInFlightBytes != 1048576 {
+	if opts.maxInvoked != 4 || opts.maxInFlightBytes != 1048576 || opts.maxSendPDU != 16384 {
 		t.Fatalf("pipeline flags = %#v", opts)
 	}
 }

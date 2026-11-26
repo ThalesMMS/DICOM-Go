@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ThalesMMS/dicom-go/attrpath"
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dicomjson"
-	"github.com/ThalesMMS/dicom-go/dictionary/std"
 	"github.com/ThalesMMS/dicom-go/internal/clidiag"
 	"github.com/ThalesMMS/dicom-go/internal/clisignal"
 	"github.com/ThalesMMS/dicom-go/internal/dcmdump"
@@ -61,6 +61,13 @@ func runWithContext(parent context.Context, args []string, stdout, stderr io.Wri
 var errUsage = errors.New("usage error")
 
 type options struct {
+	conn                 dimsecli.ConnectionFlags
+	query                dimsecli.QueryFlags
+	worklist             bool
+	levelExplicit        bool
+	cancelAfter          int
+	extract              bool
+	extractDir           string
 	model                dimse.QueryRetrieveModel
 	host                 string
 	port                 int
@@ -74,6 +81,10 @@ type options struct {
 	jsonBulkData         string
 	jsonMaxResponseBytes int64
 	jsonSummary          bool
+	tls                  dimsecli.TLSFlags
+	identity             dimsecli.UserIdentityFlags
+	// extendedNegotiation holds the requested C-FIND options (PS3.4 C.5.1.1).
+	extendedNegotiation dimse.CFindExtendedNegotiation
 }
 
 const (
@@ -131,22 +142,28 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 
 	fs := flag.NewFlagSet("findscu", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	opts.conn.RegisterWithDefaults(fs, dimsecli.ConnectionDefaults{Host: opts.host, Port: opts.port, CalledAE: opts.calledAE, CallingAE: opts.callingAE, Timeout: opts.timeout})
 	modelName := "study-root"
-	fs.StringVar(&modelName, "model", modelName, "information model: study-root or patient-root")
-	fs.StringVar(&opts.callingAE, "calling", opts.callingAE, "calling AE title")
-	fs.StringVar(&opts.calledAE, "called", opts.calledAE, "called AE title")
-	fs.StringVar(&opts.host, "host", opts.host, "SCP host name or IP address")
-	fs.IntVar(&opts.port, "port", opts.port, "SCP TCP port")
+	fs.StringVar(&modelName, "model", modelName, "information model: study-root, patient-root or worklist")
 	fs.StringVar(&opts.level, "level", opts.level, "query retrieve level: patient, study, series, or image")
-	fs.DurationVar(&opts.timeout, "timeout", opts.timeout, "dial/find timeout")
 	fs.IntVar(&opts.maxResults, "max-results", opts.maxResults, "stop after printing N pending matches (0 means no limit)")
 	fs.StringVar(&opts.output, "output", opts.output, "output format: text or jsonl")
 	fs.StringVar(&opts.jsonBulkData, "json-bulk-data", opts.jsonBulkData, "JSONL bulk data policy: omit or inline")
 	fs.Int64Var(&opts.jsonMaxResponseBytes, "json-max-response-bytes", opts.jsonMaxResponseBytes, "maximum bytes per JSONL response dataset")
 	fs.BoolVar(&opts.jsonSummary, "json-summary", opts.jsonSummary, "write JSONL final summary to stderr")
+	fs.BoolVar(&opts.extendedNegotiation.RelationalQueries, "relational", false, "request relational queries (C-FIND extended negotiation)")
+	fs.BoolVar(&opts.extendedNegotiation.CombinedDateTimeMatching, "datetime", false, "request combined date-time matching (C-FIND extended negotiation)")
+	fs.BoolVar(&opts.extendedNegotiation.FuzzySemanticMatching, "fuzzy", false, "request fuzzy semantic matching of person names (C-FIND extended negotiation)")
+	fs.BoolVar(&opts.extendedNegotiation.TimezoneQueryAdjustment, "timezone", false, "request timezone query adjustment (C-FIND extended negotiation; pass -k TimezoneOffsetFromUTC=+HHMM)")
+	fs.BoolVar(&opts.extendedNegotiation.EmptyValueMatching, "empty-value", false, "request empty value matching (C-FIND extended negotiation)")
+	fs.BoolVar(&opts.extendedNegotiation.MultipleValueMatching, "multiple-value", false, "request multiple value matching (C-FIND extended negotiation)")
 
-	var keys stringSliceFlag
-	fs.Var(&keys, "k", "query key in the form Keyword=value (repeatable)")
+	opts.query.Register(fs)
+	fs.BoolVar(&opts.worklist, "worklist", false, "use Modality Worklist C-FIND")
+	fs.IntVar(&opts.cancelAfter, "cancel-after", 0, "send C-CANCEL after N pending matches (0 disables)")
+	fs.IntVar(&opts.cancelAfter, "cancel", 0, "alias for -cancel-after")
+	fs.BoolVar(&opts.extract, "extract", false, "atomically extract delivered responses as raw ExplicitLE datasets")
+	fs.StringVar(&opts.extractDir, "extract-dir", ".", "directory for raw rspNNNNNN.dcm files")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Usage: %s [flags]\n\nSend a DICOM C-FIND request using Study Root or Patient Root.\n\nFlags:\n", fs.Name())
@@ -160,12 +177,59 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		}
 		return opts, errUsage
 	}
-	if fs.NArg() != 0 {
-		fs.Usage()
+	if err := opts.conn.Validate(); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	opts.host, opts.port, opts.calledAE, opts.callingAE = opts.conn.Host, opts.conn.Port, opts.conn.CalledAE, opts.conn.CallingAE
+	opts.tls, opts.identity, opts.timeout = opts.conn.TLS, opts.conn.Identity, opts.conn.Timeout
+
+	explicitModel := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "level" {
+			opts.levelExplicit = true
+		}
+		if f.Name == "model" {
+			explicitModel = true
+		}
+	})
+	for _, path := range fs.Args() {
+		if err := opts.query.AddFile(path); err != nil {
+			fmt.Fprintln(stderr, err)
+			return opts, errUsage
+		}
+	}
+	if err := opts.query.Validate(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	if opts.cancelAfter < 0 || opts.cancelAfter > 1000000 {
+		fmt.Fprintln(stderr, "-cancel-after must be between 0 and 1000000")
+		return opts, errUsage
+	}
+	if opts.extract && strings.TrimSpace(opts.extractDir) == "" {
+		fmt.Fprintln(stderr, "-extract-dir must not be empty")
+		return opts, errUsage
+	}
+	if opts.worklist && explicitModel && modelName != "worklist" {
+		fmt.Fprintln(stderr, "-worklist conflicts with -model")
+		return opts, errUsage
+	}
+	opts.worklist = opts.worklist || modelName == "worklist"
+	if opts.worklist && (opts.levelExplicit || opts.extendedNegotiation != (dimse.CFindExtendedNegotiation{})) {
+		fmt.Fprintln(stderr, "worklist refuses QR level/extended-negotiation options")
 		return opts, errUsage
 	}
 
-	opts.keys = append([]string(nil), keys...)
+	if err := errors.Join(opts.tls.Validate(), opts.identity.Validate()); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		fs.Usage()
+		return opts, errUsage
+	}
+	opts.keys = append([]string(nil), opts.query.Keys...)
+	if opts.worklist {
+		modelName = "study-root"
+	}
 	model, err := dimse.ParseQueryRetrieveModel(modelName)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "-model must be 'study-root' or 'patient-root'")
@@ -213,13 +277,6 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		fs.Usage()
 		return opts, errUsage
 	}
-	for _, kv := range opts.keys {
-		if !strings.Contains(kv, "=") {
-			_, _ = fmt.Fprintf(stderr, "-k must be Keyword=value, got %q\n", kv)
-			fs.Usage()
-			return opts, errUsage
-		}
-	}
 
 	return opts, nil
 }
@@ -242,6 +299,18 @@ func runFind(parent context.Context, opts options, stdout, stderr io.Writer) err
 	ctx, cancel := context.WithTimeout(parent, opts.timeout)
 	defer cancel()
 
+	identifiers, err := buildFindQueries(ctx, opts)
+	if err != nil {
+		return err
+	}
+	var extraction *findExtractor
+	if opts.extract {
+		extraction, err = newFindExtractor(opts.extractDir)
+		if err != nil {
+			return err
+		}
+		defer extraction.Close()
+	}
 	findSOPClassUID := dimse.StudyRootFindSOPClassUID
 	findContext := dimse.StudyRootFindPresentationContext()
 	modelLabel := "study-root"
@@ -250,14 +319,40 @@ func runFind(parent context.Context, opts options, stdout, stderr io.Writer) err
 		findContext = dimse.PatientRootFindPresentationContext()
 		modelLabel = "patient-root"
 	}
-	assoc, err := ul.Dial(address, ul.DialOptions{
+	if opts.worklist {
+		findSOPClassUID = dimse.ModalityWorklistFindSOPClassUID
+		findContext = dimse.ModalityWorklistFindPresentationContext()
+		modelLabel = "worklist"
+	}
+	tlsConfig, err := opts.tls.Config()
+	if err != nil {
+		return err
+	}
+	identity, err := opts.identity.Request()
+	if err != nil {
+		return err
+	}
+	dialOptions := ul.DialOptions{
 		CalledAETitle:  opts.calledAE,
 		CallingAETitle: opts.callingAE,
 		Context:        ctx,
 		Contexts:       []ul.PresentationContext{findContext},
-	})
+		TLSConfig:      tlsConfig,
+		UserIdentity:   identity,
+	}
+	requested := opts.extendedNegotiation
+	if requested != (dimse.CFindExtendedNegotiation{}) {
+		dialOptions.ExtendedNegotiation = []ul.SopClassExtendedNegotiationItem{requested.Item(findSOPClassUID)}
+	}
+	assoc, err := ul.Dial(address, dialOptions)
 	if err != nil {
 		return err
+	}
+	if requested != (dimse.CFindExtendedNegotiation{}) {
+		accepted := dimse.AcceptedCFindExtendedNegotiation(assoc, findSOPClassUID)
+		if _, err := fmt.Fprintf(stderr, "findscu: extended negotiation requested=%s accepted=%s\n", formatFindOptions(requested), formatFindOptions(accepted)); err != nil {
+			return err
+		}
 	}
 
 	released := false
@@ -271,44 +366,6 @@ func runFind(parent context.Context, opts options, stdout, stderr io.Writer) err
 	if err != nil {
 		return fmt.Errorf("no accepted %s FIND presentation context: %w", modelLabel, err)
 	}
-
-	queryKeys := make(map[string]string)
-	for _, kv := range opts.keys {
-		k, v, _ := strings.Cut(kv, "=")
-		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
-		if k == "" {
-			return fmt.Errorf("invalid -k %q: empty keyword", kv)
-		}
-		queryKeys[k] = v
-	}
-
-	var identifierElements []core.Element
-	if opts.model == dimse.QueryRetrieveModelPatientRoot {
-		switch opts.level {
-		case "patient":
-			identifierElements, err = dimse.BuildPatientRootPatientFindKeys(queryKeys)
-		case "study":
-			identifierElements, err = dimse.BuildPatientRootStudyFindKeys(queryKeys)
-		case "series":
-			identifierElements, err = dimse.BuildPatientRootSeriesFindKeys(queryKeys)
-		default:
-			identifierElements, err = dimse.BuildPatientRootImageFindKeys(queryKeys)
-		}
-	} else {
-		switch opts.level {
-		case "study":
-			identifierElements, err = dimse.BuildStudyRootStudyFindKeys(queryKeys)
-		case "series":
-			identifierElements, err = dimse.BuildStudyRootSeriesFindKeys(queryKeys)
-		default:
-			identifierElements, err = dimse.BuildStudyRootImageFindKeys(queryKeys)
-		}
-	}
-	if err != nil {
-		return err
-	}
-	identifier := object.FromElements(identifierElements, std.Dictionary)
 
 	req := dimse.CFindRequest{
 		MessageID:           1,
@@ -335,58 +392,13 @@ func runFind(parent context.Context, opts options, stdout, stderr io.Writer) err
 			_ = session.Close()
 		}
 	}()
-	operation, err := session.StartCFind(ctx, pc.ID, req, identifier)
-	if err != nil {
-		return err
-	}
-	reader := dimsecli.NewOperationReader(ctx, operation, defaultReleaseTimeout)
-	defer reader.Close()
-
-	printed := 0
-	suppressIdentifiers := false
-	var finalStatus uint16
-	var finalComment string
-
-	for {
-		message, nextErr := reader.Next()
-		if errors.Is(nextErr, io.EOF) {
+	var operationErr error
+	for _, identifier := range identifiers {
+		printed := 0
+		operationErr = runFindOperation(ctx, session, pc.ID, req, identifier, identifierSyntax, modelLabel, opts, stdout, stderr, extraction, &printed)
+		if operationErr != nil {
 			break
 		}
-		if nextErr != nil {
-			return nextErr
-		}
-		response, parseErr := dimse.ParseCFindResponse(message.Command)
-		if parseErr != nil {
-			return parseErr
-		}
-		r := dimse.FindResult{Response: response, Identifier: message.DataSet}
-		finalStatus = r.Status()
-		finalComment = r.ErrorComment()
-		if dimse.CategorizeCFindStatus(finalStatus) == dimse.CFindStatusPending {
-			if !suppressIdentifiers {
-				printed++
-				if err := writeFindIdentifier(stdout, r.Identifier, identifierSyntax, opts); err != nil {
-					return err
-				}
-				if opts.maxResults > 0 && printed >= opts.maxResults {
-					suppressIdentifiers = true
-				}
-			}
-		}
-	}
-
-	if err := writeFindFinal(stdout, stderr, modelLabel, printed, finalStatus, finalComment, opts); err != nil {
-		return err
-	}
-	var operationErr error
-	if errors.Is(reader.Cause(), context.DeadlineExceeded) {
-		operationErr = reader.Cause()
-	} else if finalStatus == dimse.CFindStatusCancel || errors.Is(reader.Cause(), context.Canceled) {
-		operationErr = context.Canceled
-	} else if reader.Cause() != nil {
-		operationErr = reader.Cause()
-	} else if category := dimse.CategorizeCFindStatus(finalStatus); category != dimse.CFindStatusSuccess {
-		operationErr = dimse.CFindStatusError(&dimse.CFindResponse{Status: finalStatus, ErrorComment: finalComment})
 	}
 
 	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), defaultReleaseTimeout)
@@ -399,13 +411,43 @@ func runFind(parent context.Context, opts options, stdout, stderr io.Writer) err
 	return operationErr
 }
 
+// formatFindOptions names the C-FIND extended negotiation options that are
+// set, or "none".
+func formatFindOptions(n dimse.CFindExtendedNegotiation) string {
+	var names []string
+	for _, option := range []struct {
+		set  bool
+		name string
+	}{
+		{n.RelationalQueries, "relational"},
+		{n.CombinedDateTimeMatching, "datetime"},
+		{n.FuzzySemanticMatching, "fuzzy"},
+		{n.TimezoneQueryAdjustment, "timezone"},
+		{n.EnhancedMultiFrameImageConversion, "enhanced-multiframe"},
+		{n.EmptyValueMatching, "empty-value"},
+		{n.MultipleValueMatching, "multiple-value"},
+	} {
+		if option.set {
+			names = append(names, option.name)
+		}
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ",")
+}
+
 func findSessionOptions(opts options) dimse.AsyncSessionOptions {
 	sessionOptions := dimse.AsyncSessionOptions{CancelDrainTimeout: defaultReleaseTimeout}
-	if opts.output != findOutputJSONL {
+	if opts.output != findOutputJSONL && !opts.extract && !opts.worklist {
 		return sessionOptions
 	}
 	sessionOptions.ResponseQueueDepth = 4
 	sessionOptions.MaxDataSetBytes = opts.jsonMaxResponseBytes
+	if opts.worklist || opts.extract {
+		sessionOptions.MaxDataSetElements = 100_000
+		sessionOptions.MaxDataSetDepth = 32
+	}
 	sessionOptions.MaxQueuedMessageBytes = 4*opts.jsonMaxResponseBytes + 4<<20
 	return sessionOptions
 }
@@ -454,4 +496,194 @@ func writeFindIdentifier(w io.Writer, identifier *object.Object, syntax transfer
 	encoded = append(encoded, '\n')
 	_, err = w.Write(encoded)
 	return err
+}
+
+type pathKey struct {
+	path  attrpath.Path
+	value string
+}
+
+// splitQueryKeys separates plain Keyword=value keys, handled by the query
+// builders, from attribute paths (with ".", "[" or a "(gggg,eeee)" tag),
+// which are inserted into the identifier afterwards.
+func splitQueryKeys(keys []string) (map[string]string, []pathKey, error) {
+	flat := make(map[string]string)
+	var paths []pathKey
+	for _, kv := range keys {
+		k, v, _ := strings.Cut(kv, "=")
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" {
+			return nil, nil, fmt.Errorf("invalid -k %q: empty keyword", kv)
+		}
+		if !strings.ContainsAny(k, ".[(") {
+			flat[k] = v
+			continue
+		}
+		p, err := attrpath.Parse(k, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid -k %q: %w", kv, err)
+		}
+		paths = append(paths, pathKey{path: p, value: v})
+	}
+	return flat, paths, nil
+}
+
+// applyPathKeys inserts path keys into the identifier; an empty value
+// creates an empty return key (or an empty item for an item path).
+func applyPathKeys(identifier *object.Object, keys []pathKey) error {
+	for _, key := range keys {
+		if _, err := attrpath.Insert(identifier, key.path, key.value, attrpath.Options{SkipValueValidation: true}); err != nil {
+			return fmt.Errorf("-k %s: %w", key.path, err)
+		}
+	}
+	return nil
+}
+
+// buildFindQueries keeps free matching/return keys and bounds them before dial.
+func buildFindQueries(ctx context.Context, opts options) ([]*object.Object, error) {
+	if opts.model == "" {
+		opts.model = dimse.QueryRetrieveModelStudyRoot
+	}
+	q := opts.query
+	if len(q.Keys) == 0 {
+		q.Keys = opts.keys
+	}
+	ids, err := q.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		levelTag := core.NewTag(0x0008, 0x0052)
+		if !opts.worklist && opts.levelExplicit && id.Has(levelTag) {
+			values, ok := id.GetStrings(levelTag)
+			if !ok || len(values) != 1 || strings.ToUpper(strings.TrimSpace(values[0])) != strings.ToUpper(opts.level) {
+				return nil, errors.New("query file level conflicts with explicit -level")
+			}
+		}
+		if !opts.worklist && (opts.levelExplicit || !id.Has(levelTag)) {
+			id.Put(core.Element{Header: core.ElementHeader{Tag: levelTag, VR: core.VRCS}, Value: core.StringValue{strings.ToUpper(opts.level)}})
+		}
+		if err := q.Apply(ctx, id); err != nil {
+			return nil, err
+		}
+		if opts.worklist {
+			if id.Has(levelTag) {
+				return nil, errors.New("MWL Identifier must not contain QueryRetrieveLevel")
+			}
+			if e, ok := id.Get(core.NewTag(0x0040, 0x0100)); ok {
+				v, valid := e.Value.(core.SequenceValue)
+				if e.VR() != core.VRSQ || !valid || len(v.Items) != 1 {
+					return nil, errors.New("MWL Scheduled Procedure Step Sequence needs one item")
+				}
+			}
+		} else {
+			e, ok := id.Get(levelTag)
+			vs, valid := id.GetStrings(levelTag)
+			if !ok || e.VR() != core.VRCS || !valid || len(vs) != 1 {
+				return nil, errors.New("QueryRetrieveLevel must be CS with one value")
+			}
+			level := strings.ToUpper(strings.TrimSpace(vs[0]))
+			if opts.levelExplicit && level != strings.ToUpper(opts.level) {
+				return nil, errors.New("query level conflicts with -level")
+			}
+			if _, err := dimse.QueryRetrieveRequiredKeys(opts.model, level); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return ids, nil
+}
+func runFindOperation(ctx context.Context, session *dimse.AsyncSession, pcID byte, req dimse.CFindRequest, identifier *object.Object, syntax transfer.Syntax, model string, opts options, stdout, stderr io.Writer, extractor *findExtractor, printed *int) error {
+	opCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	operation, err := session.StartCFind(opCtx, pcID, req, identifier)
+	if err != nil {
+		return err
+	}
+	reader := dimsecli.NewOperationReader(opCtx, operation, defaultReleaseTimeout)
+	defer reader.Close()
+	delivered := 0
+	intentional := false
+	var deliveryErr error
+	var finalStatus uint16
+	finalSeen := false
+	comment := ""
+	for {
+		msg, nextErr := reader.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return errors.Join(deliveryErr, nextErr)
+		}
+		response, err := dimse.ParseCFindResponse(msg.Command)
+		if err != nil {
+			return err
+		}
+		finalStatus = response.Status
+		comment = response.ErrorComment
+		category := dimse.CategorizeCFindStatus(finalStatus)
+		if category == dimse.CFindStatusPending {
+			if msg.DataSet == nil {
+				return errors.New("pending C-FIND response missing Identifier")
+			}
+			if intentional || deliveryErr != nil {
+				continue
+			}
+			delivered++
+			if extractor != nil {
+				deliveryErr = extractor.Write(ctx, msg.DataSet)
+			}
+			if deliveryErr == nil && (opts.maxResults == 0 || *printed < opts.maxResults) {
+				*printed++
+				deliveryErr = writeFindIdentifier(stdout, msg.DataSet, syntax, opts)
+			}
+			if deliveryErr != nil {
+				cancel()
+				continue
+			}
+			if opts.cancelAfter > 0 && delivered >= opts.cancelAfter {
+				intentional = true
+				cancel()
+			}
+		} else {
+			finalSeen = true
+			if msg.DataSet != nil {
+				return errors.New("final C-FIND response unexpectedly contained Identifier")
+			}
+		}
+	}
+	if !finalSeen {
+		return errors.New("C-FIND terminal response missing")
+	}
+	if err := writeFindFinal(stdout, stderr, model, *printed, finalStatus, comment, opts); err != nil {
+		return err
+	}
+	if deliveryErr != nil {
+		return deliveryErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if intentional && (finalStatus == dimse.CFindStatusCancel || dimse.CategorizeCFindStatus(finalStatus) == dimse.CFindStatusSuccess) {
+		fmt.Fprintf(stderr, "findscu: canceled locally after %d matches\n", delivered)
+		return nil
+	}
+	if errors.Is(reader.Cause(), context.DeadlineExceeded) {
+		return reader.Cause()
+	}
+	if finalStatus == dimse.CFindStatusCancel || errors.Is(reader.Cause(), context.Canceled) {
+		return context.Canceled
+	}
+	if reader.Cause() != nil {
+		return reader.Cause()
+	}
+	if dimse.CategorizeCFindStatus(finalStatus) != dimse.CFindStatusSuccess {
+		return dimse.CFindStatusError(responseForStatus(finalStatus, comment))
+	}
+	return nil
+}
+func responseForStatus(status uint16, comment string) *dimse.CFindResponse {
+	return &dimse.CFindResponse{Status: status, ErrorComment: comment}
 }

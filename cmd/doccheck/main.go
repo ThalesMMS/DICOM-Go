@@ -192,7 +192,7 @@ func loadConfig(name string) (config, error) {
 
 func knownRule(rule string) bool {
 	switch rule {
-	case "links", "anchors", "issues", "commands":
+	case "links", "anchors", "issues", "commands", "capabilities":
 		return true
 	default:
 		return false
@@ -217,6 +217,9 @@ func (c *checker) run() error {
 		}
 		c.fileCount++
 		c.checkLinks(name, string(content))
+		if c.moduleRelative(name) == "docs/CAPABILITIES.md" {
+			c.checkCapabilityAreas(name, string(content))
+		}
 	}
 	for _, section := range c.configuration.CurrentSections {
 		c.checkCurrentSection(section)

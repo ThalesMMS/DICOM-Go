@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/ThalesMMS/dicom-go/pixeldata"
@@ -56,6 +55,16 @@ func probeOpenJPEGEncoder(ctx context.Context, opts OpenJPEGEncoderOptions) (str
 }
 
 func (e *OpenJPEGLosslessEncoder) encode(ctx context.Context, frame []byte, m pixeldata.Metadata) (pixeldata.EncodedFrame, error) {
+	coding, err := losslessCodingArguments(e.opts, m)
+	if err != nil {
+		return pixeldata.EncodedFrame{}, err
+	}
+	return e.encodeWith(ctx, frame, m, coding)
+}
+
+// encodeWith runs one bounded opj_compress process with the given coding
+// arguments and validates its codestream against the frame's geometry.
+func (e *OpenJPEGLosslessEncoder) encodeWith(ctx context.Context, frame []byte, m pixeldata.Metadata, coding []string) (pixeldata.EncodedFrame, error) {
 	raw, err := openJPEGPNMInput(ctx, frame, m)
 	if err != nil {
 		return pixeldata.EncodedFrame{}, err
@@ -72,13 +81,7 @@ func (e *OpenJPEGLosslessEncoder) encode(ctx context.Context, frame []byte, m pi
 	if err := os.WriteFile(input, raw, 0600); err != nil {
 		return pixeldata.EncodedFrame{}, pixeldata.ErrEncoderFailed
 	}
-	resolutions := 1
-	for side := min(int(m.Rows), int(m.Columns)); side >= 2 && resolutions < 6; side /= 2 {
-		resolutions++
-	}
-	// -r 1 + default reversible DWT; no -I. Explicitly disable the default
-	// RGB transform so both codestream and DICOM photometry remain RGB.
-	cmd := exec.CommandContext(ctx, e.executable, "-i", input, "-o", output, "-r", "1", "-n", strconv.Itoa(resolutions), "-mct", "0", "-threads", "1")
+	cmd := exec.CommandContext(ctx, e.executable, append([]string{"-i", input, "-o", output}, coding...)...)
 	var captured limitedProcessOutput
 	cmd.Stdout = &captured
 	cmd.Stderr = &captured

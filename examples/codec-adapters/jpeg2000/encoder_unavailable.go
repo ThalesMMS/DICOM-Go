@@ -14,3 +14,6 @@ func probeOpenJPEGEncoder(context.Context, OpenJPEGEncoderOptions) (string, erro
 func (*OpenJPEGLosslessEncoder) encode(context.Context, []byte, pixeldata.Metadata) (pixeldata.EncodedFrame, error) {
 	return pixeldata.EncodedFrame{}, ErrOpenJPEGEncoderUnavailable
 }
+func (*OpenJPEGLosslessEncoder) encodeWith(context.Context, []byte, pixeldata.Metadata, []string) (pixeldata.EncodedFrame, error) {
+	return pixeldata.EncodedFrame{}, ErrOpenJPEGEncoderUnavailable
+}

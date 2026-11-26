@@ -1,0 +1,1286 @@
+{
+  "Schema": 1,
+  "Runtime": "Windows/AMD64",
+  "Oracle": "GDCM ImageReader public APIs; separate stored-tag and image geometry",
+  "Results": [
+    {
+      "ID": "PMS-IncompletePixelData",
+      "SourceSHA256": "531d8552c98fc63e26589d46a1472aad9c33b61ab49d25c0d8bff92c5264d287",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "c9a41c78ed4170c1826be3b5da55e87f4ba32107a5595dd34baeb0cba2570eb1",
+      "PixelsMatchAuthored": false,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "GEMS-IncompletePixelData",
+      "SourceSHA256": "9e8a0f4e6a9c534192c248f0cf060824754dca1d49e9966a3d99c362adfec00f",
+      "ExitCode": 3221226505,
+      "SourceUnchanged": true,
+      "Status": "process-failure"
+    },
+    {
+      "ID": "SIEMENS-IncompletePixelData",
+      "SourceSHA256": "0f6005c0f39609da95184681a031c5df4854a3643c889d65a0301ccc9f71bd17",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "224c5e35e4bd5efc9cea8e6c1a199f05abfd6e3037bad0486b0b30484a372ae8",
+      "PixelsMatchAuthored": false,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "SIEMENS-JPEG-CorruptFrag",
+      "SourceSHA256": "70ebfcc1b96c74118dad708282bc1f48308a0783327eafb14045de4bd71209ce",
+      "ExitCode": 7,
+      "SourceUnchanged": true,
+      "Status": "reject:decode"
+    },
+    {
+      "ID": "GENESIS_SIGNA-JPEG-CorruptFrag",
+      "SourceSHA256": "c23d9bc6296e905442aaed1c8b6d41e277dda6b6ec3f53035fd705ebb9fb7df7",
+      "ExitCode": 3221226505,
+      "SourceUnchanged": true,
+      "Status": "process-failure"
+    },
+    {
+      "ID": "ACUSON-8-YBR_FULL-JPEG-TrailingInfo",
+      "SourceSHA256": "636e16fb97a54a46ea565d05ae2e2e1011c2b6a4ef18685db4a1f9452804521c",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 3,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "YBR_FULL",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "RGB ",
+        "DecodedBytes": 12
+      },
+      "PixelSHA256": "cf199522fe9c0255da23ea49c2a49af389d482affc0eb730d276d620b06921e6",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "GE_JPEG-Broken",
+      "SourceSHA256": "5ddd8fa8f8ee2543d2aa5e48bd0a3980ed13fadfe9f464a96c59628bc9b59ab5",
+      "ExitCode": 7,
+      "SourceUnchanged": true,
+      "Status": "reject:decode"
+    },
+    {
+      "ID": "GDCMFakeJPEG",
+      "SourceSHA256": "203d28e8797e80b47a743d9aa5bd1aeeca035c87bdbe75b2181f3dc8db44da66",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "Bug_Philips_ItemTag_3F3F",
+      "SourceSHA256": "e426163b3cfb5be1715bc60fbf0443e939e73779f4c33cffb15ddcb2abeb4556",
+      "ExitCode": 4,
+      "SourceUnchanged": true,
+      "Status": "reject:image-read"
+    },
+    {
+      "ID": "BogusItemStartItemEnd",
+      "SourceSHA256": "af90bc57a0d84afb76fc99b6e1b51b1189a0b5b0a118003d9c38b2f6b1e8edd8",
+      "ExitCode": 4,
+      "SourceUnchanged": true,
+      "Status": "reject:image-read"
+    },
+    {
+      "ID": "ItemTerminatorVLnot0",
+      "SourceSHA256": "b6a8a893363015ed95e0ed1389fed4828466c395ab29c2e525275008b9afd61c",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "EmptyItemStarter",
+      "SourceSHA256": "356175b59766061ea2bc62417f97cbf09e423e031d91a42ab3c922d183f17396",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "MismatchSOPClassUID",
+      "SourceSHA256": "114927e51c7b5517cfd1a2f827796f56ae7596ae6b4cb26f884fb888d436047d",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "VRUNInMetaHeader",
+      "SourceSHA256": "a400aa26ed2516ca4ceab30258afd766430ef8c728f360a83f8657659dd38734",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "ImplicitDeclaredAsExplicit",
+      "SourceSHA256": "b8d3834bd58d7862af4d912e1bac5aacff4d30afdd11e6ae97fdea6348238280",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "PhilipsByteSwapping",
+      "SourceSHA256": "ff55347fa9c8e295ec20680cd581a4262e86f988f908712d05fb48656da18985",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 16,
+        "HighBit": 15,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 8
+      },
+      "PixelSHA256": "96e5a98461dd5f069326b069a6f6e9727371f03f64fada863a4e7889e96eef97",
+      "PixelsMatchAuthored": false,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "PhilipsWith15Overlays",
+      "SourceSHA256": "cab1a2b49b13e439099192b0900f04003b5eb3918f52799751239a951e9adab1",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "OverlayPrivateDataInBetween",
+      "SourceSHA256": "faed4c72c5bcf5e9439d6646b7ce43a7109cd149af76b30534baecabce6234fc",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "YBRisGray",
+      "SourceSHA256": "f0927b09af582d5781e76503fd79ed5b6dc62f60ba0e615be97eb75177b731f9",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 3,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "YBR_FULL",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "RGB ",
+        "DecodedBytes": 12
+      },
+      "PixelSHA256": "12a9da586e13af86372ddbb0b2c5cb07f1eb410a840b0cee3aaf82212f300118",
+      "PixelsMatchAuthored": false,
+      "StoredMetadataMatches": false,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "ElemZeroNotGroupLength",
+      "SourceSHA256": "d9ccee880615c9fad89f2c2da2792a34823549e78eaf85d99b7667d61c16ed38",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "FLAIR-wrong-group-length",
+      "SourceSHA256": "a7dc283668e64f4c651ace7d922cc7fc99a23dd5e5de69a0797516c14590a747",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "RMI_Mattes_unevenLengthTags",
+      "SourceSHA256": "4b8782fa56cf40782dee3a2063b98636850a495a085ff5ed0544fa5d81152985",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "CR-Preamble-NoMeta",
+      "SourceSHA256": "2b6809645fbb955266a091b56b8361b56e8a3be506c9c6c45410b6bb5084b26d",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "MissingPixelRepresentation",
+      "SourceSHA256": "06b002a481ff573060c59c8ce0ef9cea23efd27df7eb6c09621744129a1ab44f",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": false,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "TestVRSQUN1",
+      "SourceSHA256": "db7901644fc814043dbb343c027df42b6bc4c04103300658c532071226b83726",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "TestVRSQUN2",
+      "SourceSHA256": "a0f2b887974b9aea22cb20411f66329b4165f64a214129789c7c054f3f746efc",
+      "ExitCode": 0,
+      "SourceUnchanged": true,
+      "Status": "decoded",
+      "Observed": {
+        "Version": "3.2.5",
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "SourcePhotometric": "MONOCHROME2 ",
+        "SpacingXYZ": [
+          1,
+          1,
+          1
+        ],
+        "Origin": [
+          0,
+          0,
+          0
+        ],
+        "DirectionCosines": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataSpacing": [
+          1.5,
+          2
+        ],
+        "DataOrientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "DataPosition": [
+          5,
+          7,
+          9
+        ],
+        "DecodedPhotometric": "MONOCHROME2 ",
+        "DecodedBytes": 4
+      },
+      "PixelSHA256": "81f9456ee0bb909b7fb7c887c21c21f9fc45430e881dd5d92450609410fc3936",
+      "PixelsMatchAuthored": true,
+      "StoredMetadataMatches": true,
+      "StoredGeometryMatches": true,
+      "ImageGeometryMatches": false
+    },
+    {
+      "ID": "SinglePrecisionSC",
+      "SourceSHA256": "e1b8e7e6ef31c0715828c1fc305e4a3f6ee2325fd88f04ef70f3f71b297facbd",
+      "ExitCode": 4,
+      "SourceUnchanged": true,
+      "Status": "reject:image-read"
+    },
+    {
+      "ID": "US_512x512x2496_JPEG_BaseLine_Process_1",
+      "SourceSHA256": "e3b50590a539828c49eecae6a2d3c831493dc49c0b27c392a66fd0b1268c57e9",
+      "Status": "not-run:declared-budget"
+    },
+    {
+      "ID": "i32.XADC.7.215MegaBytes",
+      "SourceSHA256": "00887cf9c4f016293b836dc08aa70deb19f36229cac582c4e47b3a6c28e3ed51",
+      "Status": "not-run:declared-budget"
+    }
+  ]
+}

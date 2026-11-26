@@ -15,10 +15,19 @@ import (
 	"time"
 )
 
-const sourceURL = "https://raw.githubusercontent.com/DCMTK/dcmtk/master/dcmdata/data/dicom.dic"
+// sourceURL returns the raw upstream URL of dicom.dic at commit, or at the
+// moving master branch when no commit is pinned.
+func sourceURL(commit string) string {
+	if commit == "" {
+		commit = "master"
+	}
+	return "https://raw.githubusercontent.com/DCMTK/dcmtk/" + commit + "/dcmdata/data/dicom.dic"
+}
 
 type templateData struct {
 	Entries     []parsedEntry
+	Keywords    []keywordIndexEntry
+	Edition     string
 	GeneratedAt string
 	SourcePath  string
 	SourceURL   string
@@ -43,51 +52,48 @@ import (
 	"github.com/ThalesMMS/dicom-go/dictionary"
 )
 
-var Dictionary dictionary.DataDictionary = table{
-	byTag:   map[core.Tag]dictionary.Entry{},
-	byKey:   map[string]dictionary.Entry{},
-	vrSpecs: map[core.Tag]dictionary.VRSpec{},
-}
+// Edition is the DICOM PS3.6 (and PS3.7) edition the dictionary was generated
+// from, as stated by the dicom.dic header.
+const Edition = {{printf "%q" .Edition}}
 
-type table struct {
-	byTag   map[core.Tag]dictionary.Entry
-	byKey   map[string]dictionary.Entry
-	vrSpecs map[core.Tag]dictionary.VRSpec
-}
+var Dictionary dictionary.DataDictionary = table{}
+
+type table struct{}
 
 func (t table) ByTag(tag core.Tag) (dictionary.Entry, bool) {
-	e, ok := t.byTag[tag]
-	return e, ok
+    lo, hi := 0, len(entries)
+    for lo < hi {
+        mid := int(uint(lo+hi) >> 1)
+        if entries[mid].Tag.Compare(tag) <= 0 { lo = mid+1 } else { hi = mid }
+    }
+    if lo > 0 && entries[lo-1].Tag == tag { return entries[lo-1], true }
+    return dictionary.Entry{}, false
 }
 
 func (t table) ByKeyword(keyword string) (dictionary.Entry, bool) {
-	e, ok := t.byKey[strings.ToLower(keyword)]
-	return e, ok
+    key := strings.ToLower(keyword)
+    lo, hi := 0, len(keywordIndex)
+    for lo < hi {
+        mid := int(uint(lo+hi) >> 1)
+        if keywordIndex[mid].key < key { lo = mid+1 } else { hi = mid }
+    }
+    if lo < len(keywordIndex) && keywordIndex[lo].key == key { return entries[keywordIndex[lo].entry], true }
+    return dictionary.Entry{}, false
 }
 
 func (t table) VRSpecByTag(tag core.Tag) (dictionary.VRSpec, bool) {
-	if spec, ok := t.vrSpecs[tag]; ok {
-		return spec, true
-	}
-	e, ok := t.byTag[tag]
-	if !ok || e.VR == "" {
-		return dictionary.VRSpec{}, false
-	}
-	return dictionary.NewVRSpec(e.VR), true
+    if spec, ok := contextualVRSpecs[tag]; ok { return spec, true }
+    e, ok := t.ByTag(tag)
+    if !ok || e.VR == "" { return dictionary.VRSpec{}, false }
+    return dictionary.NewVRSpec(e.VR), true
 }
 
-func init() {
-	t := Dictionary.(table)
-	for _, e := range entries {
-		t.byTag[e.Tag] = e
-		key := strings.ToLower(e.Keyword)
-		if _, ok := t.byKey[key]; !ok {
-			t.byKey[key] = e
-		}
-	}
-	for tag, spec := range contextualVRSpecs {
-		t.vrSpecs[tag] = spec
-	}
+// The canonical keyword is the first matching entry in tag order, just as in
+// the former map builder. This index is generated, without startup allocation.
+var keywordIndex = [...]struct { key string; entry int }{
+{{- range .Keywords }}
+    {key: {{printf "%q" .Key}}, entry: {{.Index}}},
+{{- end }}
 }
 
 var contextualVRSpecs = map[core.Tag]dictionary.VRSpec{
@@ -102,7 +108,29 @@ var entries = []dictionary.Entry{
 }
 `))
 
-func generateSource(inputPath string, entries []parsedEntry, generatedAt time.Time) ([]byte, error) {
+type keywordIndexEntry struct {
+	Key   string
+	Index int
+}
+
+func generateKeywordIndex(entries []parsedEntry) []keywordIndexEntry {
+	seen := make(map[string]bool, len(entries))
+	out := make([]keywordIndexEntry, 0, len(entries))
+	for i, entry := range entries {
+		key := strings.ToLower(entry.Keyword)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, keywordIndexEntry{Key: key, Index: i})
+		}
+	}
+	slices.SortFunc(out, func(a, b keywordIndexEntry) int { return strings.Compare(a.Key, b.Key) })
+	return out
+}
+
+func generateSource(inputPath, commit string, entries []parsedEntry, header sourceHeader) ([]byte, error) {
+	if header.Edition == "" {
+		return nil, errors.New("render generated source: the dicom.dic header names no DICOM edition")
+	}
 	sortedEntries := slices.Clone(entries)
 	slices.SortFunc(sortedEntries, func(a, b parsedEntry) int {
 		if cmp := a.Tag.Compare(b.Tag); cmp != 0 {
@@ -120,9 +148,11 @@ func generateSource(inputPath string, entries []parsedEntry, generatedAt time.Ti
 	var buf bytes.Buffer
 	if err := outputTemplate.Execute(&buf, templateData{
 		Entries:     sortedEntries,
-		GeneratedAt: formatGenerationTimestamp(generatedAt),
+		Keywords:    generateKeywordIndex(sortedEntries),
+		Edition:     header.Edition,
+		GeneratedAt: formatGenerationTimestamp(header.CreatedAt),
 		SourcePath:  displaySourcePath(inputPath),
-		SourceURL:   sourceURL,
+		SourceURL:   sourceURL(commit),
 	}); err != nil {
 		return nil, fmt.Errorf("render generated source: %w", err)
 	}
@@ -141,12 +171,27 @@ func formatGenerationTimestamp(ts time.Time) string {
 	return ts.UTC().Format(time.RFC3339)
 }
 
-var fileCreatedOnPattern = regexp.MustCompile(`^#\s*File created on ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\b`)
+var (
+	fileCreatedOnPattern = regexp.MustCompile(`^#\s*File created on ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\b`)
+	editionPattern       = regexp.MustCompile(`^#\s*Generated automatically from DICOM PS ?3\.6-([0-9]{4}[a-z]) and PS ?3\.7-([0-9]{4}[a-z])\.`)
+)
 
-func dictionaryTimestamp(path string) (ts time.Time, err error) {
+// sourceHeader is what the comment header of a DCMTK dicom.dic states about
+// its origin.
+type sourceHeader struct {
+	// Edition is the PS3.6 edition, which the header requires to equal the
+	// PS3.7 edition.
+	Edition   string
+	CreatedAt time.Time
+}
+
+// scanHeader reads the edition and creation time from the comment header of
+// a dicom.dic file. A header that names different PS3.6 and PS3.7 editions,
+// or two editions, is an error; a missing line leaves its field zero.
+func scanHeader(path string) (header sourceHeader, err error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("open %s for header scan: %w", path, err)
+		return sourceHeader{}, fmt.Errorf("open %s for header scan: %w", path, err)
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
@@ -164,24 +209,31 @@ func dictionaryTimestamp(path string) (ts time.Time, err error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		matches := fileCreatedOnPattern.FindStringSubmatch(line)
-		if len(matches) != 2 {
+		if !strings.HasPrefix(line, "#") {
 			continue
 		}
-
-		parsedTs, parseErr := time.Parse("2006-01-02 15:04:05", matches[1])
-		if parseErr != nil {
-			err = fmt.Errorf("parse source timestamp in %s: %w", path, parseErr)
-			return time.Time{}, err
+		if matches := editionPattern.FindStringSubmatch(line); len(matches) == 3 {
+			if matches[1] != matches[2] {
+				return sourceHeader{}, fmt.Errorf("%s: header names PS3.6 %s but PS3.7 %s", path, matches[1], matches[2])
+			}
+			if header.Edition != "" && header.Edition != matches[1] {
+				return sourceHeader{}, fmt.Errorf("%s: header names both edition %s and %s", path, header.Edition, matches[1])
+			}
+			header.Edition = matches[1]
+			continue
 		}
-		ts = parsedTs.UTC()
-		return ts.UTC(), nil
+		if matches := fileCreatedOnPattern.FindStringSubmatch(line); len(matches) == 2 && header.CreatedAt.IsZero() {
+			parsedTs, parseErr := time.Parse("2006-01-02 15:04:05", matches[1])
+			if parseErr != nil {
+				return sourceHeader{}, fmt.Errorf("parse source timestamp in %s: %w", path, parseErr)
+			}
+			header.CreatedAt = parsedTs.UTC()
+		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
-		err = fmt.Errorf("scan %s for source timestamp: %w", path, scanErr)
-		return time.Time{}, err
+		return sourceHeader{}, fmt.Errorf("scan %s for source header: %w", path, scanErr)
 	}
-	return time.Time{}, nil
+	return header, nil
 }
 
 func writeGeneratedFile(path string, source []byte) error {

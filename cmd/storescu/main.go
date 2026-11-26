@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,9 +20,12 @@ import (
 	"github.com/ThalesMMS/dicom-go/net/dimse"
 	"github.com/ThalesMMS/dicom-go/net/storetranscode"
 	"github.com/ThalesMMS/dicom-go/net/ul"
+	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
 	"github.com/ThalesMMS/dicom-go/pixeldata/builtin"
+	"github.com/ThalesMMS/dicom-go/pixeldata/deflateframe"
 	"github.com/ThalesMMS/dicom-go/pixeldata/jpeg"
+	"github.com/ThalesMMS/dicom-go/pixeldata/jpeglossless"
 	"github.com/ThalesMMS/dicom-go/pixeldata/jpegls"
 	"github.com/ThalesMMS/dicom-go/pixeldata/rle"
 	"github.com/ThalesMMS/dicom-go/transfer"
@@ -62,20 +66,33 @@ func runWithContext(parent context.Context, args []string, stdout, stderr io.Wri
 var errUsage = errors.New("usage error")
 
 type options struct {
-	transcodeUID      string
-	transcodeFallback bool
-	allowLossy        bool
-	jpegQuality       int
-	spoolDirectory    string
-	maxSpoolBytes     int64
-	address           string
-	calledAE          string
-	callingAE         string
-	timeout           time.Duration
-	files             []string
-	continueOnError   bool
-	maxInvoked        int
-	maxInFlightBytes  int64
+	conn                    dimsecli.ConnectionFlags
+	configFile, profileName string
+	attributeValues         attributeAssignments
+	attributes              []attributeAssignment
+	maxCoercionBytes        int64
+	maxCoercionBatchBytes   int64
+	transcodeUID            string
+	transcodeFallback       bool
+	allowLossy              bool
+	jpegQuality             int
+	maxPixelError           *float64
+	averageBlockSize        int
+	spoolDirectory          string
+	maxSpoolBytes           int64
+	preparedSession         bool
+	preparedSessionBytes    int64
+	address                 string
+	calledAE                string
+	callingAE               string
+	timeout                 time.Duration
+	files                   []string
+	continueOnError         bool
+	maxInvoked              int
+	maxInFlightBytes        int64
+	maxSendPDU              uint
+	tls                     dimsecli.TLSFlags
+	identity                dimsecli.UserIdentityFlags
 }
 
 const (
@@ -100,20 +117,28 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 
 	fs := flag.NewFlagSet("storescu", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	opts.conn.RegisterWithDefaults(fs, dimsecli.ConnectionDefaults{Host: "localhost", Port: 11112, CalledAE: opts.calledAE, CallingAE: opts.callingAE, Timeout: opts.timeout})
+	fs.StringVar(&opts.configFile, "config-file", "", "DCMTK association cfg file; requires -profile; does not enable transcoding")
+	fs.StringVar(&opts.profileName, "profile", "", "named requestor profile in -config-file; fixed wire SOP/transfer-syntax offers")
+	fs.Var(&opts.attributeValues, "s", "set a metadata keyword-or-tag=value before sending; repeatable; pixel/layout attributes are protected")
+	fs.Int64Var(&opts.maxCoercionBytes, "coerce-max-bytes", 0, "bound independent copies and aggregate frozen data sets per source; 0 uses 2 GiB")
+	fs.Int64Var(&opts.maxCoercionBatchBytes, "coerce-max-batch-bytes", 0, "bound retained frozen data sets across the batch; 0 uses 2 GiB; requires -s")
 	fs.StringVar(&opts.transcodeUID, "transcode-to", "", "explicit target Transfer Syntax UID; empty preserves existing source behavior")
 	fs.BoolVar(&opts.transcodeFallback, "transcode-fallback-original", false, "also offer original bytes; requires -transcode-to and forbids -allow-lossy")
 	fs.BoolVar(&opts.allowLossy, "allow-lossy", false, "authorize a new lossy representation and new SOP Instance identity")
 	fs.IntVar(&opts.jpegQuality, "jpeg-quality", opts.jpegQuality, "JPEG Baseline quality (1..100), used only with -allow-lossy")
+	maxPixelError := fs.Float64("max-pixel-error", -1, "maximum decoded lossy error in stored-sample units, or difference of block means; -1 disables the check")
+	fs.IntVar(&opts.averageBlockSize, "average-block-size", 0, "square block width for lossy verification; 0 or 1 compares samples, larger values compare block means")
 	fs.StringVar(&opts.spoolDirectory, "transcode-spool-dir", "", "parent directory for private bounded transcode temporaries")
 	fs.Int64Var(&opts.maxSpoolBytes, "transcode-max-spool-bytes", 0, "aggregate temporary bytes per preparation; 0 uses 2 GiB")
-	fs.StringVar(&opts.calledAE, "called", opts.calledAE, "called AE title")
-	fs.StringVar(&opts.callingAE, "calling", opts.callingAE, "calling AE title")
-	fs.DurationVar(&opts.timeout, "timeout", opts.timeout, "connection timeout")
+	fs.BoolVar(&opts.preparedSession, "transcode-prepared-session", false, "reuse verified built-in representations within this invocation; requires -transcode-to")
+	fs.Int64Var(&opts.preparedSessionBytes, "transcode-prepared-max-bytes", 0, "aggregate retained and preparation capacity bytes for the prepared session; 0 uses 2 GiB")
 	fs.BoolVar(&opts.continueOnError, "continue-on-error", opts.continueOnError, "continue after per-file failures")
 	fs.IntVar(&opts.maxInvoked, "max-invoked", opts.maxInvoked, "maximum outstanding C-STORE operations; 1 keeps the serial baseline")
 	fs.Int64Var(&opts.maxInFlightBytes, "max-in-flight-bytes", opts.maxInFlightBytes, "maximum payload bytes in flight; 0 uses session defaults")
+	fs.UintVar(&opts.maxSendPDU, "max-send-pdu", opts.maxSendPDU, "cap on outgoing P-DATA PDU bytes below the peer maximum; 0 uses 131072")
 	fs.Usage = func() {
-		_, _ = fmt.Fprintf(stderr, "Usage: %s [flags] address file-or-directory [...]\n\nSend DICOM Part 10 files with a reusable C-STORE session.\n\nFlags:\n", fs.Name())
+		_, _ = fmt.Fprintf(stderr, "Usage: %s [flags] [address] file-or-directory [...]\n\nSend DICOM Part 10 files with a reusable C-STORE session.\n\nFlags:\n", fs.Name())
 		fs.PrintDefaults()
 	}
 
@@ -123,12 +148,62 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		}
 		return opts, errUsage
 	}
-	if fs.NArg() < 2 {
+	if err := opts.conn.Validate(); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	opts.calledAE, opts.callingAE, opts.tls, opts.identity, opts.timeout = opts.conn.CalledAE, opts.conn.CallingAE, opts.conn.TLS, opts.conn.Identity, opts.conn.Timeout
+
+	files := fs.Args()
+	if !opts.conn.EndpointExplicit() {
+		if len(files) < 2 {
+			fs.Usage()
+			return opts, errUsage
+		}
+		if err := opts.conn.SetAddress(files[0]); err != nil {
+			fmt.Fprintln(stderr, err)
+			return opts, errUsage
+		}
+		files = files[1:]
+	} else if len(files) > 1 {
+		// A legacy positional address remains accepted with canonical flags only
+		// when it agrees; ordinary file arguments are otherwise unchanged.
+		if opts.conn.IsAddress(files[0]) {
+			if err := opts.conn.SetAddress(files[0]); err != nil {
+				fmt.Fprintln(stderr, err)
+				return opts, errUsage
+			}
+			files = files[1:]
+		}
+	}
+	if len(files) == 0 {
 		fs.Usage()
 		return opts, errUsage
 	}
-	opts.address = fs.Arg(0)
-	opts.files = append([]string(nil), fs.Args()[1:]...)
+	opts.address = opts.conn.Address()
+	opts.files = append([]string(nil), files...)
+	if err := validateStorescuProfileFlags(fs, opts.configFile, opts.profileName); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	if opts.maxCoercionBytes < 0 || opts.maxCoercionBatchBytes < 0 || (opts.maxCoercionBytes > 0 || opts.maxCoercionBatchBytes > 0) && len(opts.attributeValues) == 0 {
+		_, _ = fmt.Fprintln(stderr, "coercion byte limits must be nonnegative and require -s")
+		return opts, errUsage
+	}
+	var err error
+	opts.attributes, err = parseAttributeAssignments(opts.attributeValues)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, errAttributeAssignment)
+		return opts, errUsage
+	}
+	if math.IsNaN(*maxPixelError) || math.IsInf(*maxPixelError, 0) || (*maxPixelError < 0 && *maxPixelError != -1) || opts.averageBlockSize < 0 ||
+		(opts.averageBlockSize > 0 && *maxPixelError == -1) {
+		_, _ = fmt.Fprintln(stderr, "invalid lossy verification policy: -max-pixel-error must be finite and nonnegative (or -1 to disable); -average-block-size requires it and must be nonnegative")
+		return opts, errUsage
+	}
+	if *maxPixelError >= 0 {
+		opts.maxPixelError = maxPixelError
+	}
 	if opts.timeout <= 0 {
 		_, _ = fmt.Fprintln(stderr, "-timeout must be positive")
 		fs.Usage()
@@ -139,24 +214,39 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		fs.Usage()
 		return opts, errUsage
 	}
+	if err := errors.Join(opts.tls.Validate(), opts.identity.Validate()); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		fs.Usage()
+		return opts, errUsage
+	}
+	if opts.maxSendPDU > math.MaxUint32 {
+		_, _ = fmt.Fprintln(stderr, "-max-send-pdu must not exceed 4294967295")
+		fs.Usage()
+		return opts, errUsage
+	}
 	if opts.maxInFlightBytes < 0 {
 		_, _ = fmt.Fprintln(stderr, "-max-in-flight-bytes must not be negative")
 		fs.Usage()
 		return opts, errUsage
 	}
 	if _, err := storeTranscodeOptions(opts); err != nil {
-		_, _ = fmt.Fprintln(stderr, "invalid transcode options: select a known Transfer Syntax UID, positive JPEG quality within 1..100, and nonnegative spool limit; lossy authorization forbids original fallback")
+		_, _ = fmt.Fprintln(stderr, "invalid transcode options: select a known -transcode-to Transfer Syntax UID for lossy verification, positive JPEG quality within 1..100, and nonnegative spool limit; lossy authorization forbids original fallback")
 		return opts, errUsage
 	}
 	return opts, nil
 }
 
 func storeTranscodeOptions(opts options) (storetranscode.Options, error) {
-	if opts.maxSpoolBytes < 0 || opts.transcodeFallback && opts.allowLossy {
+	if opts.preparedSessionBytes < 0 || opts.preparedSessionBytes != 0 && !opts.preparedSession || opts.preparedSession && opts.transcodeUID == "" {
+		return storetranscode.Options{}, storetranscode.ErrOptions
+	}
+	if opts.maxSpoolBytes < 0 || opts.transcodeFallback && opts.allowLossy || opts.averageBlockSize < 0 ||
+		opts.averageBlockSize > 0 && opts.maxPixelError == nil ||
+		opts.maxPixelError != nil && (math.IsNaN(*opts.maxPixelError) || math.IsInf(*opts.maxPixelError, 0) || *opts.maxPixelError < 0) {
 		return storetranscode.Options{}, storetranscode.ErrOptions
 	}
 	if opts.transcodeUID == "" {
-		if opts.transcodeFallback || opts.allowLossy || opts.spoolDirectory != "" || opts.maxSpoolBytes != 0 {
+		if opts.transcodeFallback || opts.allowLossy || opts.spoolDirectory != "" || opts.maxSpoolBytes != 0 || opts.maxPixelError != nil || opts.averageBlockSize != 0 {
 			return storetranscode.Options{}, storetranscode.ErrOptions
 		}
 		return storetranscode.Options{}, nil
@@ -179,23 +269,33 @@ func storeTranscodeOptions(opts options) (storetranscode.Options, error) {
 	if err := jpegls.RegisterEncoder(encoders); err != nil {
 		return storetranscode.Options{}, err
 	}
+	if err := jpeglossless.RegisterEncoder(encoders); err != nil {
+		return storetranscode.Options{}, err
+	}
+	if err := deflateframe.RegisterEncoder(encoders); err != nil {
+		return storetranscode.Options{}, err
+	}
 	if opts.allowLossy {
 		if err := jpeg.RegisterEncoder(encoders, opts.jpegQuality); err != nil {
 			return storetranscode.Options{}, err
 		}
 	}
 	return storetranscode.Options{Target: target, FallbackOriginal: opts.transcodeFallback, SpoolDirectory: opts.spoolDirectory, MaxSpoolBytes: opts.maxSpoolBytes,
-		Transcode: pixeldata.TranscodeOptions{DecoderRegistry: decoders, EncoderRegistry: encoders, AllowLossy: opts.allowLossy}}, nil
+		Transcode: pixeldata.TranscodeOptions{DecoderRegistry: decoders, EncoderRegistry: encoders, AllowLossy: opts.allowLossy,
+			MaxPixelError: opts.maxPixelError, AverageBlockSize: opts.averageBlockSize}}, nil
 }
 
 func runStore(opts options, stdout, stderr io.Writer) error {
 	return runStoreWithContext(context.Background(), opts, stdout, stderr)
 }
 
-func runStoreWithContext(parent context.Context, opts options, stdout, stderr io.Writer) error {
-	_ = stderr
+func runStoreWithContext(parent context.Context, opts options, stdout, stderr io.Writer) (returnErr error) {
 	if parent == nil {
 		parent = context.Background()
+	}
+	profile, err := loadStorescuProfile(parent, opts)
+	if err != nil {
+		return err
 	}
 	inputs, err := expandStoreInputSpecs(parent, opts.files, storeInputLimits{
 		maxFiles: defaultMaxStoreFiles,
@@ -207,27 +307,106 @@ func runStoreWithContext(parent context.Context, opts options, stdout, stderr io
 		return err
 	}
 	sources := make([]dimse.StoreSource, len(inputs))
+	transcodeSources := make([]storeTranscodeReporter, len(inputs))
+	coercedSources := make([]*dimse.CoercedStoreSource, 0, len(inputs))
+	defer func() {
+		for _, source := range coercedSources {
+			_ = source.Close()
+		}
+	}()
 	transcodeOptions, err := storeTranscodeOptions(opts)
 	if err != nil {
 		return err
 	}
+	var prepared *storetranscode.PreparedSession
+	var binding *storetranscode.PreparedBinding
+	if opts.preparedSession {
+		prepared, err = storetranscode.NewPreparedSession(parent, storetranscode.PreparedSessionOptions{MaxRetainedBytes: opts.preparedSessionBytes, MaxEntries: defaultMaxStoreFiles})
+		if err != nil {
+			return err
+		}
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), defaultReleaseTimeout)
+			defer cancel()
+			returnErr = errors.Join(returnErr, prepared.Close(cleanupCtx))
+			if binding != nil {
+				returnErr = errors.Join(returnErr, binding.Close())
+			}
+		}()
+		binding, err = storetranscode.NewBuiltinPreparedBinding(storetranscode.BuiltinPreparedBindingOptions{AllowLossy: opts.allowLossy, JPEGQuality: opts.jpegQuality})
+		if err != nil {
+			return err
+		}
+	}
+	var coercionBudget *dimse.StoreCoercionBudget
+	if len(opts.attributes) > 0 {
+		maximum := opts.maxCoercionBatchBytes
+		if maximum == 0 {
+			maximum = object.DefaultCloneFileOptions().MaxTotalBytes
+		}
+		coercionBudget, err = dimse.NewStoreCoercionBudget(maximum)
+		if err != nil {
+			return err
+		}
+	}
 	for i := range inputs {
 		sources[i] = dimse.NewRootedPathStoreSource(inputs[i].root, inputs[i].relative)
 		if transcodeOptions.Target.UID != "" {
-			sources[i], err = storetranscode.NewSource(sources[i], transcodeOptions)
+			if prepared != nil {
+				preparedOptions := transcodeOptions
+				preparedOptions.Transcode.DecoderRegistry = nil
+				preparedOptions.Transcode.EncoderRegistry = nil
+				source, sourceErr := prepared.NewSource(sources[i], preparedOptions, binding)
+				err = sourceErr
+				transcodeSources[i] = source
+				if sourceErr == nil {
+					sources[i] = source
+				}
+			} else {
+				source, sourceErr := storetranscode.NewSource(sources[i], transcodeOptions)
+				err = sourceErr
+				transcodeSources[i] = source
+				if sourceErr == nil {
+					sources[i] = source
+				}
+			}
 			if err != nil {
 				return err
 			}
+
+		}
+		if len(opts.attributes) > 0 {
+			coerced, coerceErr := dimse.NewCoercedStoreSource(sources[i], dimse.StoreCoercionOptions{
+				Coercion: assignmentCoercion(opts.attributes), CloneOptions: object.CloneFileOptions{MaxTotalBytes: opts.maxCoercionBytes}, Budget: coercionBudget,
+			})
+			if coerceErr != nil {
+				return coerceErr
+			}
+			coercedSources = append(coercedSources, coerced)
+			sources[i] = coerced
 		}
 	}
+	tlsConfig, err := opts.tls.Config()
+	if err != nil {
+		return err
+	}
+	identity, err := opts.identity.Request()
+	if err != nil {
+		return err
+	}
+	dialOptions := ul.DialOptions{
+		CalledAETitle: opts.calledAE, CallingAETitle: opts.callingAE, NegotiationTimeout: opts.timeout,
+		ReadProgressTimeout: opts.timeout, WriteProgressTimeout: opts.timeout, MaxSendPDU: uint32(opts.maxSendPDU), TLSConfig: tlsConfig, UserIdentity: identity,
+	}
+	planOptions := dimse.StorePlanOptions{}
+	if profile != nil {
+		planOptions.PresentationContexts = profile.Contexts
+		dialOptions.RoleSelections = profile.RoleSelections
+		dialOptions.ExtendedNegotiation = profile.ExtendedNegotiation
+	}
 	session, err := dimse.NewStoreSession(opts.address, dimse.StoreSessionOptions{
-		DialOptions: ul.DialOptions{
-			CalledAETitle:        opts.calledAE,
-			CallingAETitle:       opts.callingAE,
-			NegotiationTimeout:   opts.timeout,
-			ReadProgressTimeout:  opts.timeout,
-			WriteProgressTimeout: opts.timeout,
-		},
+		PlanOptions:          planOptions,
+		DialOptions:          dialOptions,
 		ContinueOnError:      opts.continueOnError,
 		MaxInvokedOperations: opts.maxInvoked,
 		MaxInFlightBytes:     opts.maxInFlightBytes,
@@ -239,9 +418,10 @@ func runStoreWithContext(parent context.Context, opts options, stdout, stderr io
 	}
 	result, err := session.StoreBatch(parent, sources)
 	for _, item := range result.Items {
-		if source, ok := sources[item.SourceIndex].(*storetranscode.Source); ok {
+		if source := transcodeSources[item.SourceIndex]; source != nil {
 			source.RecordResult(item)
 			report := source.Report()
+			reportStoreVerification(stdout, stderr, item.SourceIndex+1, report)
 			_, _ = fmt.Fprintf(stdout, "C-STORE representation source=%d original=%s selected=%s negotiation=%s\n", item.SourceIndex+1, report.OriginalTransferSyntaxUID, report.SelectedTransferSyntaxUID, report.Negotiation)
 			for _, candidate := range report.Candidates {
 				_, _ = fmt.Fprintf(stdout, "C-STORE candidate source=%d syntax=%s operation=%s producible=%t reason=%s runtime-missing=%t lossy=%t\n", item.SourceIndex+1, candidate.TransferSyntaxUID, candidate.Operation, candidate.Producible, candidate.Reason, candidate.RuntimeMissing, candidate.Lossy)
@@ -266,6 +446,17 @@ func runStoreWithContext(parent context.Context, opts options, stdout, stderr io
 		return errors.Join(fmt.Errorf("C-STORE batch completed with %d failed and %d uncertain", result.Failed, result.Unknown), closeErr)
 	}
 	return closeErr
+}
+
+func reportStoreVerification(stdout, stderr io.Writer, sourceIndex int, report storetranscode.Report) {
+	if verified := report.LossyVerification; verified != nil {
+		_, _ = fmt.Fprintf(stdout, "C-STORE lossy verification source=%d maximum-error=%g maximum-sample-error=%d limit=%g average-block-size=%d frames=%d blocks=%d\n",
+			sourceIndex, verified.MaximumError, verified.MaximumSampleError, verified.Limit, verified.AverageBlockSize, verified.Frames, verified.Blocks)
+	}
+	if failure := report.VerificationFailure; failure != nil {
+		_, _ = fmt.Fprintf(stderr, "C-STORE lossy verification failed source=%d frame=%d maximum-error=%g limit=%g average-block-size=%d\n",
+			sourceIndex, failure.Frame, failure.Measured, failure.Limit, failure.AverageBlockSize)
+	}
 }
 
 func expandStoreInputs(ctx context.Context, inputs []string, maxFiles int) ([]string, error) {
@@ -474,4 +665,9 @@ func storePhysicalRoot(root string) (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(absRoot)
+}
+
+type storeTranscodeReporter interface {
+	Report() storetranscode.Report
+	RecordResult(dimse.StoreItemResult)
 }

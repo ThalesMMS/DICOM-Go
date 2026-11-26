@@ -193,26 +193,36 @@ func RemoveAt(parent *os.File, name string) error {
 }
 
 func RenameAt(parent, temporary *os.File, destinationName string, replace bool) error {
-	name, err := windows.UTF16FromString(destinationName)
+	buffer, err := fileRenameInformationBuffer(windows.Handle(parent.Fd()), destinationName, replace)
 	if err != nil {
 		return err
 	}
+	var status windows.IO_STATUS_BLOCK
+	return normalizeWindowsError(windows.NtSetInformationFile(windows.Handle(temporary.Fd()), &status, &buffer[0], uint32(len(buffer)), windows.FileRenameInformation))
+}
+
+func fileRenameInformationBuffer(rootDirectory windows.Handle, destinationName string, replace bool) ([]byte, error) {
+	name, err := windows.UTF16FromString(destinationName)
+	if err != nil {
+		return nil, err
+	}
 	if len(name)-1 > windows.MAX_LONG_PATH {
-		return errors.New("dicom nofollow: destination name too long")
+		return nil, errors.New("dicom nofollow: destination name too long")
 	}
 	nameBytes := (len(name) - 1) * 2
 	var layout fileRenameInformation
-	bufferSize := int(unsafe.Offsetof(layout.FileName)) + nameBytes
+	// The NT contract requires the full structure size plus the name bytes,
+	// including the structure's trailing padding for short names.
+	bufferSize := int(unsafe.Sizeof(layout)) + nameBytes
 	buffer := make([]byte, bufferSize)
 	information := (*fileRenameInformation)(unsafe.Pointer(&buffer[0]))
 	if replace {
 		information.ReplaceIfExists = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
 	}
-	information.RootDirectory = windows.Handle(parent.Fd())
+	information.RootDirectory = rootDirectory
 	information.FileNameLength = uint32(nameBytes)
-	copy((*[windows.MAX_LONG_PATH]uint16)(unsafe.Pointer(&information.FileName[0]))[:nameBytes/2:nameBytes/2], name[:len(name)-1])
-	var status windows.IO_STATUS_BLOCK
-	return normalizeWindowsError(windows.NtSetInformationFile(windows.Handle(temporary.Fd()), &status, &buffer[0], uint32(bufferSize), windows.FileRenameInformation))
+	copy(unsafe.Slice(&information.FileName[0], len(name)-1), name[:len(name)-1])
+	return buffer, nil
 }
 
 func ValidName(name string) bool {

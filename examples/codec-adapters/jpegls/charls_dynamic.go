@@ -3,11 +3,14 @@
 package jpegls
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"unsafe"
 
 	"github.com/ThalesMMS/dicom-go/pixeldata"
+	purejls "github.com/ThalesMMS/dicom-go/pixeldata/jpegls"
 	"github.com/ebitengine/purego"
 )
 
@@ -78,6 +81,7 @@ type charlsAPI struct {
 	encoderDestroy             func(uintptr)
 	encoderSetFrameInfo        func(uintptr, *charlsFrameInfo) int32
 	encoderSetNearLossless     func(uintptr, int32) int32
+	encoderSetInterleaveMode   func(uintptr, int32) int32
 	encoderEstimateDestination func(uintptr, *uintptr) int32
 	encoderSetDestination      func(uintptr, unsafe.Pointer, uintptr) int32
 	encoderEncodeFromBuffer    func(uintptr, unsafe.Pointer, uintptr, uint32) int32
@@ -137,16 +141,30 @@ func (charLSDecoder) DecodeJPEGLS(fragment []byte, input DecoderInput) ([]byte, 
 	if err := charlsErr("get interleave mode", api.decoderGetInterleaveMode(decoder, &interleave)); err != nil {
 		return nil, err
 	}
-	if err := validateCharLSInterleave(input.Metadata, interleave); err != nil {
-		return nil, err
-	}
-
 	var colorTransformation int32
 	if err := charlsErr("get color transformation", api.decoderGetColorTransform(decoder, &colorTransformation)); err != nil {
 		return nil, err
 	}
+	// Line-interleaved HP frames are separately oracle-qualified. Keep the
+	// existing standard-frame interleave policy otherwise.
+	if !(input.AllowHPColorTransforms && colorTransformation >= 1 && colorTransformation <= 3 && interleave == 1) {
+		if err := validateCharLSInterleave(input.Metadata, interleave); err != nil {
+			return nil, err
+		}
+	}
 	if colorTransformation != charlsColorTransformationNone {
-		return nil, fmt.Errorf("%w: JPEG-LS color transformation=%d", ErrUnsupportedMetadata, colorTransformation)
+		if !input.AllowHPColorTransforms || input.NearLossless ||
+			input.Metadata.SamplesPerPixel != 3 || input.Metadata.PixelRepresentation != 0 || input.Metadata.PlanarConfiguration != 0 ||
+			!strings.EqualFold(strings.TrimSpace(input.Metadata.PhotometricInterpretation), "RGB") ||
+			input.Metadata.BitsStored != input.Metadata.BitsAllocated ||
+			info.bitsPerSample != int32(input.Metadata.BitsAllocated) {
+			return nil, fmt.Errorf("%w: JPEG-LS color transformation=%d", ErrUnsupportedMetadata, colorTransformation)
+		}
+		ctx := pixeldata.DecodeContextWithRecovery(context.Background(), pixeldata.DecodeRecovery{JPEGLSHPColorTransforms: true})
+		h, err := purejls.InspectCodestream(ctx, fragment, 0)
+		if err != nil || h.HPColorTransform != int(colorTransformation) {
+			return nil, fmt.Errorf("%w: unsupported HP profile: %v", ErrUnsupportedMetadata, err)
+		}
 	}
 
 	var destinationSize uintptr
@@ -318,6 +336,9 @@ type charlsFrameSpec struct {
 	bitsAllocated   int
 	samplesPerPixel int
 	nearLossless    int
+	// interleave is the CharLS interleave mode (0 none, 1 line, 2 sample);
+	// line and sample read sample-interleaved source bytes.
+	interleave int
 }
 
 // encodeCharLSFrameForTest supports tagged conformance tests.
@@ -346,6 +367,11 @@ func encodeCharLSFrameForTest(spec charlsFrameSpec, frame []byte) ([]byte, error
 	}
 	if err := charlsErr("set encoder near-lossless", api.encoderSetNearLossless(encoder, int32(spec.nearLossless))); err != nil {
 		return nil, err
+	}
+	if spec.interleave != 0 {
+		if err := charlsErr("set encoder interleave mode", api.encoderSetInterleaveMode(encoder, int32(spec.interleave))); err != nil {
+			return nil, err
+		}
 	}
 
 	var estimated uintptr
@@ -387,6 +413,53 @@ func encodeCharLSFrameForTest(spec charlsFrameSpec, frame []byte) ([]byte, error
 		return nil, fmt.Errorf("charls test encoder: wrote %d bytes into %d-byte buffer", uint64(written), len(destination))
 	}
 	return append([]byte(nil), destination[:int(written)]...), nil
+}
+
+// decodeCharLSFrameForTest decodes a stream with CharLS without the adapter's
+// metadata and interleave policy, for tagged conformance tests. It returns
+// CharLS's output bytes (component planes for ILV=0, sample-interleaved for
+// ILV=1 and ILV=2) and the interleave mode it read.
+func decodeCharLSFrameForTest(fragment []byte) ([]byte, int32, error) {
+	api, err := loadCharLSAPI()
+	if err != nil {
+		return nil, 0, err
+	}
+	decoder := api.decoderCreate()
+	if decoder == 0 {
+		return nil, 0, ErrBackendInternal
+	}
+	defer api.decoderDestroy(decoder)
+	source, err := nativeBytes(fragment)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer releaseNativeBytes(source)
+	if err := charlsErr("set source buffer", api.decoderSetSourceBuffer(decoder, unsafe.Pointer(&source[0]), uintptr(len(source)))); err != nil {
+		return nil, 0, err
+	}
+	if err := charlsStreamErr("read header", api.decoderReadHeader(decoder)); err != nil {
+		return nil, 0, err
+	}
+	var interleave int32
+	if err := charlsErr("get interleave mode", api.decoderGetInterleaveMode(decoder, &interleave)); err != nil {
+		return nil, 0, err
+	}
+	var size uintptr
+	if err := charlsErr("get destination size", api.decoderGetDestinationSize(decoder, 0, &size)); err != nil {
+		return nil, 0, err
+	}
+	if size == 0 || uint64(size) > 1<<30 {
+		return nil, 0, fmt.Errorf("charls test decoder: destination size %d", uint64(size))
+	}
+	destination, err := nativeBytes(make([]byte, int(size)))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer releaseNativeBytes(destination)
+	if err := charlsStreamErr("decode", api.decoderDecodeToBuffer(decoder, unsafe.Pointer(&destination[0]), size, 0)); err != nil {
+		return nil, 0, err
+	}
+	return append([]byte(nil), destination...), interleave, nil
 }
 
 func loadCharLSAPI() (*charlsAPI, error) {
@@ -467,6 +540,7 @@ func bindCharLSAPI(handle uintptr) (api *charlsAPI, err error) {
 	purego.RegisterLibFunc(&api.encoderDestroy, handle, "charls_jpegls_encoder_destroy")
 	purego.RegisterLibFunc(&api.encoderSetFrameInfo, handle, "charls_jpegls_encoder_set_frame_info")
 	purego.RegisterLibFunc(&api.encoderSetNearLossless, handle, "charls_jpegls_encoder_set_near_lossless")
+	purego.RegisterLibFunc(&api.encoderSetInterleaveMode, handle, "charls_jpegls_encoder_set_interleave_mode")
 	purego.RegisterLibFunc(&api.encoderEstimateDestination, handle, "charls_jpegls_encoder_get_estimated_destination_size")
 	purego.RegisterLibFunc(&api.encoderSetDestination, handle, "charls_jpegls_encoder_set_destination_buffer")
 	purego.RegisterLibFunc(&api.encoderEncodeFromBuffer, handle, "charls_jpegls_encoder_encode_from_buffer")

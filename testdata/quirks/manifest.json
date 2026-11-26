@@ -1,0 +1,1548 @@
+{
+  "Schema": 1,
+  "Provenance": "Own synthetic, non-PHI structural analogues; repository license; no vendor/GDCM data imported",
+  "Missing": [
+    "Original PMS/GEMS/Siemens/Philips/GE/ACUSON/RMI vendor files",
+    "Original gdcmConformanceTests/gdcmData files and their file-specific redistribution licenses",
+    "Actual 512x512x2496 ultrasound and 215 MiB XADC workloads; no large-file performance evidence"
+  ],
+  "Fixtures": [
+    {
+      "ID": "PMS-IncompletePixelData",
+      "Phenomenon": "terminal Pixel Data/fragment truncation; native prefixes are error-labelled and an incomplete first fragment is refused",
+      "Policy": "incomplete",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "partial",
+        "Preserve": "partial",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "File": "PMS-IncompletePixelData.dcm",
+      "Bytes": 620,
+      "SourceSHA256": "531d8552c98fc63e26589d46a1472aad9c33b61ab49d25c0d8bff92c5264d287"
+    },
+    {
+      "ID": "GEMS-IncompletePixelData",
+      "Phenomenon": "terminal Pixel Data/fragment truncation; native prefixes are error-labelled and an incomplete first fragment is refused",
+      "Policy": "incomplete",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "File": "GEMS-IncompletePixelData.dcm",
+      "Bytes": 640,
+      "SourceSHA256": "9e8a0f4e6a9c534192c248f0cf060824754dca1d49e9966a3d99c362adfec00f"
+    },
+    {
+      "ID": "SIEMENS-IncompletePixelData",
+      "Phenomenon": "terminal Pixel Data/fragment truncation; native prefixes are error-labelled and an incomplete first fragment is refused",
+      "Policy": "incomplete",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "partial",
+        "Preserve": "partial",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "File": "SIEMENS-IncompletePixelData.dcm",
+      "Bytes": 621,
+      "SourceSHA256": "0f6005c0f39609da95184681a031c5df4854a3643c889d65a0301ccc9f71bd17"
+    },
+    {
+      "ID": "SIEMENS-JPEG-CorruptFrag",
+      "Phenomenon": "damaged JPEG carrier/codestream",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 3,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "YBR_FULL",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "404040404040404040404040",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "File": "SIEMENS-JPEG-CorruptFrag.dcm",
+      "Bytes": 948,
+      "SourceSHA256": "70ebfcc1b96c74118dad708282bc1f48308a0783327eafb14045de4bd71209ce"
+    },
+    {
+      "ID": "GENESIS_SIGNA-JPEG-CorruptFrag",
+      "Phenomenon": "damaged JPEG carrier/codestream",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 3,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "YBR_FULL",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "404040404040404040404040",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "File": "GENESIS_SIGNA-JPEG-CorruptFrag.dcm",
+      "Bytes": 662,
+      "SourceSHA256": "c23d9bc6296e905442aaed1c8b6d41e277dda6b6ec3f53035fd705ebb9fb7df7"
+    },
+    {
+      "ID": "ACUSON-8-YBR_FULL-JPEG-TrailingInfo",
+      "Phenomenon": "JPEG EOI followed by bounded trailing information; retained carrier, refused decode",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 3,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "YBR_FULL",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "404040404040404040404040",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "File": "ACUSON-8-YBR_FULL-JPEG-TrailingInfo.dcm",
+      "Bytes": 1258,
+      "SourceSHA256": "636e16fb97a54a46ea565d05ae2e2e1011c2b6a4ef18685db4a1f9452804521c"
+    },
+    {
+      "ID": "GE_JPEG-Broken",
+      "Phenomenon": "damaged JPEG carrier/codestream",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 3,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "YBR_FULL",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "404040404040404040404040",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "File": "GE_JPEG-Broken.dcm",
+      "Bytes": 654,
+      "SourceSHA256": "5ddd8fa8f8ee2543d2aa5e48bd0a3980ed13fadfe9f464a96c59628bc9b59ab5"
+    },
+    {
+      "ID": "GDCMFakeJPEG",
+      "Phenomenon": "native bytes in defined-length Pixel Data declared JPEG Baseline",
+      "Policy": "native-under-compressed",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "GDCMFakeJPEG.dcm",
+      "Bytes": 624,
+      "SourceSHA256": "203d28e8797e80b47a743d9aa5bd1aeeca035c87bdbe75b2181f3dc8db44da66"
+    },
+    {
+      "ID": "Bug_Philips_ItemTag_3F3F",
+      "Phenomenon": "invalid (3F3F,3F00) item tag and inconsistent item length; no vendor magic-number repair",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 1
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "File": "Bug_Philips_ItemTag_3F3F.dcm",
+      "Bytes": 670,
+      "SourceSHA256": "e426163b3cfb5be1715bc60fbf0443e939e73779f4c33cffb15ddcb2abeb4556"
+    },
+    {
+      "ID": "BogusItemStartItemEnd",
+      "Phenomenon": "sequence delimiter used where item delimiter is required",
+      "Policy": "sequence",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 1
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "BogusItemStartItemEnd.dcm",
+      "Bytes": 678,
+      "SourceSHA256": "af90bc57a0d84afb76fc99b6e1b51b1189a0b5b0a118003d9c38b2f6b1e8edd8"
+    },
+    {
+      "ID": "ItemTerminatorVLnot0",
+      "Phenomenon": "nonzero Item Delimitation length, without consuming invented value bytes",
+      "Policy": "delimiter",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 1
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "ItemTerminatorVLnot0.dcm",
+      "Bytes": 678,
+      "SourceSHA256": "b6a8a893363015ed95e0ed1389fed4828466c395ab29c2e525275008b9afd61c"
+    },
+    {
+      "ID": "EmptyItemStarter",
+      "Phenomenon": "zero-length empty item followed by a populated item",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 2
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "EmptyItemStarter.dcm",
+      "Bytes": 678,
+      "SourceSHA256": "356175b59766061ea2bc62417f97cbf09e423e031d91a42ab3c922d183f17396"
+    },
+    {
+      "ID": "MismatchSOPClassUID",
+      "Phenomenon": "File Meta CT versus dataset Secondary Capture, explicitly retained",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.2",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "MismatchSOPClassUID.dcm",
+      "Bytes": 622,
+      "SourceSHA256": "114927e51c7b5517cfd1a2f827796f56ae7596ae6b4cb26f884fb888d436047d"
+    },
+    {
+      "ID": "VRUNInMetaHeader",
+      "Phenomenon": "Media Storage SOP Class encoded UN instead of UI",
+      "Policy": "un",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "VRUNInMetaHeader.dcm",
+      "Bytes": 626,
+      "SourceSHA256": "a400aa26ed2516ca4ceab30258afd766430ef8c728f360a83f8657659dd38734"
+    },
+    {
+      "ID": "ImplicitDeclaredAsExplicit",
+      "Phenomenon": "Implicit VR LE dataset under Explicit VR LE File Meta declaration",
+      "Policy": "syntax",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "ImplicitDeclaredAsExplicit.dcm",
+      "Bytes": 618,
+      "SourceSHA256": "b8d3834bd58d7862af4d912e1bac5aacff4d30afdd11e6ae97fdea6348238280"
+    },
+    {
+      "ID": "PhilipsByteSwapping",
+      "Phenomenon": "big-endian OW samples in a declared little-endian dataset",
+      "Policy": "byte-swap",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 16,
+        "BitsStored": 16,
+        "HighBit": 15,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "000040008000ff00",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "mismatch",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "PhilipsByteSwapping.dcm",
+      "Bytes": 626,
+      "SourceSHA256": "ff55347fa9c8e295ec20680cd581a4262e86f988f908712d05fb48656da18985"
+    },
+    {
+      "ID": "PhilipsWith15Overlays",
+      "Phenomenon": "independent overlay planes/private attribute interposition; base image unchanged",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 15,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "PhilipsWith15Overlays.dcm",
+      "Bytes": 1762,
+      "SourceSHA256": "cab1a2b49b13e439099192b0900f04003b5eb3918f52799751239a951e9adab1"
+    },
+    {
+      "ID": "OverlayPrivateDataInBetween",
+      "Phenomenon": "independent overlay planes/private attribute interposition; base image unchanged",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 1,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "OverlayPrivateDataInBetween.dcm",
+      "Bytes": 734,
+      "SourceSHA256": "faed4c72c5bcf5e9439d6646b7ce43a7109cd149af76b30534baecabce6234fc"
+    },
+    {
+      "ID": "YBRisGray",
+      "Phenomenon": "one grayscale sample declared YBR_FULL: byte decoding succeeds but color rendering refuses it; no guessed photometric repair",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "YBR_FULL",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "reject"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "reject"
+      },
+      "File": "YBRisGray.dcm",
+      "Bytes": 618,
+      "SourceSHA256": "f0927b09af582d5781e76503fd79ed5b6dc62f60ba0e615be97eb75177b731f9"
+    },
+    {
+      "ID": "ElemZeroNotGroupLength",
+      "Phenomenon": "element zero declared LO rather than group-length UL",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "ElemZeroNotGroupLength.dcm",
+      "Bytes": 636,
+      "SourceSHA256": "d9ccee880615c9fad89f2c2da2792a34823549e78eaf85d99b7667d61c16ed38"
+    },
+    {
+      "ID": "FLAIR-wrong-group-length",
+      "Phenomenon": "dataset group length disagrees with following elements and is not trusted",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "FLAIR-wrong-group-length.dcm",
+      "Bytes": 634,
+      "SourceSHA256": "a7dc283668e64f4c651ace7d922cc7fc99a23dd5e5de69a0797516c14590a747"
+    },
+    {
+      "ID": "RMI_Mattes_unevenLengthTags",
+      "Phenomenon": "odd-length LO without an invented pad byte",
+      "Policy": "odd",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "RMI_Mattes_unevenLengthTags.dcm",
+      "Bytes": 633,
+      "SourceSHA256": "4b8782fa56cf40782dee3a2063b98636850a495a085ff5ed0544fa5d81152985"
+    },
+    {
+      "ID": "CR-Preamble-NoMeta",
+      "Phenomenon": "DICM preamble directly followed by dataset, no File Meta",
+      "Policy": "syntax",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "CR-Preamble-NoMeta.dcm",
+      "Bytes": 440,
+      "SourceSHA256": "2b6809645fbb955266a091b56b8361b56e8a3be506c9c6c45410b6bb5084b26d"
+    },
+    {
+      "ID": "MissingPixelRepresentation",
+      "Phenomenon": "absent unsigned/signed declaration; no inferred sign",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": null,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "File": "MissingPixelRepresentation.dcm",
+      "Bytes": 612,
+      "SourceSHA256": "06b002a481ff573060c59c8ce0ef9cea23efd27df7eb6c09621744129a1ab44f"
+    },
+    {
+      "ID": "TestVRSQUN1",
+      "Phenomenon": "known sequence encoded UN with implicit-VR item dataset",
+      "Policy": "un",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "TestVRSQUN1.dcm",
+      "Bytes": 662,
+      "SourceSHA256": "db7901644fc814043dbb343c027df42b6bc4c04103300658c532071226b83726"
+    },
+    {
+      "ID": "TestVRSQUN2",
+      "Phenomenon": "known sequence encoded UN with implicit-VR item dataset",
+      "Policy": "un",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 1
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "ok",
+        "Render": "ok"
+      },
+      "File": "TestVRSQUN2.dcm",
+      "Bytes": 670,
+      "SourceSHA256": "a0f2b887974b9aea22cb20411f66329b4165f64a214129789c7c054f3f746efc"
+    },
+    {
+      "ID": "SinglePrecisionSC",
+      "Phenomenon": "OF Float Pixel Data in Secondary Capture, retained without an integer reinterpretation",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 32,
+        "BitsStored": 32,
+        "HighBit": 31,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "000000000000803e0000003f0000803f",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "File": "SinglePrecisionSC.dcm",
+      "Bytes": 634,
+      "SourceSHA256": "e1b8e7e6ef31c0715828c1fc305e4a3f6ee2325fd88f04ef70f3f71b297facbd"
+    },
+    {
+      "ID": "US_512x512x2496_JPEG_BaseLine_Process_1",
+      "Phenomenon": "small declared-large frame-count carrier; decode budget refuses before a codec",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 512,
+        "Columns": 512,
+        "Frames": 2496,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "ok",
+        "Preserve": "ok",
+        "Decode": "reject",
+        "Render": "not-run"
+      },
+      "File": "US_512x512x2496_JPEG_BaseLine_Process_1.dcm",
+      "Bytes": 650,
+      "SourceSHA256": "e3b50590a539828c49eecae6a2d3c831493dc49c0b27c392a66fd0b1268c57e9"
+    },
+    {
+      "ID": "i32.XADC.7.215MegaBytes",
+      "Phenomenon": "small declared-large Pixel Data length; byte budget refuses before allocation",
+      "Policy": "none",
+      "Oracle": {
+        "Rows": 2,
+        "Columns": 2,
+        "Frames": 1,
+        "Samples": 1,
+        "BitsAllocated": 8,
+        "BitsStored": 8,
+        "HighBit": 7,
+        "PixelRepresentation": 0,
+        "Photometric": "MONOCHROME2",
+        "Spacing": [
+          1.5,
+          2
+        ],
+        "Orientation": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "Position": [
+          5,
+          7,
+          9
+        ],
+        "PixelHex": "004080ff",
+        "MetaSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "DataSOP": "1.2.840.10008.5.1.4.1.1.7",
+        "OverlayGroups": 0,
+        "SequenceItems": 0
+      },
+      "Strict": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "Recover": {
+        "Parse": "reject",
+        "Preserve": "source-only",
+        "Decode": "not-run",
+        "Render": "not-run"
+      },
+      "File": "i32.XADC.7.215MegaBytes.dcm",
+      "Bytes": 622,
+      "SourceSHA256": "00887cf9c4f016293b836dc08aa70deb19f36229cac582c4e47b3a6c28e3ed51"
+    }
+  ]
+}

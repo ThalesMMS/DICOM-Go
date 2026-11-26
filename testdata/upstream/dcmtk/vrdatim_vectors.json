@@ -1,0 +1,180 @@
+{
+ "description": "DCMTK DcmDate/DcmTime/DcmDateTime vectors (tvrdatim.cc). 'components' (year, month, day, hour, minute, second) encode as 'dicom'; a 'value' parses (parse_ok) to the time printed as 'printed' or formatted as 'iso' under the given flags. 'time_zones' are getTimeZoneFromString results in hours.",
+ "values": [
+  {
+   "line": 69,
+   "vr": "DA",
+   "components": [
+    2011,
+    5,
+    9
+   ],
+   "dicom": "20110509",
+   "parse_ok": true
+  },
+  {
+   "line": 75,
+   "vr": "TM",
+   "components": [
+    10,
+    35,
+    20
+   ],
+   "dicom": "103520",
+   "parse_ok": true
+  },
+  {
+   "line": 81,
+   "vr": "DT",
+   "components": [
+    2011,
+    5,
+    9,
+    10,
+    35,
+    20
+   ],
+   "dicom": "20110509103520",
+   "parse_ok": true,
+   "iso": [
+    {
+     "flags": {
+      "seconds": true,
+      "fraction": true,
+      "timeZone": false,
+      "delimiter": false,
+      "createMissingPart": false
+     },
+     "output": "20110509103520"
+    }
+   ]
+  },
+  {
+   "line": 90,
+   "vr": "TM",
+   "value": "12",
+   "parse_ok": true,
+   "printed": "12:00"
+  },
+  {
+   "line": 96,
+   "vr": "TM",
+   "value": "1203",
+   "parse_ok": true,
+   "printed": "12:03",
+   "iso": [
+    {
+     "flags": {
+      "seconds": true,
+      "fraction": true,
+      "timeZone": true,
+      "delimiter": true,
+      "createMissingPart": true
+     },
+     "output": "12:03:00.000000"
+    }
+   ]
+  },
+  {
+   "line": 105,
+   "vr": "TM",
+   "value": "120315",
+   "parse_ok": true,
+   "printed": "12:03:15"
+  },
+  {
+   "line": 110,
+   "vr": "TM",
+   "value": "120301.99",
+   "parse_ok": true,
+   "iso": [
+    {
+     "flags": {
+      "seconds": true,
+      "fraction": true,
+      "timeZone": true
+     },
+     "output": "12:03:01.990000"
+    }
+   ]
+  },
+  {
+   "line": 117,
+   "vr": "TM",
+   "value": "12:03",
+   "parse_ok": true,
+   "printed": "12:03"
+  },
+  {
+   "line": 122,
+   "vr": "TM",
+   "value": "12:03:00",
+   "parse_ok": true,
+   "printed": "12:03:00"
+  },
+  {
+   "line": 140,
+   "vr": "DT",
+   "value": "20020410120315+0500",
+   "parse_ok": true,
+   "printed": "2002-04-10 12:03:15 +05:00"
+  },
+  {
+   "line": 146,
+   "vr": "DT",
+   "value": "20020410",
+   "parse_ok": true,
+   "iso": [
+    {
+     "flags": {
+      "seconds": true,
+      "fraction": false,
+      "timeZone": false
+     },
+     "output": "2002-04-10 00:00"
+    }
+   ]
+  }
+ ],
+ "time_zones": [
+  {
+   "line": 128,
+   "value": "+0030",
+   "ok": true,
+   "hours": 0.5
+  },
+  {
+   "line": 130,
+   "value": "+1130",
+   "ok": true,
+   "hours": 11.5
+  },
+  {
+   "line": 132,
+   "value": "-0100",
+   "ok": true,
+   "hours": -1.0
+  },
+  {
+   "line": 134,
+   "value": "-0530",
+   "ok": true,
+   "hours": -5.5
+  },
+  {
+   "line": 136,
+   "value": "01130",
+   "ok": false
+  },
+  {
+   "line": 137,
+   "value": "+100",
+   "ok": false
+  },
+  {
+   "line": 138,
+   "value": "UTC+1",
+   "ok": false
+  }
+ ]
+}

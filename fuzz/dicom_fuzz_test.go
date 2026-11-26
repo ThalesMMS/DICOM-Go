@@ -179,7 +179,7 @@ func dicomJSONFuzzSeeds() [][]byte {
 
 func ulPDUFuzzSeeds() [][]byte {
 	command := mustCommandSetSeed()
-	return [][]byte{
+	seeds := [][]byte{
 		nil,
 		{byte(ul.PDUDataTF)},
 		rawPDUSeed(ul.PDUReleaseRQ, nil),
@@ -193,6 +193,8 @@ func ulPDUFuzzSeeds() [][]byte {
 		command,
 		[]byte{0x00, 0x00, 0x00, 0x00, 0xff, 0xff},
 	}
+	// Malformed A-ASSOCIATE-RQs after DCMTK's tparseassoc/tassocleak scenarios.
+	return append(seeds, dicomtest.AssociationRQVectorSeeds()...)
 }
 
 func mustCommandSetSeed() []byte {

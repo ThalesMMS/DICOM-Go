@@ -1,0 +1,190 @@
+{
+ "description": "MD5 of the complete file GDCM writes after repairing each broken input (TestWriter).",
+ "entries": [
+  {
+   "file": "gdcm-JPEG-LossLess3a.dcm",
+   "md5": "e8ed75f5e13cc20e96ee716bcc78351b",
+   "upstream_comment": "size match"
+  },
+  {
+   "file": "GE_DLX-8-MONO2-PrivateSyntax.dcm",
+   "md5": "8cb29ba0173c66e7adb4c54c6b0a5896"
+  },
+  {
+   "file": "PICKER-16-MONO2-No_DicomV3_Preamble.dcm",
+   "md5": "ed93b34819bf2acbacefb510476e8d4a"
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-Uncompressed.dcm",
+   "md5": "c8cce480eac80770a3c6e456c7d8d66f",
+   "upstream_comment": "size match"
+  },
+  {
+   "file": "MR_Philips_Intera_SwitchIndianess_noLgtSQItem_in_trueLgtSeq.dcm",
+   "md5": "df0e01aae299317db1719e4de72b8937",
+   "upstream_comment": "size match and CheckbigEndian match => ok !"
+  },
+  {
+   "file": "PHILIPS_Intera-16-MONO2-Uncompress.dcm",
+   "md5": "df632a3b5ca38340faa612a23b907ac4",
+   "upstream_comment": "size match and CheckbigEndian match => ok !"
+  },
+  {
+   "file": "MR_Philips_Intera_PrivateSequenceExplicitVR_in_SQ_2001_e05f_item_wrong_lgt_use_NOSHADOWSEQ.dcm",
+   "md5": "6bf002815fad665392acab24f09caa5e",
+   "upstream_comment": "size match and CheckbigEndian match => ok !"
+  },
+  {
+   "file": "THERALYS-12-MONO2-Uncompressed-Even_Length_Tag.dcm",
+   "md5": "e1b2956f781685fc9e46e0da26b8a0fd"
+  },
+  {
+   "file": "ExplicitVRforPublicElementsImplicitVRforShadowElements.dcm",
+   "md5": "66a75503221ef32b0236cf9f78e169ff",
+   "upstream_comment": "size mismatch"
+  },
+  {
+   "file": "SIEMENS-MR-RGB-16Bits.dcm",
+   "md5": "3cc629fa470efb114a14ca3909117eb8",
+   "upstream_comment": "size match"
+  },
+  {
+   "file": "MR-SIEMENS-DICOM-WithOverlays-extracted-overlays.dcm",
+   "md5": "0fb0cb12f2b038bbfe1014bbf2935026",
+   "upstream_comment": "size match"
+  },
+  {
+   "file": "PrivateGEImplicitVRBigEndianTransferSyntax16Bits.dcm",
+   "md5": "2d23a8d55425c88bdd5e90f866a11607",
+   "upstream_comment": "size mismatch"
+  },
+  {
+   "file": "DMCPACS_ExplicitImplicit_BogusIOP.dcm",
+   "md5": "34abc36682a6e6ba22d7295931b39d85",
+   "upstream_comment": "size mismatch"
+  },
+  {
+   "file": "gdcm-MR-PHILIPS-16-Multi-Seq.dcm",
+   "md5": "82fda19e1f2046a289fe1307b70510af"
+  },
+  {
+   "file": "GE_GENESIS-16-MONO2-WrongLengthItem.dcm",
+   "md5": "a047110a3935dc0fdda24d3b9e4769af",
+   "upstream_comment": "size match"
+  },
+  {
+   "file": "JDDICOM_Sample2.dcm",
+   "md5": "6cded0f160edfab809cddfce2d562671",
+   "upstream_comment": "size match"
+  },
+  {
+   "file": "00191113.dcm",
+   "md5": "6234a50361f02cb9a739755d63cdd673",
+   "upstream_comment": "size mismatch (obviously)"
+  },
+  {
+   "file": "MARCONI_MxTWin-12-MONO2-JpegLossless-ZeroLengthSQ.dcm",
+   "md5": "28f9d4114b0699630a77d027910e5e41"
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-GDCM12-VRUN.dcm",
+   "md5": "e363f98016fae699f8d752be6096eb45"
+  },
+  {
+   "file": "dicomdir_Pms_WithVisit_WithPrivate_WithStudyComponents",
+   "md5": "f221e76c6f0758877aa3cf13632480f4",
+   "upstream_comment": "size match"
+  },
+  {
+   "file": "TheralysGDCM120Bug.dcm",
+   "md5": "69ca7a4300967cf2841da34d7904c6c4",
+   "upstream_comment": "size mismatch"
+  },
+  {
+   "file": "BugGDCM2_UndefItemWrongVL.dcm",
+   "md5": "ddf83cd708e58021a633588927d55ab8",
+   "upstream_comment": "size mismatch"
+  },
+  {
+   "file": "NM_Kakadu44_SOTmarkerincons.dcm",
+   "md5": "6d49d6b2fb3bc2505c51bb86b04b92b9",
+   "upstream_comment": "item size mismatch"
+  },
+  {
+   "file": "PhilipsInteraSeqTermInvLen.dcm",
+   "md5": "1225ea0a03b93393f70c73be35e2619d"
+  },
+  {
+   "file": "JPEGInvalidSecondFrag.dcm",
+   "md5": "cd00658f54dbd2d2a9d02d64c6f6497e"
+  },
+  {
+   "file": "Bug_Siemens_PrivateIconNoItem.dcm",
+   "md5": "5793021ffb7b3506ae22ae9329d67d29"
+  },
+  {
+   "file": "MAROTECH_CT_JP2Lossy.dcm",
+   "md5": "e1f57a4e3747342eb3a39a6b06f4394c"
+  },
+  {
+   "file": "RadBWLossLess.dcm",
+   "md5": "0104ab38d1ab04c273cf263ab7c164c4"
+  },
+  {
+   "file": "PHILIPS_Gyroscan-12-MONO2-Jpeg_Lossless.dcm",
+   "md5": "879e975e56a14ce019e495289311fb89"
+  },
+  {
+   "file": "OsirixFake16BitsStoredFakeSpacing.dcm",
+   "md5": "16e226e33985c7873063e5694c528488"
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-PAL-RLE.dcm",
+   "md5": "11772aa40cf6ef0ff0aed75bf545ddaf"
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-RLE.dcm",
+   "md5": "50a1d3ababd82072a0fac0c16bad27d2"
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-JpegLossy.dcm",
+   "md5": "01503680f31337682d6a791562625d51"
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-JpegLossy.dcm",
+   "md5": "33eba2b46adef5abd80912224ba8d2f5"
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-JpegLossless.dcm",
+   "md5": "fd57b8e2d7f3a8ebeae592968bbf1e7d"
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-RLE.dcm",
+   "md5": "85d61764c461c3770ad5a41558409ad2"
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-JpegLossless.dcm",
+   "md5": "b4f0a69de85e4d0101468b0a199e1702"
+  },
+  {
+   "file": "GE_DLX-8-MONO2-Multiframe-Jpeg_Lossless.dcm",
+   "md5": "050405251ba4c6c1e448dfeb9da03e81"
+  },
+  {
+   "file": "fffc0000UN.dcm",
+   "md5": "0c7f6be19ecf5512af0846f75882dae7"
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-VRUN.dcm",
+   "md5": "7b192efdc47e1b3ba07585bc9253cfb0"
+  },
+  {
+   "file": "PET-GE-dicomwrite-PixelDataSQUNv2.dcm",
+   "md5": "c36c540be5f577f653f451f298cfbdfa"
+  },
+  {
+   "file": "MEDILABInvalidCP246_EVRLESQasUN.dcm",
+   "md5": "566569b42afa05c010f970dea8097ba0"
+  }
+ ]
+}

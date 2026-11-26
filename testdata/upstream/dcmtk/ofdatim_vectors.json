@@ -1,0 +1,599 @@
+{
+ "description": "DCMTK OFDate/OFTime/OFDateTime setter vectors (tofdatim.cc): whether a date, time, time zone or date/time given as numbers ('args': year, month, day, hour, minute, second, time zone in hours) or as an ISO 8601 / DICOM formatted string ('value') is accepted, and the time zone in hours a formatted time yields.",
+ "entries": [
+  {
+   "line": 39,
+   "method": "setDate",
+   "ok": false,
+   "args": [
+    2000,
+    13,
+    1
+   ]
+  },
+  {
+   "line": 40,
+   "method": "setDate",
+   "ok": true,
+   "args": [
+    2000,
+    12,
+    31
+   ]
+  },
+  {
+   "line": 51,
+   "method": "setISOFormattedDate",
+   "ok": true,
+   "value": "20001231"
+  },
+  {
+   "line": 52,
+   "method": "setISOFormattedDate",
+   "ok": true,
+   "value": "2000-12-31"
+  },
+  {
+   "line": 54,
+   "method": "setISOFormattedDate",
+   "ok": true,
+   "value": "2000.12.31"
+  },
+  {
+   "line": 65,
+   "method": "setTime",
+   "ok": false,
+   "args": [
+    24,
+    0,
+    0
+   ]
+  },
+  {
+   "line": 66,
+   "method": "setTime",
+   "ok": true,
+   "args": [
+    12,
+    15,
+    30
+   ]
+  },
+  {
+   "line": 78,
+   "method": "setTime",
+   "ok": true,
+   "args": [
+    12,
+    15,
+    30,
+    -1
+   ]
+  },
+  {
+   "line": 80,
+   "method": "setTimeZone",
+   "ok": true,
+   "args": [
+    2
+   ]
+  },
+  {
+   "line": 82,
+   "method": "setTimeZone",
+   "ok": false,
+   "args": [
+    -20
+   ]
+  },
+  {
+   "line": 87,
+   "method": "setTimeZone",
+   "ok": true,
+   "args": [
+    2
+   ]
+  },
+  {
+   "line": 91,
+   "method": "setTime",
+   "ok": true,
+   "args": [
+    12,
+    15,
+    0
+   ]
+  },
+  {
+   "line": 94,
+   "method": "setSecond",
+   "ok": true,
+   "args": [
+    30.1234
+   ]
+  },
+  {
+   "line": 98,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "1215"
+  },
+  {
+   "line": 99,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "1215."
+  },
+  {
+   "line": 100,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "1215.1"
+  },
+  {
+   "line": 101,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "1215.123456"
+  },
+  {
+   "line": 102,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "1215.1234567"
+  },
+  {
+   "line": 104,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15"
+  },
+  {
+   "line": 105,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "12:15."
+  },
+  {
+   "line": 106,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "12:15.1"
+  },
+  {
+   "line": 107,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "12:15.123456"
+  },
+  {
+   "line": 108,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "12:15.1234567"
+  },
+  {
+   "line": 110,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "121530"
+  },
+  {
+   "line": 111,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "121530."
+  },
+  {
+   "line": 112,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "121530.1"
+  },
+  {
+   "line": 113,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "121530.123456"
+  },
+  {
+   "line": 114,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "121530.1234567"
+  },
+  {
+   "line": 116,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15:30"
+  },
+  {
+   "line": 117,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "12:15:30."
+  },
+  {
+   "line": 118,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15:30.1"
+  },
+  {
+   "line": 119,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15:30.123456"
+  },
+  {
+   "line": 120,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "12:15:30.1234567"
+  },
+  {
+   "line": 122,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "121530+0100"
+  },
+  {
+   "line": 123,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "121530.+0100"
+  },
+  {
+   "line": 124,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "121530.1+0100"
+  },
+  {
+   "line": 125,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "121530.123456+0100"
+  },
+  {
+   "line": 126,
+   "method": "setISOFormattedTime",
+   "ok": false,
+   "value": "121530.1234567+0100"
+  },
+  {
+   "line": 128,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "121530+0100",
+   "time_zone_hours": 1.0
+  },
+  {
+   "line": 130,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15:30 -02:30",
+   "time_zone_hours": -2.5
+  },
+  {
+   "line": 132,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15:30 -09:45",
+   "time_zone_hours": -9.75
+  },
+  {
+   "line": 134,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15:30 +09:15",
+   "time_zone_hours": 9.25
+  },
+  {
+   "line": 137,
+   "method": "setISOFormattedTimeZone",
+   "ok": true,
+   "value": "-0230",
+   "time_zone_hours": -2.5
+  },
+  {
+   "line": 139,
+   "method": "setISOFormattedTimeZone",
+   "ok": true,
+   "value": "+02:30",
+   "time_zone_hours": 2.5
+  },
+  {
+   "line": 141,
+   "method": "setISOFormattedTimeZone",
+   "ok": false,
+   "value": "02:30"
+  },
+  {
+   "line": 142,
+   "method": "setISOFormattedTimeZone",
+   "ok": false,
+   "value": "+000"
+  },
+  {
+   "line": 143,
+   "method": "setISOFormattedTimeZone",
+   "ok": false,
+   "value": "+1:00"
+  },
+  {
+   "line": 144,
+   "method": "setISOFormattedTimeZone",
+   "ok": true,
+   "value": "+1234"
+  },
+  {
+   "line": 145,
+   "method": "setISOFormattedTimeZone",
+   "ok": true,
+   "value": ""
+  },
+  {
+   "line": 148,
+   "method": "setTime",
+   "ok": true,
+   "args": [
+    23,
+    59,
+    59
+   ]
+  },
+  {
+   "line": 150,
+   "method": "setTime",
+   "ok": true,
+   "args": [
+    23,
+    59,
+    60
+   ]
+  },
+  {
+   "line": 152,
+   "method": "setTime",
+   "ok": false,
+   "args": [
+    23,
+    59,
+    61
+   ]
+  },
+  {
+   "line": 154,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "10:15 -02:30"
+  },
+  {
+   "line": 155,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "1015+0100"
+  },
+  {
+   "line": 163,
+   "method": "setISOFormattedTime",
+   "ok": true,
+   "value": "12:15:30"
+  },
+  {
+   "line": 164,
+   "method": "setTimeZone",
+   "ok": true,
+   "args": [
+    1.0
+   ]
+  },
+  {
+   "line": 195,
+   "method": "setDateTime",
+   "ok": false,
+   "args": [
+    2000,
+    13,
+    1,
+    24,
+    0,
+    0
+   ]
+  },
+  {
+   "line": 214,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31 10:15:30"
+  },
+  {
+   "line": 216,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000.12.31  10-15-30"
+  },
+  {
+   "line": 218,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31 10:15:30 +01:00"
+  },
+  {
+   "line": 219,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31 10:15:30 -02:30"
+  },
+  {
+   "line": 220,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31T10:15:30+01:00"
+  },
+  {
+   "line": 221,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "20001231101530+0100"
+  },
+  {
+   "line": 224,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31 10:15 -02:30"
+  },
+  {
+   "line": 225,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "200012311015+0100"
+  },
+  {
+   "line": 227,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "20001231101530-0230"
+  },
+  {
+   "line": 228,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "20001231101530.-0230"
+  },
+  {
+   "line": 229,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "20001231101530.1-0230"
+  },
+  {
+   "line": 230,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "20001231101530.123456-0230"
+  },
+  {
+   "line": 231,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "20001231101530.1234567-0230"
+  },
+  {
+   "line": 233,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31 10:15:30 -02:30"
+  },
+  {
+   "line": 234,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "2000-12-31 10:15:30. -02:30"
+  },
+  {
+   "line": 235,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31 10:15:30.1 -02:30"
+  },
+  {
+   "line": 236,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2000-12-31 10:15:30.123456 -02:30"
+  },
+  {
+   "line": 237,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "2000-12-31 10:15:30.1234567 -02:30"
+  },
+  {
+   "line": 240,
+   "method": "setISOFormattedDateTime",
+   "ok": true,
+   "value": "2345-12-31 10:15:30 -02:30"
+  },
+  {
+   "line": 242,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "2000-12-31 10:15:30 -0230"
+  },
+  {
+   "line": 247,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "2000-12-31 10:15:30  "
+  },
+  {
+   "line": 248,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  2000-12-31 10:15:30"
+  },
+  {
+   "line": 249,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  2000-12-31 10:15:30  "
+  },
+  {
+   "line": 250,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "20001231101530  "
+  },
+  {
+   "line": 251,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  20001231101530"
+  },
+  {
+   "line": 252,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  20001231101530  "
+  },
+  {
+   "line": 254,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  2000-12-31 10:15:30 -02:30"
+  },
+  {
+   "line": 255,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  2000-12-31 10:15:30 -02:30  "
+  },
+  {
+   "line": 256,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "2000-12-31 10:15:30 -02:30  "
+  },
+  {
+   "line": 257,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  20001231101530-0230"
+  },
+  {
+   "line": 258,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "  20001231101530-0230  "
+  },
+  {
+   "line": 259,
+   "method": "setISOFormattedDateTime",
+   "ok": false,
+   "value": "20001231101530-0230  "
+  }
+ ]
+}

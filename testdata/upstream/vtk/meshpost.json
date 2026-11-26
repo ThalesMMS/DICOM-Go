@@ -1,0 +1,63 @@
+{
+ "decimation": {
+  "area": 1247.472944926507,
+  "max_distance": 0.1643264422775824,
+  "target_reduction": 0.9,
+  "triangles": 378,
+  "volume": 4115.48840419485
+ },
+ "generator": "dicom-go-validation/scripts/vtk_fixtures.py",
+ "license": "VTK is BSD-3-Clause; see LICENSE.VTK beside this file",
+ "maximum_error": [
+  {
+   "cells_after": 9520,
+   "cells_before": 9520,
+   "maximum_error": 0.0
+  },
+  {
+   "cells_after": 2780,
+   "cells_before": 9520,
+   "maximum_error": 1e-07
+  }
+ ],
+ "smoothing": [
+  {
+   "area": 1290.253356229724,
+   "iterations": 20,
+   "pass_band": 0.1,
+   "volume": 4225.441742344778,
+   "window": "nuttall"
+  },
+  {
+   "area": 1268.6307280377623,
+   "iterations": 20,
+   "pass_band": 0.01,
+   "volume": 4222.235084684231,
+   "window": "nuttall"
+  },
+  {
+   "area": 1268.2484049381728,
+   "iterations": 20,
+   "pass_band": 0.1,
+   "volume": 4222.056155051992,
+   "window": "hamming"
+  },
+  {
+   "area": 1270.6151504088243,
+   "iterations": 20,
+   "pass_band": 0.01,
+   "volume": 4247.9493643154965,
+   "window": "hamming"
+  }
+ ],
+ "sphere": {
+  "dims": [
+   32,
+   32,
+   32
+  ],
+  "radius": 10
+ },
+ "vtk_commit": "f49a1dbafa60b58ef22f6292ec58370453162192",
+ "vtk_version": "9.6.2"
+}

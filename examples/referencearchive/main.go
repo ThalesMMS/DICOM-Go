@@ -1,5 +1,6 @@
 // Reference archive connects existing dicom-go services for local development.
-// It is not a clinical PACS and does not advertise Storage Commitment.
+// It is not a clinical PACS. Storage Commitment is advertised only when a
+// durable transaction directory and callback routes are configured.
 package main
 
 import (
@@ -63,13 +64,19 @@ func runArchive(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	fs.Int64Var(&limits.instanceBytes, "max-instance-bytes", limits.instanceBytes, "maximum Part 10 bytes per instance (up to 64 MiB)")
 	fs.Int64Var(&limits.totalBytes, "max-archive-bytes", limits.totalBytes, "maximum committed Part 10 bytes")
 	fs.Var(destinations, "move-destination", "explicit AE=host:port destination; repeat for allowlist")
+	commitmentCallbacks := destinationFlags{}
+	commitment := commitmentConfig{maxTransactions: 1000}
+	fs.StringVar(&commitment.dir, "commitment-dir", "", "durable Storage Commitment transaction directory outside -root; enables Storage Commitment")
+	fs.IntVar(&commitment.maxTransactions, "commitment-max-transactions", commitment.maxTransactions, "maximum retained commitment transactions")
+	fs.Var(commitmentCallbacks, "commitment-callback", "requestor AE=host:port receiving N-EVENT-REPORT; repeat for allowlist")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
 	}
-	if fs.NArg() != 0 || !limits.valid() || strings.TrimSpace(*root) == "" {
+	commitment.callbacks = commitmentCallbacks
+	if fs.NArg() != 0 || !limits.valid() || strings.TrimSpace(*root) == "" || !commitment.valid() {
 		fmt.Fprintln(stderr, "reference archive: invalid options")
 		return 2
 	}
@@ -85,12 +92,31 @@ func runArchive(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return 1
 	}
 	defer listener.Close()
-	server, err := newArchiveServer(listener, a, *ae, destinations)
+	var committer *archiveCommitment
+	status := "Storage Commitment disabled"
+	if commitment.enabled() {
+		committer, err = newArchiveCommitment(a, *ae, commitment)
+		if err != nil {
+			fmt.Fprintln(stderr, "reference archive: commitment store failed")
+			return 1
+		}
+		defer committer.Close()
+		workerCtx, stopWorker := context.WithCancel(ctx)
+		workerDone := make(chan struct{})
+		go func() {
+			defer close(workerDone)
+			committer.run(workerCtx, func(error) { fmt.Fprintln(stderr, "reference archive: commitment work failed; retrying") })
+		}()
+		// The worker stops before the store and archive close.
+		defer func() { stopWorker(); <-workerDone }()
+		status = "Storage Commitment enabled (callback delivery)"
+	}
+	server, err := newArchiveServerWithCommitment(listener, a, *ae, destinations, committer)
 	if err != nil {
 		fmt.Fprintln(stderr, "reference archive: server configuration failed")
 		return 1
 	}
-	fmt.Fprintf(stdout, "reference archive listening on %s; Storage Commitment disabled\n", listener.Addr())
+	fmt.Fprintf(stdout, "reference archive listening on %s; %s\n", listener.Addr(), status)
 	if err := server.Serve(ctx); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(stderr, "reference archive: server failed")
 		return 1

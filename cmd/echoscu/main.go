@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/internal/clidiag"
+	"github.com/ThalesMMS/dicom-go/internal/dimsecli"
 	"github.com/ThalesMMS/dicom-go/net/dimse"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 )
@@ -42,11 +43,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 var errUsage = errors.New("usage error")
 
 type options struct {
+	conn      dimsecli.ConnectionFlags
 	host      string
 	port      int
 	calledAE  string
 	callingAE string
+	timeout   time.Duration
 	messageID int
+	tls       dimsecli.TLSFlags
+	identity  dimsecli.UserIdentityFlags
 }
 
 const (
@@ -65,10 +70,7 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 
 	fs := flag.NewFlagSet("echoscu", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&opts.host, "host", opts.host, "SCP host name or IP address")
-	fs.IntVar(&opts.port, "port", opts.port, "SCP TCP port")
-	fs.StringVar(&opts.calledAE, "called-ae", opts.calledAE, "called AE title")
-	fs.StringVar(&opts.callingAE, "calling-ae", opts.callingAE, "calling AE title")
+	opts.conn.RegisterWithDefaults(fs, dimsecli.ConnectionDefaults{Host: opts.host, Port: opts.port, CalledAE: opts.calledAE, CallingAE: opts.callingAE, Timeout: defaultDialTimeout})
 	fs.IntVar(&opts.messageID, "message-id", opts.messageID, "C-ECHO message ID")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Usage: %s [flags]\n\nSend one DICOM C-ECHO request to a Verification SCP.\n\nFlags:\n", fs.Name())
@@ -81,6 +83,13 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		}
 		return opts, errUsage
 	}
+	if err := opts.conn.Validate(); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	opts.host, opts.port, opts.calledAE, opts.callingAE = opts.conn.Host, opts.conn.Port, opts.conn.CalledAE, opts.conn.CallingAE
+	opts.tls, opts.identity, opts.timeout = opts.conn.TLS, opts.conn.Identity, opts.conn.Timeout
+
 	if fs.NArg() != 0 {
 		fs.Usage()
 		return opts, errUsage
@@ -95,19 +104,34 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		fs.Usage()
 		return opts, errUsage
 	}
+	if err := errors.Join(opts.tls.Validate(), opts.identity.Validate()); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		fs.Usage()
+		return opts, errUsage
+	}
 	return opts, nil
 }
 
 func runEcho(opts options, stdout, stderr io.Writer) error {
 	_ = stderr
 	address := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
-	dialCtx, cancelDial := context.WithTimeout(context.Background(), defaultDialTimeout)
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), echoDialTimeout(opts))
 	defer cancelDial()
 
+	tlsConfig, err := opts.tls.Config()
+	if err != nil {
+		return err
+	}
+	identity, err := opts.identity.Request()
+	if err != nil {
+		return err
+	}
 	assoc, err := ul.Dial(address, ul.DialOptions{
 		CalledAETitle:  opts.calledAE,
 		CallingAETitle: opts.callingAE,
 		Context:        dialCtx,
+		TLSConfig:      tlsConfig,
+		UserIdentity:   identity,
 		Contexts: []ul.PresentationContext{{
 			AbstractSyntaxUID:  dimse.VerificationSOPClassUID,
 			TransferSyntaxUIDs: []string{ul.ImplicitVRLittleEndian},
@@ -140,4 +164,11 @@ func runEcho(opts options, stdout, stderr io.Writer) error {
 	}
 	released = true
 	return nil
+}
+
+func echoDialTimeout(opts options) time.Duration {
+	if opts.timeout > 0 {
+		return opts.timeout
+	}
+	return defaultDialTimeout
 }

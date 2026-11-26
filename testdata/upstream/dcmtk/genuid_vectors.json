@@ -1,0 +1,5 @@
+{
+ "description": "DCMTK dcmGenerateUniqueIdentifier() check (tgenuid.cc): 'count' UIDs generated in quick succession must all differ; each fits a buffer of 'buffer_size' bytes including the terminating NUL (a 64-byte UI value).",
+ "count": 10000,
+ "buffer_size": 65
+}

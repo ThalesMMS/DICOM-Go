@@ -1,0 +1,311 @@
+{
+ "description": "DCMTK DSRCodedEntryValue vectors (tsrcodvl.cc). Each row is a code built, assigned, set or cleared with its code value type ('auto' lets DCMTK choose Code Value, Long Code Value or URN Code Value) and optional check flag, followed by the expected results: valid/complete/empty, the resulting type, the attributes a written Code Sequence item contains, the values read back and equality with other codes.",
+ "entries": [
+  {
+   "line": 38,
+   "test": "dcmsr_validCompleteOrEmptyCode",
+   "operation": "construct",
+   "code_value": "0815",
+   "coding_scheme_designator": "99TEST",
+   "code_meaning": "some test code",
+   "code_value_type": "auto",
+   "valid": true,
+   "complete": true,
+   "empty": false
+  },
+  {
+   "line": 39,
+   "test": "dcmsr_validCompleteOrEmptyCode",
+   "operation": "construct",
+   "code_value": "0816",
+   "coding_scheme_designator": "99TEST",
+   "code_meaning": "",
+   "code_value_type": "short",
+   "check": false,
+   "valid": false,
+   "complete": false
+  },
+  {
+   "line": 40,
+   "test": "dcmsr_validCompleteOrEmptyCode",
+   "operation": "construct",
+   "code_value": "a little too long\\with VM>1",
+   "coding_scheme_designator": "99TEST",
+   "code_meaning": "some invalid test code",
+   "code_value_type": "short",
+   "check": false,
+   "valid": false,
+   "complete": true,
+   "empty": false
+  },
+  {
+   "line": 41,
+   "test": "dcmsr_validCompleteOrEmptyCode",
+   "operation": "construct",
+   "code_value": "",
+   "coding_scheme_designator": "",
+   "code_meaning": "",
+   "code_value_type": "auto",
+   "valid": false,
+   "complete": false,
+   "empty": true
+  },
+  {
+   "line": 42,
+   "test": "dcmsr_validCompleteOrEmptyCode",
+   "operation": "construct",
+   "code_value": "urn:0817",
+   "coding_scheme_designator": "",
+   "code_meaning": "some other code",
+   "code_value_type": "auto",
+   "valid": true,
+   "complete": true,
+   "empty": false
+  },
+  {
+   "line": 43,
+   "test": "dcmsr_validCompleteOrEmptyCode",
+   "operation": "construct",
+   "code_value": "urn:0817",
+   "coding_scheme_designator": "",
+   "coding_scheme_version": "1.0",
+   "code_meaning": "some other code",
+   "code_value_type": "urn",
+   "check": false,
+   "valid": false,
+   "complete": true,
+   "empty": false
+  },
+  {
+   "code_value": "121206",
+   "coding_scheme_designator": "DCM",
+   "code_meaning": "Distance",
+   "code_value_type": "short",
+   "line": 69,
+   "test": "dcmsr_setCodeValueType",
+   "operation": "construct",
+   "valid": true,
+   "resulting_type": "short"
+  },
+  {
+   "code_value": "621566751000087104",
+   "coding_scheme_designator": "SCT",
+   "code_meaning": "Invasive diagnostic procedure",
+   "code_value_type": "long",
+   "line": 73,
+   "test": "dcmsr_setCodeValueType",
+   "operation": "set_code",
+   "set_ok": true,
+   "resulting_type": "long"
+  },
+  {
+   "code_value": "urn:lex:us:federal:codified.regulation:2013-04-25;45CFR164",
+   "coding_scheme_designator": "",
+   "code_meaning": "HIPAA Privacy Rule",
+   "code_value_type": "urn",
+   "line": 76,
+   "test": "dcmsr_setCodeValueType",
+   "operation": "set_code",
+   "set_ok": true,
+   "resulting_type": "urn"
+  },
+  {
+   "code_value": "121206",
+   "coding_scheme_designator": "DCM",
+   "code_meaning": "Distance",
+   "code_value_type": "auto",
+   "line": 84,
+   "test": "dcmsr_determineCodeValueType",
+   "operation": "construct",
+   "valid": true,
+   "resulting_type": "short"
+  },
+  {
+   "code_value": "621566751000087104",
+   "coding_scheme_designator": "SCT",
+   "code_meaning": "Invasive diagnostic procedure",
+   "code_value_type": "auto",
+   "line": 88,
+   "test": "dcmsr_determineCodeValueType",
+   "operation": "set_code",
+   "set_ok": true,
+   "resulting_type": "long"
+  },
+  {
+   "code_value": "urn:lex:us:federal:codified.regulation:2013-04-25;45CFR164",
+   "coding_scheme_designator": "99TEST",
+   "code_meaning": "HIPAA Privacy Rule",
+   "code_value_type": "auto",
+   "line": 91,
+   "test": "dcmsr_determineCodeValueType",
+   "operation": "set_code",
+   "set_ok": true,
+   "resulting_type": "urn"
+  },
+  {
+   "code_value": "http://dcmtk.org/code/0815",
+   "coding_scheme_designator": "99TEST",
+   "code_meaning": "URL test code",
+   "code_value_type": "auto",
+   "line": 93,
+   "test": "dcmsr_determineCodeValueType",
+   "operation": "set_code",
+   "set_ok": true,
+   "resulting_type": "urn"
+  },
+  {
+   "line": 96,
+   "test": "dcmsr_determineCodeValueType",
+   "operation": "clear",
+   "code_value": "",
+   "coding_scheme_designator": "",
+   "code_meaning": "",
+   "code_value_type": "auto",
+   "valid": false,
+   "resulting_type": "short"
+  },
+  {
+   "code_value": "0",
+   "coding_scheme_designator": "99TEST",
+   "code_meaning": "-",
+   "code_value_type": "auto",
+   "line": 100,
+   "test": "dcmsr_determineCodeValueType",
+   "operation": "set_code",
+   "set_ok": true,
+   "resulting_type": "short"
+  },
+  {
+   "code_value": "121206",
+   "coding_scheme_designator": "DCM",
+   "code_meaning": "Distance",
+   "code_value_type": "short",
+   "line": 116,
+   "test": "dcmsr_writeCodeSequence",
+   "operation": "construct",
+   "written_attributes": {
+    "CodeValue": true,
+    "LongCodeValue": false,
+    "URNCodeValue": false
+   }
+  },
+  {
+   "code_value": "621566751000087104",
+   "coding_scheme_designator": "SCT",
+   "code_meaning": "Invasive diagnostic procedure",
+   "code_value_type": "long",
+   "line": 123,
+   "test": "dcmsr_writeCodeSequence",
+   "operation": "set_code",
+   "set_ok": true,
+   "written_attributes": {
+    "CodeValue": false,
+    "LongCodeValue": true,
+    "URNCodeValue": false
+   }
+  },
+  {
+   "code_value": "urn:lex:us:federal:codified.regulation:2013-04-25;45CFR164",
+   "coding_scheme_designator": "",
+   "code_meaning": "HIPAA Privacy Rule",
+   "code_value_type": "urn",
+   "line": 130,
+   "test": "dcmsr_writeCodeSequence",
+   "operation": "set_code",
+   "set_ok": true,
+   "written_attributes": {
+    "CodeValue": false,
+    "LongCodeValue": false,
+    "URNCodeValue": true
+   }
+  },
+  {
+   "code_value": "121206",
+   "coding_scheme_designator": "DCM",
+   "code_meaning": "Distance",
+   "code_value_type": "auto",
+   "line": 140,
+   "test": "dcmsr_compareCodedEntry",
+   "operation": "construct",
+   "equals": [
+    {
+     "code_value": "121206",
+     "coding_scheme_designator": "DCM",
+     "code_meaning": "Wrong meaning",
+     "code_value_type": "auto",
+     "equal": true
+    },
+    {
+     "code_value": "",
+     "coding_scheme_designator": "DCM",
+     "code_meaning": "Distance",
+     "code_value_type": "auto",
+     "equal": false
+    },
+    {
+     "code_value": "",
+     "coding_scheme_designator": "DCM",
+     "code_meaning": "Distance",
+     "code_value_type": "auto",
+     "equal": false
+    }
+   ]
+  },
+  {
+   "line": 154,
+   "test": "dcmsr_useBasicCodedEntry",
+   "operation": "construct",
+   "code_value": "121206",
+   "coding_scheme_designator": "DCM",
+   "code_meaning": "Distance",
+   "code_value_type": "auto",
+   "valid": true,
+   "enhanced_encoding": false,
+   "resulting_type": "short",
+   "read_back": {
+    "code_value": "121206",
+    "coding_scheme_designator": "DCM",
+    "coding_scheme_version": "",
+    "code_meaning": "Distance"
+   }
+  },
+  {
+   "line": 163,
+   "test": "dcmsr_useBasicCodedEntry",
+   "operation": "set_code",
+   "code_value": "621566751000087104",
+   "coding_scheme_designator": "SCT",
+   "code_meaning": "Invasive diagnostic procedure",
+   "code_value_type": "auto",
+   "check": true,
+   "set_ok": true,
+   "valid": true,
+   "enhanced_encoding": false,
+   "resulting_type": "long",
+   "read_back": {
+    "code_value": "621566751000087104",
+    "coding_scheme_designator": "SCT",
+    "coding_scheme_version": "",
+    "code_meaning": "Invasive diagnostic procedure"
+   }
+  },
+  {
+   "line": 172,
+   "test": "dcmsr_useBasicCodedEntry",
+   "operation": "assign",
+   "code_value": "urn:lex:us:federal:codified.regulation:2013-04-25;45CFR164",
+   "coding_scheme_designator": "",
+   "code_meaning": "HIPAA Privacy Rule",
+   "code_value_type": "auto",
+   "valid": true,
+   "enhanced_encoding": false,
+   "resulting_type": "urn",
+   "read_back": {
+    "code_value": "urn:lex:us:federal:codified.regulation:2013-04-25;45CFR164",
+    "coding_scheme_designator": "",
+    "coding_scheme_version": "",
+    "code_meaning": "HIPAA Privacy Rule"
+   }
+  }
+ ]
+}

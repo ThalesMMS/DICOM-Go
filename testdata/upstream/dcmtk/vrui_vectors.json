@@ -1,0 +1,144 @@
+{
+ "description": "DCMTK DcmUniqueIdentifier padding vectors (tvrui.cc): a value string stored with or without DCMTK's automatic input data correction, its VM, the checkValue() verdict for 'check_vm', and the values read back with and without normalization (padding removal).",
+ "entries": [
+  {
+   "line": 36,
+   "input": "1.2.3.4\u0000",
+   "automatic_correction": true,
+   "values": [
+    {
+     "index": 0,
+     "normalize": true,
+     "value": "1.2.3.4"
+    }
+   ],
+   "vm": 1,
+   "check_vm": "1",
+   "check_ok": true
+  },
+  {
+   "line": 43,
+   "input": "1.2.3.4\\5.6.7.8",
+   "automatic_correction": false,
+   "values": [],
+   "vm": 2,
+   "check_vm": "2",
+   "check_ok": true
+  },
+  {
+   "line": 46,
+   "input": "1.2.3.4\\5.6.7.8\u0000",
+   "automatic_correction": false,
+   "values": [
+    {
+     "index": 1,
+     "normalize": true,
+     "value": "5.6.7.8"
+    },
+    {
+     "index": 1,
+     "normalize": false,
+     "value": "5.6.7.8\u0000"
+    }
+   ],
+   "check_vm": "2",
+   "check_ok": true
+  },
+  {
+   "line": 54,
+   "input": "7.8.9.10\u0000\u0000",
+   "automatic_correction": false,
+   "values": [
+    {
+     "index": 0,
+     "normalize": true,
+     "value": "7.8.9.10"
+    },
+    {
+     "index": 0,
+     "normalize": false,
+     "value": "7.8.9.10\u0000\u0000"
+    }
+   ],
+   "check_vm": "1",
+   "check_ok": false
+  },
+  {
+   "line": 69,
+   "input": "1.2.3.4 ",
+   "automatic_correction": true,
+   "values": [],
+   "check_vm": "1",
+   "check_ok": true
+  },
+  {
+   "line": 71,
+   "input": "1.2.3.4  ",
+   "automatic_correction": true,
+   "values": [
+    {
+     "index": 0,
+     "normalize": true,
+     "value": "1.2.3.4"
+    }
+   ],
+   "check_vm": "1",
+   "check_ok": true
+  },
+  {
+   "line": 76,
+   "input": " 1.2.3.4 ",
+   "automatic_correction": true,
+   "values": [],
+   "check_vm": "1",
+   "check_ok": true
+  },
+  {
+   "line": 78,
+   "input": "1.2. 3.4",
+   "automatic_correction": true,
+   "values": [
+    {
+     "index": 0,
+     "normalize": true,
+     "value": "1.2.3.4"
+    }
+   ],
+   "check_vm": "1",
+   "check_ok": true
+  },
+  {
+   "line": 84,
+   "input": "1.2.3.4 ",
+   "automatic_correction": false,
+   "values": [
+    {
+     "index": 0,
+     "normalize": true,
+     "value": "1.2.3.4 "
+    }
+   ],
+   "check_vm": "1",
+   "check_ok": false
+  },
+  {
+   "line": 88,
+   "input": "1.2.3.4\\5.6.7.8 ",
+   "automatic_correction": false,
+   "values": [
+    {
+     "index": 0,
+     "normalize": true,
+     "value": "1.2.3.4"
+    },
+    {
+     "index": 1,
+     "normalize": true,
+     "value": "5.6.7.8 "
+    }
+   ],
+   "check_vm": "2",
+   "check_ok": false
+  }
+ ]
+}

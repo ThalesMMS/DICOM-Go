@@ -185,19 +185,39 @@ func TestOpenJPEGDecoderRunsSharedFixtureHarness(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
+			if err := codecfixture.ValidateCase(pureGoRegistry, tc); err != nil {
+				t.Fatalf("pure-Go ValidateCase() error = %v", err)
+			}
 			if err := codecfixture.ValidateCase(openJPEGRegistry, tc); err != nil {
 				t.Fatalf("OpenJPEG ValidateCase() error = %v", err)
 			}
 
 			pureGoResult := codecfixture.RunCase(pureGoRegistry, tc)
 			openJPEGResult := codecfixture.RunCase(openJPEGRegistry, tc)
-			if openJPEGResult.Err != nil {
-				t.Fatalf("OpenJPEG RunCase() error = %v", openJPEGResult.Err)
+			for _, decoded := range []struct {
+				name   string
+				result codecfixture.Result
+			}{
+				{name: "pure-Go", result: pureGoResult},
+				{name: "OpenJPEG", result: openJPEGResult},
+			} {
+				if decoded.result.Err != nil {
+					t.Fatalf("%s RunCase() error = %v", decoded.name, decoded.result.Err)
+				}
+				frames := decoded.result.Frames
+				if frames.Rows != 2 || frames.Columns != 2 || len(frames.Data) != len(tc.ExpectedFrames) {
+					t.Fatalf("%s frames = %dx%d, count %d; want 2x2, count %d", decoded.name, frames.Columns, frames.Rows, len(frames.Data), len(tc.ExpectedFrames))
+				}
+				for i, frame := range frames.Data {
+					if len(frame) != len(tc.ExpectedFrames[i]) {
+						t.Fatalf("%s frame %d has %d bytes; want %d", decoded.name, i, len(frame), len(tc.ExpectedFrames[i]))
+					}
+				}
 			}
-			if pureGoResult.Err == nil &&
-				len(pureGoResult.Frames.Data) == 1 &&
-				bytesWithinTolerance(pureGoResult.Frames.Data[0], tc.ExpectedFrames[0], maxByteTolerance(1, tc.Tolerance)) {
-				t.Fatalf("pure-Go unexpectedly matched OpenJPEG-generated fixture; reassess fallback necessity")
+			for i, frame := range pureGoResult.Frames.Data {
+				if !bytesWithinTolerance(frame, openJPEGResult.Frames.Data[i], 1) {
+					t.Fatalf("frame %d decoders differ by more than one sample value", i)
+				}
 			}
 		})
 	}

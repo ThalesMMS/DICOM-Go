@@ -1,0 +1,901 @@
+{
+ "description": "Byte offset after reading selected tags (TestReaderSelectedTags).",
+ "entries": [
+  {
+   "file": "SC16BitsAllocated_8BitsStoredJ2K.dcm",
+   "offset": 752
+  },
+  {
+   "file": "SC16BitsAllocated_8BitsStoredJPEG.dcm",
+   "offset": 946
+  },
+  {
+   "file": "CT-MONO2-12-lomb-an2.acr",
+   "offset": 1222
+  },
+  {
+   "file": "LIBIDO-8-ACR_NEMA-Lena_128_128.acr",
+   "offset": 174
+  },
+  {
+   "file": "MR-MONO2-12-an2.acr",
+   "offset": 1858
+  },
+  {
+   "file": "SIEMENS_SOMATOM-12-ACR_NEMA-ZeroLengthUs.acr",
+   "offset": 5056
+  },
+  {
+   "file": "gdcm-ACR-LibIDO.acr",
+   "offset": 174
+  },
+  {
+   "file": "gdcm-MR-SIEMENS-16-2.acr",
+   "offset": 6044
+  },
+  {
+   "file": "libido1.0-vol.acr",
+   "offset": 162
+  },
+  {
+   "file": "test.acr",
+   "offset": 174
+  },
+  {
+   "file": "00191113.dcm",
+   "offset": 922
+  },
+  {
+   "file": "012345.002.050.dcm",
+   "offset": 9592
+  },
+  {
+   "file": "05115014-mr-siemens-avanto-syngo-with-palette-icone.dcm",
+   "offset": 41936
+  },
+  {
+   "file": "05148044-mr-siemens-avanto-syngo.dcm",
+   "offset": 55872
+  },
+  {
+   "file": "3E768EB7.dcm",
+   "offset": 3222
+  },
+  {
+   "file": "ACUSON-24-YBR_FULL-RLE-b.dcm",
+   "offset": 2020
+  },
+  {
+   "file": "ACUSON-24-YBR_FULL-RLE.dcm",
+   "offset": 1908
+  },
+  {
+   "file": "ALOKA_SSD-8-MONO2-RLE-SQ.dcm",
+   "offset": 1386
+  },
+  {
+   "file": "AMIInvalidPrivateDefinedLengthSQasUN.dcm",
+   "offset": 12732
+  },
+  {
+   "file": "BugGDCM2_UndefItemWrongVL.dcm",
+   "offset": 9562
+  },
+  {
+   "file": "CR-MONO1-10-chest.dcm",
+   "offset": 768
+  },
+  {
+   "file": "CT-MONO2-16-ankle.dcm",
+   "offset": 1140
+  },
+  {
+   "file": "CT-MONO2-16-brain.dcm",
+   "offset": 1668
+  },
+  {
+   "file": "CT-MONO2-16-chest.dcm",
+   "offset": 1626
+  },
+  {
+   "file": "CT-MONO2-16-ort.dcm",
+   "offset": 1666
+  },
+  {
+   "file": "CT-MONO2-8-abdo.dcm",
+   "offset": 788
+  },
+  {
+   "file": "CT-SIEMENS-Icone-With-PaletteColor.dcm",
+   "offset": 8150
+  },
+  {
+   "file": "CT-SIEMENS-MissingPixelDataInIconSQ.dcm",
+   "offset": 20496
+  },
+  {
+   "file": "CT_16b_signed-UsedBits13.dcm",
+   "offset": 2574
+  },
+  {
+   "file": "DCMTK_JPEGExt_12Bits.dcm",
+   "offset": 784
+  },
+  {
+   "file": "DMCPACS_ExplicitImplicit_BogusIOP.dcm",
+   "offset": 20018
+  },
+  {
+   "file": "DX_GE_FALCON_SNOWY-VOI.dcm",
+   "offset": 104002
+  },
+  {
+   "file": "DX_J2K_0Padding.dcm",
+   "offset": 1482
+  },
+  {
+   "file": "D_CLUNIE_CT1_J2KI.dcm",
+   "offset": 6584
+  },
+  {
+   "file": "D_CLUNIE_CT1_J2KR.dcm",
+   "offset": 6484
+  },
+  {
+   "file": "D_CLUNIE_CT1_JLSL.dcm",
+   "offset": 6452
+  },
+  {
+   "file": "D_CLUNIE_CT1_JLSN.dcm",
+   "offset": 6566
+  },
+  {
+   "file": "D_CLUNIE_CT1_JPLL.dcm",
+   "offset": 6456
+  },
+  {
+   "file": "D_CLUNIE_CT1_RLE.dcm",
+   "offset": 6390
+  },
+  {
+   "file": "D_CLUNIE_CT2_JPLL.dcm",
+   "offset": 1744
+  },
+  {
+   "file": "D_CLUNIE_CT2_RLE.dcm",
+   "offset": 1676
+  },
+  {
+   "file": "D_CLUNIE_MR1_JPLL.dcm",
+   "offset": 1750
+  },
+  {
+   "file": "D_CLUNIE_MR1_JPLY.dcm",
+   "offset": 1836
+  },
+  {
+   "file": "D_CLUNIE_MR1_RLE.dcm",
+   "offset": 1682
+  },
+  {
+   "file": "D_CLUNIE_MR2_JPLL.dcm",
+   "offset": 1946
+  },
+  {
+   "file": "D_CLUNIE_MR2_JPLY.dcm",
+   "offset": 2034
+  },
+  {
+   "file": "D_CLUNIE_MR2_RLE.dcm",
+   "offset": 1878
+  },
+  {
+   "file": "D_CLUNIE_MR3_JPLL.dcm",
+   "offset": 9570
+  },
+  {
+   "file": "D_CLUNIE_MR3_JPLY.dcm",
+   "offset": 9658
+  },
+  {
+   "file": "D_CLUNIE_MR3_RLE.dcm",
+   "offset": 9504
+  },
+  {
+   "file": "D_CLUNIE_MR4_JPLL.dcm",
+   "offset": 1968
+  },
+  {
+   "file": "D_CLUNIE_MR4_JPLY.dcm",
+   "offset": 2056
+  },
+  {
+   "file": "D_CLUNIE_MR4_RLE.dcm",
+   "offset": 1900
+  },
+  {
+   "file": "D_CLUNIE_NM1_JPLL.dcm",
+   "offset": 2890
+  },
+  {
+   "file": "D_CLUNIE_NM1_JPLY.dcm",
+   "offset": 2978
+  },
+  {
+   "file": "D_CLUNIE_NM1_RLE.dcm",
+   "offset": 2826
+  },
+  {
+   "file": "D_CLUNIE_RG1_JPLL.dcm",
+   "offset": 1858
+  },
+  {
+   "file": "D_CLUNIE_RG1_RLE.dcm",
+   "offset": 1794
+  },
+  {
+   "file": "D_CLUNIE_RG2_JPLL.dcm",
+   "offset": 1444
+  },
+  {
+   "file": "D_CLUNIE_RG2_JPLY.dcm",
+   "offset": 1532
+  },
+  {
+   "file": "D_CLUNIE_RG2_RLE.dcm",
+   "offset": 1368
+  },
+  {
+   "file": "D_CLUNIE_RG3_JPLL.dcm",
+   "offset": 1514
+  },
+  {
+   "file": "D_CLUNIE_RG3_JPLY.dcm",
+   "offset": 1602
+  },
+  {
+   "file": "D_CLUNIE_RG3_RLE.dcm",
+   "offset": 1432
+  },
+  {
+   "file": "D_CLUNIE_SC1_JPLY.dcm",
+   "offset": 1340
+  },
+  {
+   "file": "D_CLUNIE_SC1_RLE.dcm",
+   "offset": 1176
+  },
+  {
+   "file": "D_CLUNIE_US1_RLE.dcm",
+   "offset": 1306
+  },
+  {
+   "file": "D_CLUNIE_VL1_RLE.dcm",
+   "offset": 1188
+  },
+  {
+   "file": "D_CLUNIE_VL2_RLE.dcm",
+   "offset": 1186
+  },
+  {
+   "file": "D_CLUNIE_VL3_RLE.dcm",
+   "offset": 1198
+  },
+  {
+   "file": "D_CLUNIE_VL4_RLE.dcm",
+   "offset": 1180
+  },
+  {
+   "file": "D_CLUNIE_VL6_RLE.dcm",
+   "offset": 1198
+  },
+  {
+   "file": "D_CLUNIE_XA1_JPLL.dcm",
+   "offset": 1192
+  },
+  {
+   "file": "D_CLUNIE_XA1_JPLY.dcm",
+   "offset": 1280
+  },
+  {
+   "file": "D_CLUNIE_XA1_RLE.dcm",
+   "offset": 1116
+  },
+  {
+   "file": "DermaColorLossLess.dcm",
+   "offset": 928
+  },
+  {
+   "file": "ELSCINT1_JP2vsJ2K.dcm",
+   "offset": 1808
+  },
+  {
+   "file": "ELSCINT1_PMSCT_RLE1.dcm",
+   "offset": 67912
+  },
+  {
+   "file": "ExplicitVRforPublicElementsImplicitVRforShadowElements.dcm",
+   "offset": 9534
+  },
+  {
+   "file": "FUJI-10-MONO1-ACR_NEMA_2.dcm",
+   "offset": 854
+  },
+  {
+   "file": "GDCMJ2K_TextGBR.dcm",
+   "offset": 758
+  },
+  {
+   "file": "GE_CT_With_Private_compressed-icon.dcm",
+   "offset": 10798
+  },
+  {
+   "file": "GE_DLX-8-MONO2-Multiframe-Jpeg_Lossless.dcm",
+   "offset": 14126
+  },
+  {
+   "file": "GE_DLX-8-MONO2-Multiframe.dcm",
+   "offset": 4976
+  },
+  {
+   "file": "GE_DLX-8-MONO2-PrivateSyntax.dcm",
+   "offset": 2912
+  },
+  {
+   "file": "GE_GENESIS-16-MONO2-Uncompressed-UnusualVR.dcm",
+   "offset": 9654
+  },
+  {
+   "file": "GE_GENESIS-16-MONO2-WrongLengthItem.dcm",
+   "offset": 1922
+  },
+  {
+   "file": "GE_LOGIQBook-8-RGB-HugePreview.dcm",
+   "offset": 935596
+  },
+  {
+   "file": "GE_MR_0025xx1bProtocolDataBlock.dcm",
+   "offset": 11870
+  },
+  {
+   "file": "GE_RHAPSODE-16-MONO2-JPEG-Fragments.dcm",
+   "offset": 6456
+  },
+  {
+   "file": "IM-0001-0066.CommandTag00.dcm",
+   "offset": 3042
+  },
+  {
+   "file": "ITK_GDCM124_MultiframeSecondaryCaptureInvalid.dcm",
+   "offset": 1132
+  },
+  {
+   "file": "JDDICOM_Sample2-dcmdjpeg.dcm",
+   "offset": 836
+  },
+  {
+   "file": "JDDICOM_Sample2.dcm",
+   "offset": 822
+  },
+  {
+   "file": "JPEGDefinedLengthSequenceOfFragments.dcm",
+   "offset": 2862
+  },
+  {
+   "file": "JPEG_LossyYBR.dcm",
+   "offset": 2366
+  },
+  {
+   "file": "KODAK-12-MONO1-Odd_Terminated_Sequence.dcm",
+   "offset": 9126
+  },
+  {
+   "file": "KODAK_CompressedIcon.dcm",
+   "offset": 8634
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-JpegLossless.dcm",
+   "offset": 1932
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-RLE.dcm",
+   "offset": 1930
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-Uncompressed.dcm",
+   "offset": 1930
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-JpegLossless.dcm",
+   "offset": 1924
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-JpegLossy.dcm",
+   "offset": 1924
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-Uncompressed.dcm",
+   "offset": 1922
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-JpegLossy.dcm",
+   "offset": 1932
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-RLE.dcm",
+   "offset": 1930
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-Uncompressed.dcm",
+   "offset": 1930
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-PAL-RLE.dcm",
+   "offset": 3526
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-PAL-Uncompressed.dcm",
+   "offset": 3526
+  },
+  {
+   "file": "LIBIDO-24-ACR_NEMA-Rectangle.dcm",
+   "offset": 174
+  },
+  {
+   "file": "LJPEG_BuginGDCM12.dcm",
+   "offset": 2236
+  },
+  {
+   "file": "MARCONI_MxTWin-12-MONO2-JpegLossless-ZeroLengthSQ.dcm",
+   "offset": 1904
+  },
+  {
+   "file": "MAROTECH_CT_JP2Lossy.dcm",
+   "offset": 33844
+  },
+  {
+   "file": "MEDILABInvalidCP246_EVRLESQasUN.dcm",
+   "offset": 19162
+  },
+  {
+   "file": "MR-Brucker-CineTagging-NonSquarePixels.dcm",
+   "offset": 1530
+  },
+  {
+   "file": "MR-MONO2-12-shoulder.dcm",
+   "offset": 1568
+  },
+  {
+   "file": "MR-MONO2-16-head.dcm",
+   "offset": 1796
+  },
+  {
+   "file": "MR-MONO2-8-16x-heart.dcm",
+   "offset": 908
+  },
+  {
+   "file": "MR-SIEMENS-DICOM-WithOverlays-extracted-overlays.dcm",
+   "offset": 42600
+  },
+  {
+   "file": "MR-SIEMENS-DICOM-WithOverlays.dcm",
+   "offset": 42404
+  },
+  {
+   "file": "MR16BitsAllocated_8BitsStored.dcm",
+   "offset": 928
+  },
+  {
+   "file": "MR_ELSCINT1_00e1_1042_SQ_feff_00e0_Item.dcm",
+   "offset": 7696
+  },
+  {
+   "file": "MR_GE_with_Private_Compressed_Icon_0009_1110.dcm",
+   "offset": 20700
+  },
+  {
+   "file": "MR_Philips-Intera_BreaksNOSHADOW.dcm",
+   "offset": 7618
+  },
+  {
+   "file": "MR_Philips_Intera_No_PrivateSequenceImplicitVR.dcm",
+   "offset": 9500
+  },
+  {
+   "file": "MR_Philips_Intera_PrivateSequenceExplicitVR_in_SQ_2001_e05f_item_wrong_lgt_use_NOSHADOWSEQ.dcm",
+   "offset": 7512
+  },
+  {
+   "file": "MR_Philips_Intera_PrivateSequenceImplicitVR.dcm",
+   "offset": 7018
+  },
+  {
+   "file": "MR_Philips_Intera_SwitchIndianess_noLgtSQItem_in_trueLgtSeq.dcm",
+   "offset": 9264
+  },
+  {
+   "file": "MR_SIEMENS_forceLoad29-1010_29-1020.dcm",
+   "offset": 60556
+  },
+  {
+   "file": "MR_Spectroscopy_SIEMENS_OF.dcm",
+   "offset": 2102344
+  },
+  {
+   "file": "NM-MONO2-16-13x-heart.dcm",
+   "offset": 1222
+  },
+  {
+   "file": "NM-PAL-16-PixRep1.dcm",
+   "offset": 4456
+  },
+  {
+   "file": "NM_Kakadu44_SOTmarkerincons.dcm",
+   "offset": 1564
+  },
+  {
+   "file": "OT-MONO2-8-a7.dcm",
+   "offset": 430
+  },
+  {
+   "file": "OT-PAL-8-face.dcm",
+   "offset": 1646
+  },
+  {
+   "file": "OsirixFake16BitsStoredFakeSpacing.dcm",
+   "offset": 1306
+  },
+  {
+   "file": "PHILIPS_Brilliance_ExtraBytesInOverlay.dcm",
+   "offset": 34538
+  },
+  {
+   "file": "PHILIPS_GDCM12xBug.dcm",
+   "offset": 9330
+  },
+  {
+   "file": "PHILIPS_GDCM12xBug2.dcm",
+   "offset": 9662
+  },
+  {
+   "file": "PHILIPS_Gyroscan-12-Jpeg_Extended_Process_2_4.dcm",
+   "offset": 5944
+  },
+  {
+   "file": "PHILIPS_Gyroscan-12-MONO2-Jpeg_Lossless.dcm",
+   "offset": 15366
+  },
+  {
+   "file": "PHILIPS_Gyroscan-8-MONO2-Odd_Sequence.dcm",
+   "offset": 6576
+  },
+  {
+   "file": "PHILIPS_Intera-16-MONO2-Uncompress.dcm",
+   "offset": 9264
+  },
+  {
+   "file": "PICKER-16-MONO2-Nested_icon.dcm",
+   "offset": 18220
+  },
+  {
+   "file": "PICKER-16-MONO2-No_DicomV3_Preamble.dcm",
+   "offset": 1398
+  },
+  {
+   "file": "PhilipsInteraSeqTermInvLen.dcm",
+   "offset": 7440
+  },
+  {
+   "file": "PrivateGEImplicitVRBigEndianTransferSyntax16Bits.dcm",
+   "offset": 14964
+  },
+  {
+   "file": "RadBWLossLess.dcm",
+   "offset": 930
+  },
+  {
+   "file": "SIEMENS-12-Jpeg_Process_2_4-Lossy-a.dcm",
+   "offset": 3032
+  },
+  {
+   "file": "SIEMENS-MR-RGB-16Bits.dcm",
+   "offset": 49840
+  },
+  {
+   "file": "SIEMENS_CSA2.dcm",
+   "offset": 104340
+  },
+  {
+   "file": "SIEMENS_ImageLocationUN.dcm",
+   "offset": 6336
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-ACR_NEMA_2-Modern.dcm",
+   "offset": 6044
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq0.dcm",
+   "offset": 6422
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq1.dcm",
+   "offset": 6422
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq2.dcm",
+   "offset": 6422
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq3.dcm",
+   "offset": 6422
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-GDCM12-VRUN.dcm",
+   "offset": 5158
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-Uncompressed.dcm",
+   "offset": 5148
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-VRUN.dcm",
+   "offset": 5290
+  },
+  {
+   "file": "SIEMENS_MOSAIC_12BitsStored-16BitsJPEG.dcm",
+   "offset": 105714
+  },
+  {
+   "file": "SIEMENS_Sonata-12-MONO2-SQ.dcm",
+   "offset": 51792
+  },
+  {
+   "file": "SIEMENS_Sonata-16-MONO2-Value_Multiplicity.dcm",
+   "offset": 25674
+  },
+  {
+   "file": "SignedShortLosslessBug.dcm",
+   "offset": 1772
+  },
+  {
+   "file": "TG18-CH-2k-01.dcm",
+   "offset": 2300
+  },
+  {
+   "file": "THERALYS-12-MONO2-Uncompressed-Even_Length_Tag.dcm",
+   "offset": 1831
+  },
+  {
+   "file": "TOSHIBA_J2K_OpenJPEGv2Regression.dcm",
+   "offset": 2350
+  },
+  {
+   "file": "TOSHIBA_J2K_SIZ0_PixRep1.dcm",
+   "offset": 2334
+  },
+  {
+   "file": "TOSHIBA_J2K_SIZ1_PixRep0.dcm",
+   "offset": 2350
+  },
+  {
+   "file": "TOSHIBA_MRT150-16-MONO2-ACR_NEMA_2.dcm",
+   "offset": 1122
+  },
+  {
+   "file": "TheralysGDCM120Bug.dcm",
+   "offset": 8438
+  },
+  {
+   "file": "US-GE-4AICL142.dcm",
+   "offset": 14060
+  },
+  {
+   "file": "US-IRAD-NoPreambleStartWith0003.dcm",
+   "offset": 3322
+  },
+  {
+   "file": "US-IRAD-NoPreambleStartWith0005.dcm",
+   "offset": 2482
+  },
+  {
+   "file": "US-MONO2-8-8x-execho.dcm",
+   "offset": 964
+  },
+  {
+   "file": "US-PAL-8-10x-echo.dcm",
+   "offset": 2416
+  },
+  {
+   "file": "US-RGB-8-epicard.dcm",
+   "offset": 1000
+  },
+  {
+   "file": "US-RGB-8-esopecho.dcm",
+   "offset": 892
+  },
+  {
+   "file": "UnexpectedSequenceDelimiterInFixedLengthSequence.dcm",
+   "offset": 4178
+  },
+  {
+   "file": "XA-MONO2-8-12x-catheter.dcm",
+   "offset": 994
+  },
+  {
+   "file": "fffc0000UN.dcm",
+   "offset": 1142
+  },
+  {
+   "file": "gdcm-CR-DCMTK-16-NonSamplePerPix.dcm",
+   "offset": 728
+  },
+  {
+   "file": "gdcm-JPEG-Extended.dcm",
+   "offset": 2934
+  },
+  {
+   "file": "gdcm-JPEG-LossLess3a.dcm",
+   "offset": 2528
+  },
+  {
+   "file": "gdcm-JPEG-LossLessThoravision.dcm",
+   "offset": 3132
+  },
+  {
+   "file": "gdcm-MR-PHILIPS-16-Multi-Seq.dcm",
+   "offset": 35834
+  },
+  {
+   "file": "gdcm-MR-PHILIPS-16-NonSquarePixels.dcm",
+   "offset": 4998
+  },
+  {
+   "file": "gdcm-US-ALOKA-16.dcm",
+   "offset": 258732
+  },
+  {
+   "file": "rle16loo.dcm",
+   "offset": 394214
+  },
+  {
+   "file": "rle16sti.dcm",
+   "offset": 394158
+  },
+  {
+   "file": "simpleImageWithIcon.dcm",
+   "offset": 17466
+  },
+  {
+   "file": "undefined_length_un_vr.dcm",
+   "offset": 9156
+  },
+  {
+   "file": "JPEGInvalidSecondFrag.dcm",
+   "offset": 4788
+  },
+  {
+   "file": "lena512_rot90.j2k.dcm",
+   "offset": 756
+  },
+  {
+   "file": "ELSCINT1_PMSCT_RLE1_priv.dcm",
+   "offset": 298002
+  },
+  {
+   "file": "00191113.dcm",
+   "offset": 922
+  },
+  {
+   "file": "SIEMENS_SYNGO-12-MONO2-LUTWrongLength512.dcm",
+   "offset": 48714
+  },
+  {
+   "file": "JPEGNote_empty.dcm",
+   "offset": 704
+  },
+  {
+   "file": "JPEGLS_CharLS_10742.dcm",
+   "offset": 748
+  },
+  {
+   "file": "JPEGLosslessYBR_FULL_422.dcm",
+   "offset": 802
+  },
+  {
+   "file": "JPEGNote_missing.dcm",
+   "offset": 596
+  },
+  {
+   "file": "JPEGNote_bogus.dcm",
+   "offset": 722
+  },
+  {
+   "file": "RLEDebianBug816607Orig.dcm",
+   "offset": 768
+  },
+  {
+   "file": "IllegalGroup2ImplicitTS.dcm",
+   "offset": 2264
+  },
+  {
+   "file": "JPEG_LS_InvalidEscapeSequence_COM_padding.dcm",
+   "offset": 752
+  },
+  {
+   "file": "LengthOfItemLarger.dcm",
+   "offset": 12748
+  },
+  {
+   "file": "GE_MR_0025xx1bProtocolDataBlockXML.dcm",
+   "offset": 6462
+  },
+  {
+   "file": "EmptyIcon_Bug417.dcm",
+   "offset": 4470
+  },
+  {
+   "file": "EnhancedWithIPPPerFrameIOPShared.dcm",
+   "offset": 23212
+  },
+  {
+   "file": "FUJI-ffff-MONO1-J2K.dcm",
+   "offset": 2040
+  },
+  {
+   "file": "JPEGLosslessSeNonZero.dcm",
+   "offset": 748
+  },
+  {
+   "file": "US-YBR_FULL_422-EVRLE.dcm",
+   "offset": 1542
+  },
+  {
+   "file": "Osirix10vs8BitsStored.dcm",
+   "offset": 73966
+  },
+  {
+   "file": "Bug_Siemens_PrivateIconNoItem.dcm",
+   "offset": 12966
+  },
+  {
+   "file": "HardcopyColor_YBR_RCT_J2K_PC1.dcm",
+   "offset": 2614
+  },
+  {
+   "file": "PET-GE-dicomwrite-PixelDataSQUNv2.dcm",
+   "offset": 7706
+  },
+  {
+   "file": "MEDILABValidCP246_EVRLESQasOB.dcm",
+   "offset": 18996
+  },
+  {
+   "file": "dicomdir_Acusson_WithPrivate_WithSR",
+   "offset": 3826
+  },
+  {
+   "file": "dicomdir_Pms_WithVisit_WithPrivate_WithStudyComponents",
+   "offset": 37218
+  },
+  {
+   "file": "dicomdir_Pms_With_heavy_embedded_sequence",
+   "offset": 3003414
+  },
+  {
+   "file": "dicomdir_With_embedded_icons",
+   "offset": 7125212
+  },
+  {
+   "file": "DICOMDIR",
+   "offset": 1112434
+  },
+  {
+   "file": "DICOMDIR-Philips-EasyVision-4200-Entries",
+   "offset": 1297194
+  },
+  {
+   "file": "DICOMDIR_MR_B_VA12A",
+   "offset": 14853880
+  }
+ ]
+}

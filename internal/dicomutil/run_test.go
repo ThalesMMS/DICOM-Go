@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	stdjpeg "image/jpeg"
@@ -169,6 +170,38 @@ func TestRunUsageErrors(t *testing.T) {
 				t.Fatalf("stderr = %q, want substring %q", got, tt.wantStderr)
 			}
 		})
+	}
+}
+
+type closeFailWriter struct {
+	bytes.Buffer
+	closeErr error
+	closed   bool
+}
+
+func (w *closeFailWriter) Close() error {
+	w.closed = true
+	return w.closeErr
+}
+
+func TestEncodePNGReportsCloseError(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 2, 2))
+	closeErr := errors.New("synthetic close failure")
+	w := &closeFailWriter{closeErr: closeErr}
+	if err := encodePNG(w, img); !errors.Is(err, closeErr) || !w.closed || w.Len() == 0 {
+		t.Fatalf("err=%v closed=%v bytes=%d", err, w.closed, w.Len())
+	}
+	w = &closeFailWriter{}
+	if err := encodePNG(w, img); err != nil || !w.closed {
+		t.Fatalf("err=%v closed=%v", err, w.closed)
+	}
+	if _, err := png.Decode(bytes.NewReader(w.Bytes())); err != nil {
+		t.Fatal(err)
+	}
+	// An encode failure wins over the Close result and still closes.
+	w = &closeFailWriter{closeErr: closeErr}
+	if err := encodePNG(w, image.NewGray(image.Rect(0, 0, 0, 0))); err == nil || errors.Is(err, closeErr) || !w.closed {
+		t.Fatalf("empty image err=%v closed=%v", err, w.closed)
 	}
 }
 

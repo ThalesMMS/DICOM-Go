@@ -78,10 +78,10 @@ func (a *archive) selectInstances(ctx context.Context, level string, query *obje
 	}
 	var keys []core.Element
 	for _, elem := range query.Elements() {
-		if elem.Tag() == tagLevel || elem.Tag() == core.NewTag(0x0008, 0x0005) {
+		if elem.Tag() == tagLevel {
 			continue
 		}
-		if !allowed[elem.Tag()] {
+		if elem.Tag() != core.NewTag(0x0008, 0x0005) && !allowed[elem.Tag()] {
 			return nil, errQuery
 		}
 		keys = append(keys, elem)
@@ -99,11 +99,10 @@ func (a *archive) selectInstances(ctx context.Context, level string, query *obje
 			}
 		}
 	}
-	charset, err := query.CharacterSet()
-	if err != nil {
+	if _, err := query.CharacterSet(); err != nil {
 		return nil, errQuery
 	}
-	filter := object.FromElementsWithTextOptions(keys, std.Dictionary, object.TextOptions{FallbackCharacterSet: charset})
+	filter := object.FromElements(keys, std.Dictionary)
 	items, err := a.snapshot(ctx)
 	if err != nil {
 		return nil, err

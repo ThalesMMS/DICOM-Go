@@ -208,8 +208,17 @@ func writePNG(path string, img image.Image) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	return png.Encode(f, img)
+	return encodePNG(f, img)
+}
+
+// encodePNG writes img to w and closes it. A failed Close is reported, since
+// it can be the first sign that buffered data never reached the disk.
+func encodePNG(w io.WriteCloser, img image.Image) error {
+	err := png.Encode(w, img)
+	if closeErr := w.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func endiannessForSyntax(syntax transfer.Syntax) string {

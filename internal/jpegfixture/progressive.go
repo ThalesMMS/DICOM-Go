@@ -1,0 +1,81 @@
+package jpegfixture
+
+// Progressive holds one independently generated 8-bit Huffman progressive
+// (SOF2) JPEG interchange stream and libjpeg-turbo's decoding of it.
+type Progressive struct {
+	// Name identifies the vector.
+	Name string
+	// Rows, Columns and Components describe the image.
+	Rows, Columns, Components int
+	// SpectralSelectionOnly reports that every scan has Ah=Al=0 (Processes
+	// 6 & 8); otherwise the stream uses successive approximation too
+	// (Processes 10 & 12).
+	SpectralSelectionOnly bool
+	// JPEGBase64 is the JPEG stream.
+	JPEGBase64 string
+	// DjpegBase64 is the interleaved 8-bit samples libjpeg-turbo djpeg -pnm
+	// writes for JPEGBase64 (the PNM payload without its header), not output
+	// produced by this module.
+	DjpegBase64 string
+}
+
+// ProgressiveSample returns the source sample at (x, y, component) the
+// progressive vectors were encoded from: a 23x13 image whose size is not a
+// multiple of the MCU, so edge blocks are covered.
+func ProgressiveSample(x, y, component, components int) byte {
+	if components == 1 {
+		return byte((x*11 + y*17 + (x*y)%7*9) % 256)
+	}
+	switch component {
+	case 0:
+		return byte((x*11 + y*3) % 256)
+	case 1:
+		return byte((y*19 + x*2) % 256)
+	default:
+		return byte(((x+y)*7 + 60) % 256)
+	}
+}
+
+// ProgressiveVectors returns the progressive vectors. They were generated
+// from ProgressiveSample with libjpeg-turbo 3.2.0:
+//
+//	cjpeg -quality 90 -grayscale -progressive input.pgm         (GrayFullProgression)
+//	cjpeg -quality 90 -progressive input.ppm                    (ColorFullProgression, 2x2 luma sampling)
+//	cjpeg -quality 90 -grayscale -scans gray.txt input.pgm      (GraySpectralSelection)
+//	cjpeg -quality 90 -scans color.txt input.ppm                (ColorSpectralSelection)
+//
+// with the spectral-selection-only scan scripts
+//
+//	gray.txt:  0: 0 0 0 0; 0: 1 5 0 0; 0: 6 63 0 0;
+//	color.txt: 0,1,2: 0 0 0 0; 0: 1 9 0 0; 0: 10 63 0 0; 1: 1 63 0 0; 2: 1 63 0 0;
+//
+// and the references decoded with djpeg -pnm. SHA-256 of the JPEG streams:
+//
+//	GrayFullProgression 3796f42699b733d82e5880d1e4f5a175eb925ae5b55a3de15c11a11c38b32da9
+//	ColorFullProgression 185245624f2475a1b8952b90c21d360c182c866a87e8ff5f29617ad2ab8b063b
+//	GraySpectralSelection 874d83610d021f341693f616e1917e8fb364fdf123d9db0fccba698da33735bd
+//	ColorSpectralSelection a5dc77bd2cb4c024394e5cd6cee5bd1974dcc0a1dc643357ac148b14de93442c
+func ProgressiveVectors() []Progressive {
+	return []Progressive{
+		{
+			Name: "GrayFullProgression", Rows: 13, Columns: 23, Components: 1, SpectralSelectionOnly: false,
+			JPEGBase64:  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/wgALCAANABcBAREA/8QAFgABAQEAAAAAAAAAAAAAAAAABwYF/9oACAEBAAAAAc5PGK+Faf/EABoQAAIDAQEAAAAAAAAAAAAAAAMFAgQGART/2gAIAQEAAQUCTZkUAXA0s2sm8atLepeFWq6lL3EVJwk5/8QAIxAAAgAEBgMBAAAAAAAAAAAAAQIDBBExABITISJRI0FxYf/aAAgBAQAGPwIcUzZfuI8zMIiqijTqw8z78R7rt17/AA4OlPNLQmBTweLjmLA3NDYbGwud8SLy8OGEeM402FRWDHue65V6pyvUEakxFiR4ruEZ4hzE27xBBsxO3yuP/8QAHxABAQEAAgAHAAAAAAAAAAAAAREhADFBUWFxgaHw/9oACAEBAAE/IdTl5BKn1P3oLGVFFYco8RwFdcHEYfRLoC3pSA0oIDW4NuRpIMEN8Gq8E4zCqVyHx7Q4oggwgc//2gAIAQEAAAAQk//EABwQAQEAAgIDAAAAAAAAAAAAAAERADEhQYGh0f/aAAgBAQABPxDhuX6vtPid3CKTcEl1k22srCogdNIjBXHVBjaUNiNqrlDEAHgreZaYAFXgjUYjkYGwkOtPrbV//9k=",
+			DjpegBase64: "AAwTHy00RExaX2x8hoyeoq66zM/e5e4XHjxRYnOIXHGCoanB2aTD1+r0CSb1FCI+XHNZdJVujK/EocLavdv0D/kOKAgkLl9/aYxul4KlybXgve7O8RoAKQ00GT9HcmCSh7GnjcGs3sb+69sR+yodSDUwVVORhn+xrqeh193NB/z49h8kG1BLTDd0ZaeorLOyqrrz9O37//kARUVAQFBCUJJ3hYuYoqu5w9HY6fD3CBIaIzdAQ1ddaImYsMbU7gTS5/4RKTROIzRIYnGAnm5+lb/R8c3rAesIGDQeN1U3U3CMaIejgKGsyvffAOwU9iBGMVEyX0Vli3WciKePt73p1QX+JBoHMClPQnxfWYR6oZu+r6XOygf/+DErGBpTTEaAdG1hn5WQwsm3t+w=",
+		},
+		{
+			Name: "ColorFullProgression", Rows: 13, Columns: 23, Components: 3, SpectralSelectionOnly: false,
+			JPEGBase64:  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wgARCAANABcDASIAAhEBAxEB/8QAFwAAAwEAAAAAAAAAAAAAAAAAAAYHBf/EABUBAQEAAAAAAAAAAAAAAAAAAAUG/9oADAMBAAIQAxAAAAGZPFE31g0YWAem/8QAGxAAAgMAAwAAAAAAAAAAAAAABAUAAgMGExX/2gAIAQEAAQUCDRQNFPNoEMGuzhnWqXOue1tl/8QAIBEAAAUEAwEAAAAAAAAAAAAAAQIDBTEABBFRBhQhMv/aAAgBAwEBPwFoeFVjlTJI+U8OvILC569uSADPzM71iv/EACARAAEDAgcAAAAAAAAAAAAAAAECAwQABRESFSExQaL/2gAIAQIBAT8BjylurCE8mtbujhJjMDJ1idz6Ff/EACIQAAAFAwQDAAAAAAAAAAAAAAABAgMREhMyBBUhUSIzgv/aAAgBAQAGPwLEYhTziTpT0CDmqt3aI8ZieYDaNvglHPu6+R//xAAeEAABBAEFAAAAAAAAAAAAAAABABEhMVFBkaHB8f/aAAgBAQABPyGjoqEMMSdrmSy8ZBzs6GzHKdeJQi2jKxsv/9oADAMBAAIAAwAAABAD7//EABsRAQACAwEBAAAAAAAAAAAAAAERIQAxUUGB/9oACAEDAQE/ECPVwGpVAJa32sgNC4VY9PT6nP/EABkRAQEBAQEBAAAAAAAAAAAAAAERMSEAUf/aAAgBAgEBPxAB6gB9VhvN8oKpEUDlhIWwSzdh/8QAHBABAAIDAQEBAAAAAAAAAAAAAQARITFB8WGR/9oACAEBAAE/EIzxpjSIBVAAKXl/BnCjy9WVKz06r7G8yxWAMjotb041X//Z",
+			DjpegBase64: "AAQ8AwU+EgZEHwlKJgxVLBBbNBVlPBZtTRZ7XxOAew6FhhKBhRx7hyR/jyaNmyaZrCOkvCWwwSS7ySjG0i3P2C7N5znQAhNHCxdLGxhPJxlWLxxeNh9lPyNtSSR0VCWBZSOHfCCNiCONiSuJjjCQmTKfpDOptDSvvDCz0DjI2DvS1jfS50Lc6UDRBiZPDyhRHCpXKS1dMi9mPjBrSzNxUzR3WjiCZDmIdTmRgTyZhkGekkGopD+5rkC9tku9ukW41EnI30zR5Ezc71Pi81HbCjdUEjlaHztgKz5oND9tQUFzUUJ5WUR9X0uGZk6MdE+Vf1CeiFKolVO0plLCrlTGtV3FwV/G0lbI31jR6WHf5F/f8nD2EEtdGU1jJ05tMlB2OlJ+RFSFVFWLXFeNYV+QamCUemGahmKgjmWrl2m0n2y7qW7CsGfByXLR1mnS5nDe63fk54P11I3/El1iG19oKWB0NGJ8OmWFRWeKVWiSXWqUYnKUa3OXfHOei3SolXaynXi7pX6/rYDFv4LSzILZ2H/d5IXf34HP15jeamWnFXBnHHNtKXR3M3h/OXyFRX2KWHySYH+UZIiYa4qcfIqljIqym4a/qofJtYvLv4zPx5HcyI7b15bm5aDh8anP1Lu3N3xDF4RvHoh0K4l7NY2BPZCISpGNXZCUZZKYaJmdb5yifZyujJu6nJnGq5rQuZzSw53WzKTjzaPi27Dm2rDI8cStsbxwJJwXGJh3Ipt6MJyCO5+FRKCLUaKRZKGZbaShcKuperCyg6u3jazAm7PNprXUrrPTvrjey7rn07ri1LzM5tOzz8Zdr91JJLISGat+Iq6BMq+HP7GNSbKTVrKZZbShbraqcrmzebm4kcLJlcDJmsXMosjTrMfcvcnjzMjh39HR7+Gyz81mxuY7V60AKcsVHL6FJsCKNcKOQcOVTMSgV8WoYsmubMu3etHIf8rGmM/Sm83OndfLqd7YtdnpyNnr3d3b7uSv49dP1eQlt/8mT88ALd4SIs+PKtOSNtaWQtedTtepV9qwYd60auC9cNrDj+ndlNvVpuXdqOvat+Tn1tb/99f//93a+8GB/9RM/uQ1z/9XWcghTtdBKt6XL+OaNeqbPu2iTOyuVu6zYvOybfS5ffzPeerMm/rmnu7hsPTp1+b/fjCopSKWnA4muR4AzCUAqzAAHQsAACEAACEL",
+		},
+		{
+			Name: "GraySpectralSelection", Rows: 13, Columns: 23, Components: 1, SpectralSelectionOnly: true,
+			JPEGBase64:  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/wgALCAANABcBAREA/8QAFgABAQEAAAAAAAAAAAAAAAAACAcG/9oACAEBAAAAAM8nRjX4U0v/xAAaEAADAAMBAAAAAAAAAAAAAAAFBgcBBAgD/9oACAEBAAEFAI3zIK0wDgFS+bJjv3Kq1Bt6kuJaby5SSMvBKUxwIR8//8QAJhAAAgIBBAECBwAAAAAAAAAAAgMBBAUGERITMSFBIiMkQoGRof/aAAgBAQAGPwBH0lMrJVo+0GGZmH7CRmfxt77/AA53UmoKFGvWoV0BjidYSIZi8ZMkKiTHm0WT1RzKV8BBvLeRU2YcWL13a03i7C3UAjB74oZqDadZSwgBzBS7YlK5rZJytQgTGcmSWh7un8fj00LuauoHG2ldiyfhM4Hz3GMibO06leRAZXCwKwJdxMWxJZPUWXyGdyty6ilZvZJ52HPEOqBIzYREUwMAMbz6QO3jjA4dDB4qssYRLEI4DKwYMbR7eJ/nmd5n/9k=",
+			DjpegBase64: "AAwTHy00RExaX2x8hoyeoq66zM/e5e4XHjxRYnOIXHGCoanB2aTD1+r0CSb1FCI+XHNZdJVujK/EocLavdv0D/kOKAgkLl9/aYxul4KlybXgve7O8RoAKQ00GT9HcmCSh7GnjcGs3sb+69sR+yodSDUwVVORhn+xrqeh193NB/z49h8kG1BLTDd0ZaeorLOyqrrz9O37//kARUVAQFBCUJJ3hYuYoqu5w9HY6fD3CBIaIzdAQ1ddaImYsMbU7gTS5/4RKTROIzRIYnGAnm5+lb/R8c3rAesIGDQeN1U3U3CMaIejgKGsyvffAOwU9iBGMVEyX0Vli3WciKePt73p1QX+JBoHMClPQnxfWYR6oZu+r6XOygf/+DErGBpTTEaAdG1hn5WQwsm3t+w=",
+		},
+		{
+			Name: "ColorSpectralSelection", Rows: 13, Columns: 23, Components: 3, SpectralSelectionOnly: true,
+			JPEGBase64:  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wgARCAANABcDASIAAhEBAxEB/8QAFwAAAwEAAAAAAAAAAAAAAAAAAAcIBv/EABUBAQEAAAAAAAAAAAAAAAAAAAYH/9oADAMBAAIQAxAAAACZXhRG+WB0cLEIUz//xAAfEAABAwMFAAAAAAAAAAAAAAAHBAUGAiQyAQgVISP/2gAIAQEAAQkAh4Kwt4eCsLesbIYRG1Dy5J4eOWzz6mNLYKB05yrjjTv2TK2hsQ6j7//EACgQAAEDAgQEBwAAAAAAAAAAAAECAxEAEgQTFDEFISKiFSQyQWGRof/aAAgBAQAKPwDtr8pzSYe0KDKApZKlBIABInmfoGu2vFNBk+UzcnMveQ367VRF87HaPmlNtYp1bhCONwkJbA6SNP1SVpMn3QOW0f/EAB8RAQACAQQDAQAAAAAAAAAAAAECEQMEBQYxABIhUf/aAAgBAgEBPwDb90zarNDBiLlJAP1Wjv534825RqJSntugi4bSLOR7SD5dGWNC3Ql133R//8QAJBEAAQEHAwUAAAAAAAAAAAAAAQIAAwQFBhExBxIhFSJRUoH/2gAIAQMBAT8ApCsIqMfuoZwCVrISBi5JAAueM+eGrCqtQJDM+nS9wAEJTuuXZ7iN2Sr1Kft2/9k=",
+			DjpegBase64: "AAQ8AwU+EgZEHwlKJgxVLBBbNBVlPBZtTRZ7XxOAew6FhhKBhRx7hyR/jyaNmyaZrCOkvCWwwSS7ySjG0i3P2C7N5znQAhNHCxdLGxhPJxlWLxxeNh9lPyNtSSR0VCWBZSOHfCCNiCONiSuJjjCQmTKfpDOptDSvvDCz0DjI2DvS1jfS50Lc6UDRBiZPDyhRHCpXKS1dMi9mPjBrSzNxUzR3WjiCZDmIdTmRgTyZhkGekkGopD+5rkC9tku9ukW41EnI30zR5Ezc71Pi81HbCjdUEjlaHztgKz5oND9tQUFzUUJ5WUR9X0uGZk6MdE+Vf1CeiFKolVO0plLCrlTGtV3FwV/G0lbI31jR6WHf5F/f8nD2EEtdGU1jJ05tMlB2OlJ+RFSFVFWLXFeNYV+QamCUemGahmKgjmWrl2m0n2y7qW7CsGfByXLR1mnS5nDe63fk54P11I3/El1iG19oKWB0NGJ8OmWFRWeKVWiSXWqUYnKUa3OXfHOei3SolXaynXi7pX6/rYDFv4LSzILZ2H/d5IXf34HP15jeamWnFXBnHHNtKXR3M3h/OXyFRX2KWHySYH+UZIiYa4qcfIqljIqym4a/qofJtYvLv4zPx5HcyI7b15bm5aDh8anP1Lu3N3xDF4RvHoh0K4l7NY2BPZCISpGNXZCUZZKYaJmdb5yifZyujJu6nJnGq5rQuZzSw53WzKTjzaPi27Dm2rDI8cStsbxwJJwXGJh3Ipt6MJyCO5+FRKCLUaKRZKGZbaShcKuperCyg6u3jazAm7PNprXUrrPTvrjey7rn07ri1LzM5tOzz8Zdr91JJLISGat+Iq6BMq+HP7GNSbKTVrKZZbShbraqcrmzebm4kcLJlcDJmsXMosjTrMfcvcnjzMjh39HR7+Gyz81mxuY7V60AKcsVHL6FJsCKNcKOQcOVTMSgV8WoYsmubMu3etHIf8rGmM/Sm83OndfLqd7YtdnpyNnr3d3b7uSv49dP1eQlt/8mT88ALd4SIs+PKtOSNtaWQtedTtepV9qwYd60auC9cNrDj+ndlNvVpuXdqOvat+Tn1tb/99f//93a+8GB/9RM/uQ1z/9XWcghTtdBKt6XL+OaNeqbPu2iTOyuVu6zYvOybfS5ffzPeerMm/rmnu7hsPTp1+b/fjCopSKWnA4muR4AzCUAqzAAHQsAACEAACEL",
+		},
+	}
+}

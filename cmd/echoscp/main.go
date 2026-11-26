@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/internal/clidiag"
+	"github.com/ThalesMMS/dicom-go/internal/dimsecli"
 	"github.com/ThalesMMS/dicom-go/net/audit"
 	"github.com/ThalesMMS/dicom-go/net/dimse"
 	"github.com/ThalesMMS/dicom-go/net/ul"
@@ -43,6 +45,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 var errUsage = errors.New("usage error")
 
 type options struct {
+	conn                dimsecli.ConnectionFlags
 	port                int
 	aeTitle             string
 	single              bool
@@ -51,6 +54,7 @@ type options struct {
 	queueDepth          int
 	enqueueTimeout      time.Duration
 	auditSink           audit.Sink
+	tls                 dimsecli.TLSFlags
 }
 
 func parseArgs(args []string, stderr io.Writer) (options, error) {
@@ -61,8 +65,10 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 
 	fs := flag.NewFlagSet("echoscp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.IntVar(&opts.port, "port", opts.port, "listen TCP port")
-	fs.StringVar(&opts.aeTitle, "ae-title", opts.aeTitle, "SCP AE title")
+	// Negotiation runs on the accept loop, so it is bounded: a peer that
+	// connects and sends nothing must not hold the listener.
+	opts.conn.RegisterWithDefaults(fs, dimsecli.ConnectionDefaults{Host: "127.0.0.1", Port: opts.port, CalledAE: opts.aeTitle, Timeout: ul.DefaultServerNegotiationTimeout, Listener: true})
+	opts.conn.Alias(fs, "ae-title", "called")
 	fs.BoolVar(&opts.single, "single", false, "handle one association and exit")
 	fs.IntVar(&opts.maxAssociations, "max-associations", 0, "maximum active plus queued associations when queueing is enabled (0 unbounded)")
 	fs.IntVar(&opts.maxActiveOperations, "max-active-operations", 0, "maximum active association handlers when queueing is enabled (0 derives from -max-associations or 1)")
@@ -79,12 +85,23 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		}
 		return opts, errUsage
 	}
+	if err := opts.conn.Validate(); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	opts.port, opts.aeTitle, opts.tls = opts.conn.Port, opts.conn.CalledAE, opts.conn.TLS
+
 	if fs.NArg() != 0 {
 		fs.Usage()
 		return opts, errUsage
 	}
 	if opts.port < 0 || opts.port > 65535 {
 		_, _ = fmt.Fprintln(stderr, "-port must be between 0 and 65535")
+		fs.Usage()
+		return opts, errUsage
+	}
+	if err := opts.tls.Validate(); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
 		fs.Usage()
 		return opts, errUsage
 	}
@@ -122,24 +139,49 @@ func runServer(opts options, stdout, stderr io.Writer) error {
 		defer func() { _ = queue.Close(context.Background()) }()
 	}
 
+	tlsConfig, err := opts.tls.Config()
+	if err != nil {
+		return err
+	}
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(opts.port))
+	if opts.conn.Listener() {
+		address = opts.conn.Address()
+	}
 	listener, err := ul.Listen(ul.ListenOptions{Address: address})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
 	_, _ = fmt.Fprintf(stdout, "echoscp listening on %s\n", listener.Addr())
+	return serve(listener, opts, tlsConfig, queue, stdout, stderr)
+}
 
+// serve accepts and negotiates associations one at a time until the listener
+// is closed. A connection that fails negotiation, within the -timeout limit,
+// is reported and closed; with -single it ends the server.
+func serve(listener *ul.Listener, opts options, tlsConfig *tls.Config, queue *dimse.ServiceQueue, stdout, stderr io.Writer) error {
+	acceptOptions := opts.conn.ApplyListenerOptions(ul.AcceptOptions{
+		AETitle:                   opts.aeTitle,
+		SupportedAbstractSyntaxes: []string{dimse.VerificationSOPClassUID},
+		SupportedTransferSyntaxes: []string{ul.ImplicitVRLittleEndian},
+		TLSConfig:                 tlsConfig,
+	})
 	for {
-		assoc, err := listener.AcceptAssociation(ul.AcceptOptions{
-			AETitle:                   opts.aeTitle,
-			SupportedAbstractSyntaxes: []string{dimse.VerificationSOPClassUID},
-			SupportedTransferSyntaxes: []string{ul.ImplicitVRLittleEndian},
+		// An accept failure that leaves the listener usable, such as
+		// running out of descriptors, is reported and retried after a
+		// pause; any other ends the server.
+		conn, err := listener.AcceptContext(context.Background(), func(err error) {
+			clidiag.Fprintln(stderr, "echoscp", fmt.Errorf("accept failed, retrying: %w", err))
 		})
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return nil
 			}
+			return err
+		}
+		assoc, err := ul.Accept(conn, acceptOptions)
+		if err != nil {
+			_ = conn.Close()
 			if opts.single {
 				return err
 			}

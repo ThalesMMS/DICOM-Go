@@ -1,0 +1,28 @@
+File: frame-access-bench-base.exe
+Type: cpu
+Time: 2026-11-15 23:53:53 -03
+Duration: 4.69s, Total samples = 4.58s (97.61%)
+Showing nodes accounting for 4.08s, 89.08% of 4.58s total
+Dropped 88 nodes (cum <= 0.02s)
+Showing top 20 nodes out of 102
+      flat  flat%   sum%        cum   cum%
+     0.70s 15.28% 15.28%      0.72s 15.72%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).updateRegular
+     0.66s 14.41% 29.69%      2.69s 58.73%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.decodeRegular
+     0.53s 11.57% 41.27%      3.40s 74.24%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.decodeLine
+     0.38s  8.30% 49.56%      0.63s 13.76%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.readLimitedGolomb
+     0.23s  5.02% 54.59%      0.25s  5.46%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.emitNativeRow
+     0.17s  3.71% 58.30%      0.17s  3.71%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*bitReader).fill
+     0.17s  3.71% 62.01%      0.17s  3.71%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).quantize (inline)
+     0.16s  3.49% 65.50%      0.16s  3.49%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.predict (inline)
+     0.15s  3.28% 68.78%      0.15s  3.28%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.clampInt (inline)
+     0.15s  3.28% 72.05%      0.16s  3.49%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.contextIndex (inline)
+     0.13s  2.84% 74.89%      0.15s  3.28%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).reconstruct (inline)
+     0.11s  2.40% 77.29%      0.16s  3.49%  runtime.scanblock
+     0.10s  2.18% 79.48%      0.10s  2.18%  runtime.cgocall
+     0.09s  1.97% 81.44%      0.09s  1.97%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*bitReader).consume (inline)
+     0.08s  1.75% 83.19%      0.08s  1.75%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.(*locoState).unmapRegular (inline)
+     0.08s  1.75% 84.93%      0.09s  1.97%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.readEntropy
+     0.08s  1.75% 86.68%      0.08s  1.75%  runtime.memmove
+     0.06s  1.31% 87.99%      0.06s  1.31%  runtime.memclrNoHeapPointers
+     0.03s  0.66% 88.65%      0.03s  0.66%  runtime.findObject
+     0.02s  0.44% 89.08%      0.11s  2.40%  github.com/ThalesMMS/dicom-go/pixeldata/jpegls.splitScansWithHP

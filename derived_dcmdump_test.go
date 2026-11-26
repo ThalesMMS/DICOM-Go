@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/gsps"
+	"github.com/ThalesMMS/dicom-go/internal/dcmtkoracle"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/render"
 	"github.com/ThalesMMS/dicom-go/rtstruct"
@@ -50,7 +51,7 @@ func Test_DerivedObjects_are_accepted_by_dcmdump_when_available(t *testing.T) {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			output, err := exec.CommandContext(ctx, dcmdump, path).CombinedOutput()
+			output, err := dcmtkoracle.Command(ctx, t, dcmtkoracle.Accepted, dcmdump, path).CombinedOutput()
 			cancel()
 			if err != nil {
 				t.Fatalf("dcmdump %s: %v\n%s", path, err, string(output))
@@ -81,7 +82,7 @@ func testDcmdumpSEG() *seg.Document {
 		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.700.4",
 		Rows:                2,
 		Columns:             2,
-		Segments:            []seg.Segment{{Number: 1, Label: "Target", AlgorithmType: seg.AlgorithmManual}},
+		Segments:            []seg.Segment{{Number: 0, Label: "Background"}, {Number: 1, Label: "Target", AlgorithmType: seg.AlgorithmManual}},
 		Frames: []seg.Frame{{
 			SegmentNumber: 1,
 			LabelMap:      []uint16{0, 1, 0, 0},
@@ -98,17 +99,21 @@ func testDcmdumpSR() *sr.MeasurementReport {
 		Groups: []sr.MeasurementGroup{{
 			Tracking: sr.TrackingIdentifier{UID: "1.2.826.0.1.3680043.9.7433.701.2", Identifier: "Lesion 1"},
 			ReferencedSegment: sr.SegmentReference{
-				SOPClassUID:    seg.SegmentationStorage,
-				SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.701.3",
-				SegmentNumber:  1,
+				StudyInstanceUID:  "1.2.826.0.1.3680043.9.7433.701.5",
+				SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.701.6",
+				SOPClassUID:       seg.SegmentationStorage,
+				SOPInstanceUID:    "1.2.826.0.1.3680043.9.7433.701.3",
+				SegmentNumber:     1,
 			},
 			Measurements: []sr.ReportMeasurement{{
 				ConceptName: sr.CodedEntry{CodeValue: "121206", CodingSchemeDesignator: "DCM", CodeMeaning: "Distance"},
 				Value:       12.5,
 				Units:       sr.CodedEntry{CodeValue: "mm", CodingSchemeDesignator: "UCUM", CodeMeaning: "millimeter"},
 				Image: sr.ImageReference{
-					SOPClassUID:    "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.701.4",
+					StudyInstanceUID:  "1.2.826.0.1.3680043.9.7433.701.5",
+					SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.701.7",
+					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
+					SOPInstanceUID:    "1.2.826.0.1.3680043.9.7433.701.4",
 				},
 				Spatial: sr.SpatialReference{
 					GraphicType: sr.GraphicTypePoint3D,

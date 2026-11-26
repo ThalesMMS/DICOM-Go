@@ -1,0 +1,20 @@
+{
+ "description": "Explicit VR Little Endian data sets whose elements carry wrong but valid VRs (DCMTK tparser wrongExplicitVRinDataset). 'default' uses the length field size of the VR written in the file; 'dict_length' uses the size of the dictionary VR. Without dictionary preferences DCMTK reads 'default' and rejects 'dict_length', keeping the written VRs PN, UT, ST, CS, UN and LO.",
+ "transfer_syntax": "1.2.840.10008.1.2.1",
+ "default": "06000600504e040041424344060008005554000004000000454647481000100053540400494a4b4c10004000435302004f2010000510554e000004000000303831352800e07f4c4f040034323432",
+ "dict_length": "06000600504e040041424344060008005554000004000000454647481000100053540400494a4b4c10004000435302004f2010000510554e0400303831352800e07f4c4f00000400000034323432",
+ "expected_vrs_as_written": {
+  "(0006,0006)": "PN",
+  "(0006,0008)": "UT",
+  "(0010,0010)": "ST",
+  "(0010,1005)": "UN",
+  "(0028,7FE0)": "LO"
+ },
+ "expected_vrs_dictionary_preferred": {
+  "(0006,0006)": "PN",
+  "(0006,0008)": "UT",
+  "(0010,0010)": "PN",
+  "(0010,1005)": "PN",
+  "(0028,7FE0)": "UR"
+ }
+}

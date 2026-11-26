@@ -1,0 +1,243 @@
+{
+ "description": "DCMTK getUncompressedFrameSize() and decodedBitsAllocated() vectors (tfrmsiz.cc). Each frame size row gives the Image Pixel attributes in effect, the Pixel Data length in 16-bit words when set, the encoding (native or RLE Lossless, with whether DCMTK's RLE decoder was registered) and the size in bytes, or null when DCMTK refuses the computation.",
+ "frame_sizes": [
+  {
+   "line": 66,
+   "encoding": "native",
+   "attributes": {
+    "BitsAllocated": 8,
+    "BitsStored": 8,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "RGB",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": null,
+   "frame_size": 196608
+  },
+  {
+   "line": 71,
+   "encoding": "native",
+   "attributes": {
+    "BitsAllocated": 12,
+    "BitsStored": 12,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "RGB",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": null,
+   "frame_size": 294912
+  },
+  {
+   "line": 76,
+   "encoding": "native",
+   "attributes": {
+    "BitsAllocated": 16,
+    "BitsStored": 12,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "RGB",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": null,
+   "frame_size": 393216
+  },
+  {
+   "line": 81,
+   "encoding": "native",
+   "attributes": {
+    "BitsAllocated": 32,
+    "BitsStored": 32,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "RGB",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": null,
+   "frame_size": 786432
+  },
+  {
+   "line": 90,
+   "encoding": "native",
+   "attributes": {
+    "BitsAllocated": 8,
+    "BitsStored": 8,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "YBR_FULL_422",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": 98304,
+   "frame_size": 196608
+  },
+  {
+   "line": 95,
+   "encoding": "native",
+   "attributes": {
+    "BitsAllocated": 8,
+    "BitsStored": 8,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "YBR_FULL_422",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": 65536,
+   "frame_size": 131072
+  },
+  {
+   "line": 111,
+   "encoding": "rle_lossless",
+   "attributes": {
+    "BitsAllocated": 8,
+    "BitsStored": 8,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "RGB",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": 65536,
+   "decoder_registered": false,
+   "frame_size": null
+  },
+  {
+   "line": 117,
+   "encoding": "rle_lossless",
+   "attributes": {
+    "BitsAllocated": 8,
+    "BitsStored": 8,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "RGB",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": 65536,
+   "decoder_registered": true,
+   "frame_size": 196608
+  },
+  {
+   "line": 123,
+   "encoding": "rle_lossless",
+   "attributes": {
+    "BitsAllocated": 12,
+    "BitsStored": 12,
+    "Columns": 256,
+    "HighBit": 7,
+    "PhotometricInterpretation": "RGB",
+    "Rows": 256,
+    "SamplesPerPixel": 3
+   },
+   "pixel_data_words": 65536,
+   "decoder_registered": true,
+   "frame_size": null
+  }
+ ],
+ "decoded_bits_allocated": [
+  {
+   "line": 55,
+   "encoding": "native",
+   "bits_allocated": 8,
+   "bits_stored": 9,
+   "decoded_bits_allocated": 0
+  },
+  {
+   "line": 56,
+   "encoding": "native",
+   "bits_allocated": 5,
+   "bits_stored": 1,
+   "decoded_bits_allocated": 5
+  },
+  {
+   "line": 57,
+   "encoding": "native",
+   "bits_allocated": 7,
+   "bits_stored": 1,
+   "decoded_bits_allocated": 7
+  },
+  {
+   "line": 58,
+   "encoding": "native",
+   "bits_allocated": 8,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 8
+  },
+  {
+   "line": 59,
+   "encoding": "native",
+   "bits_allocated": 9,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 9
+  },
+  {
+   "line": 60,
+   "encoding": "native",
+   "bits_allocated": 13,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 13
+  },
+  {
+   "line": 61,
+   "encoding": "native",
+   "bits_allocated": 23,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 23
+  },
+  {
+   "line": 62,
+   "encoding": "native",
+   "bits_allocated": 255,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 255
+  },
+  {
+   "line": 127,
+   "encoding": "rle_lossless",
+   "bits_allocated": 8,
+   "bits_stored": 9,
+   "decoded_bits_allocated": 0
+  },
+  {
+   "line": 128,
+   "encoding": "rle_lossless",
+   "bits_allocated": 5,
+   "bits_stored": 1,
+   "decoded_bits_allocated": 0
+  },
+  {
+   "line": 129,
+   "encoding": "rle_lossless",
+   "bits_allocated": 8,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 8
+  },
+  {
+   "line": 130,
+   "encoding": "rle_lossless",
+   "bits_allocated": 13,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 0
+  },
+  {
+   "line": 131,
+   "encoding": "rle_lossless",
+   "bits_allocated": 16,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 16
+  },
+  {
+   "line": 132,
+   "encoding": "rle_lossless",
+   "bits_allocated": 64,
+   "bits_stored": 8,
+   "decoded_bits_allocated": 64
+  }
+ ]
+}

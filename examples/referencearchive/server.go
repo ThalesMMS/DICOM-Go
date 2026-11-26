@@ -10,6 +10,23 @@ import (
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
+// archiveTransferSyntaxUIDs accepts native Little Endian data sets and the
+// encapsulated syntaxes the library preserves opaquely. Stored instances keep
+// their syntax; retrieval proposes only that syntax, so nothing is decoded or
+// transcoded.
+func archiveTransferSyntaxUIDs() []string {
+	return transfer.ReceiveTransferSyntaxUIDs(transfer.ExplicitVRLittleEndian, transfer.ImplicitVRLittleEndian)
+}
+
+func archiveTransferSyntax(uid string) bool {
+	for _, supported := range archiveTransferSyntaxUIDs() {
+		if uid == supported {
+			return true
+		}
+	}
+	return false
+}
+
 var storageClasses = []string{"1.2.840.10008.5.1.4.1.1.7", "1.2.840.10008.5.1.4.1.1.2", "1.2.840.10008.5.1.4.1.1.4"}
 
 type archiveServices struct {
@@ -19,6 +36,14 @@ type archiveServices struct {
 }
 
 func newArchiveServer(listener *ul.Listener, a *archive, aeTitle string, destinations map[string]string, observe ...func(error)) (*ul.AssociationServer, error) {
+	return newArchiveServerWithCommitment(listener, a, aeTitle, destinations, nil, observe...)
+}
+
+// newArchiveServerWithCommitment also serves Storage Commitment Push Model as
+// the committing SCP when commitment is non-nil. Only then is the SOP Class
+// negotiated, and the called AE must be the archive's, because results are
+// delivered from that AE on a separate association.
+func newArchiveServerWithCommitment(listener *ul.Listener, a *archive, aeTitle string, destinations map[string]string, commitment *archiveCommitment, observe ...func(error)) (*ul.AssociationServer, error) {
 	allowed := make(map[string]string, len(destinations))
 	for ae, address := range destinations {
 		allowed[ae] = address
@@ -29,12 +54,21 @@ func newArchiveServer(listener *ul.Listener, a *archive, aeTitle string, destina
 	for _, sop := range storageClasses {
 		roles = append(roles, ul.RoleSelectionItem{SopClassUID: sop, SCURole: true, SCPRole: true})
 	}
+	if commitment != nil {
+		sops = append(sops, dimse.StorageCommitmentPushModelSOPClassUID)
+	}
 	return ul.NewAssociationServer(listener, ul.AssociationServerOptions{
 		MaxConcurrentAssociations: 4, SaturationPolicy: ul.SaturationReject,
-		Accept: ul.AcceptOptions{AETitle: aeTitle, SupportedAbstractSyntaxes: sops, SupportedTransferSyntaxes: []string{transfer.ExplicitVRLittleEndian.UID, transfer.ImplicitVRLittleEndian.UID}, RoleSelections: roles, MaxPDU: 64 << 10, NegotiationTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, ReadProgressTimeout: 10 * time.Second, WriteProgressTimeout: 10 * time.Second, ReleaseTimeout: 2 * time.Second},
+		Accept: ul.AcceptOptions{AETitle: aeTitle, SupportedAbstractSyntaxes: sops, SupportedTransferSyntaxes: archiveTransferSyntaxUIDs(), PreferProposedTransferSyntaxOrder: true, RoleSelections: roles, MaxPDU: 64 << 10, NegotiationTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, ReadProgressTimeout: 10 * time.Second, WriteProgressTimeout: 10 * time.Second, ReleaseTimeout: 2 * time.Second, RequireMatchingCalledAE: commitment != nil},
 		Handler: func(ctx context.Context, assoc *ul.Association) error {
 			defer assoc.Close()
+			var normalized *dimse.NormalizedSCPOptions
+			if commitment != nil {
+				options := commitment.workflow.NormalizedOptions(assoc)
+				normalized = &options
+			}
 			err := dimse.ServeAssociation(ctx, assoc, dimse.AssociationSCPOptions{
+				NormalizedSCP:     normalized,
 				StorageSCPOptions: dimse.StorageSCPOptions{StoreHandler: a, MaxDataSetBytes: a.limits.instanceBytes, MaxElementBytes: 1 << 20, MaxElements: 10000, MaxSequenceDepth: 32, MaxPixelDataBytes: a.limits.instanceBytes, MaxPixelDataFragments: 10000},
 				Controls:          dimse.SCPControls{CommandProgressTimeout: 10 * time.Second, DataSetProgressTimeout: 10 * time.Second, OperationTimeout: 30 * time.Second, CancelGrace: 2 * time.Second},
 				CFindHandler:      a, CGetHandler: a, CMoveHandler: services,

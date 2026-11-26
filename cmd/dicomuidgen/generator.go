@@ -13,6 +13,7 @@ import (
 
 type templateData struct {
 	Entries    []parsedEntry
+	Keywords   []keywordIndexEntry
 	SourcePath string
 }
 
@@ -28,47 +29,47 @@ package uid
 
 import "strings"
 
-var Dictionary Registry = table{
-	byUID:     map[string]Entry{},
-	byKeyword: map[string]Entry{},
-	byType:    map[Type][]Entry{},
-}
+var Dictionary Registry = table{}
 
-type table struct {
-	byUID     map[string]Entry
-	byKeyword map[string]Entry
-	byType    map[Type][]Entry
-}
+type table struct{}
 
 func (t table) ByUID(uid string) (Entry, bool) {
-	e, ok := t.byUID[NormalizeUID(uid)]
-	return e, ok
+    key := NormalizeUID(uid)
+    lo, hi := 0, len(entries)
+    for lo < hi {
+        mid := int(uint(lo+hi) >> 1)
+        if entries[mid].UID <= key { lo = mid+1 } else { hi = mid }
+    }
+    if lo > 0 && entries[lo-1].UID == key { return entries[lo-1], true }
+    return Entry{}, false
 }
 
 func (t table) ByKeyword(keyword string) (Entry, bool) {
-	e, ok := t.byKeyword[strings.ToLower(keyword)]
-	return e, ok
+    key := strings.ToLower(keyword)
+    lo, hi := 0, len(keywordIndex)
+    for lo < hi {
+        mid := int(uint(lo+hi) >> 1)
+        if keywordIndex[mid].key < key { lo = mid+1 } else { hi = mid }
+    }
+    if lo < len(keywordIndex) && keywordIndex[lo].key == key { return entries[keywordIndex[lo].entry], true }
+    return Entry{}, false
 }
 
-// EntriesByType returns a stable snapshot of the registered entries for one UID type.
+// EntriesByType returns a stable snapshot in generated UID order.
 func EntriesByType(typ Type) []Entry {
-	t := Dictionary.(table)
-	entries := t.byType[typ]
-	out := make([]Entry, len(entries))
-	copy(out, entries)
-	return out
+    _ = Dictionary.(table) // Preserve the package-local registry contract.
+    count := 0
+    for _, e := range entries { if e.Type == typ { count++ } }
+    out := make([]Entry, count)
+    next := 0
+    for _, e := range entries { if e.Type == typ { out[next] = e; next++ } }
+    return out
 }
 
-func init() {
-	t := Dictionary.(table)
-	for _, e := range entries {
-		t.byUID[e.UID] = e
-		key := strings.ToLower(e.Keyword)
-		if _, ok := t.byKeyword[key]; !ok {
-			t.byKeyword[key] = e
-		}
-		t.byType[e.Type] = append(t.byType[e.Type], e)
-	}
+var keywordIndex = [...]struct { key string; entry int }{
+{{- range .Keywords }}
+    {key: {{printf "%q" .Key}}, entry: {{.Index}}},
+{{- end }}
 }
 
 var entries = []Entry{
@@ -77,6 +78,25 @@ var entries = []Entry{
 {{- end }}
 }
 `))
+
+type keywordIndexEntry struct {
+	Key   string
+	Index int
+}
+
+func generateKeywordIndex(entries []parsedEntry) []keywordIndexEntry {
+	seen := make(map[string]bool, len(entries))
+	out := make([]keywordIndexEntry, 0, len(entries))
+	for i, entry := range entries {
+		key := strings.ToLower(entry.Keyword)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, keywordIndexEntry{Key: key, Index: i})
+		}
+	}
+	slices.SortFunc(out, func(a, b keywordIndexEntry) int { return strings.Compare(a.Key, b.Key) })
+	return out
+}
 
 func generateSource(inputPath string, entries []parsedEntry) ([]byte, error) {
 	sortedEntries := slices.Clone(entries)
@@ -99,6 +119,7 @@ func generateSource(inputPath string, entries []parsedEntry) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := outputTemplate.Execute(&buf, templateData{
 		Entries:    sortedEntries,
+		Keywords:   generateKeywordIndex(sortedEntries),
 		SourcePath: displaySourcePath(inputPath),
 	}); err != nil {
 		return nil, fmt.Errorf("render generated source: %w", err)

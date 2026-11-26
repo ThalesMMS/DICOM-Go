@@ -1,0 +1,2855 @@
+{
+ "description": "MD5 of the decoded pixel buffer GDCM produces for each gdcmData image (TestImageReader).",
+ "entries": [
+  {
+   "file": "00191113.dcm",
+   "md5": "bfff320d1b058e91b4819aa4560c16f7",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 4,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "012345.002.050.dcm",
+   "md5": "d594a5e2fde12f32b6633ca859b4d4a6",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "05115014-mr-siemens-avanto-syngo-with-palette-icone.dcm",
+   "md5": "c68cf1c4ae59903930e334498389ea88",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "05119865-mr-siemens-avanto-syngo.dcm",
+   "md5": "a9d455ca171294fe56d29bf714f4f845",
+   "gdcm_dimensions": {
+    "columns": 448,
+    "rows": 336,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "05148044-mr-siemens-avanto-syngo.dcm",
+   "md5": "9acdd9969f5d0584ddd67e994f00b7c7",
+   "gdcm_dimensions": {
+    "columns": 192,
+    "rows": 192,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "3E768EB7.dcm",
+   "md5": "c3541091a3794753065022f4defc4343",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "ACUSON-24-YBR_FULL_422-Jpeg_Baseline_1.dcm",
+   "md5": "6a796be399aefebc1479e924f6051d69",
+   "gdcm_dimensions": {
+    "columns": 768,
+    "rows": 576,
+    "frames": 40,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "ACUSON-24-YBR_FULL-RLE-b.dcm",
+   "md5": "22b32f23beb118f7b64c13bf04bc2809",
+   "gdcm_dimensions": {
+    "columns": 384,
+    "rows": 288,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "ACUSON-24-YBR_FULL-RLE.dcm",
+   "md5": "435c66f7e113d11d226d500294aae865",
+   "gdcm_dimensions": {
+    "columns": 768,
+    "rows": 576,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "ACUSON-8-YBR_FULL-JPEG-TrailingInfo.dcm",
+   "md5": "e36350b0711fd34eb86c386164554679",
+   "gdcm_dimensions": {
+    "columns": 768,
+    "rows": 576,
+    "frames": 25,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "ALOKA_SSD-8-MONO2-RLE-SQ.dcm",
+   "md5": "7d8858e3419392b7f39a99fdc8028064",
+   "gdcm_dimensions": {
+    "columns": 608,
+    "rows": 420,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CR-MONO1-10-chest.dcm",
+   "md5": "1f772b4849727a9750931b60d920436f",
+   "gdcm_dimensions": {
+    "columns": 440,
+    "rows": 440,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT_16b_signed-UsedBits13.dcm",
+   "md5": "8c8b9d99ad12fb4d231182d4fc14c042",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT-MONO2-12-lomb-an2.acr",
+   "md5": "160c0b4432cfab8d36531b5a3693ff3e",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT-MONO2-16-ankle.dcm",
+   "md5": "90cca03ada67c6a1fcb48cfcc2b52eeb",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT-MONO2-16-brain.dcm",
+   "md5": "a6cf43e05087b6c31644c1d360701ff2",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT-MONO2-16-chest.dcm",
+   "md5": "78bb9ea4b746ff2aa5559be567f95030",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 400,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT-MONO2-16-ort.dcm",
+   "md5": "dcb3aa1defd85d93d69d445e3e9b3074",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT-MONO2-8-abdo.dcm",
+   "md5": "86d3e09a5858aa3844cb3be1b822a069",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT_Phillips_JPEG2K_Decompr_Problem.dcm",
+   "md5": "3695d167c298646b877efccaeff92682",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 614,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "CT-SIEMENS-Icone-With-PaletteColor.dcm",
+   "md5": "3372195a35448b76daee682d23502090",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_CT1_J2KI.dcm",
+   "md5": "05bbdbcc81081791f6f9f8a1ffa648c8",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_CT1_J2KR.dcm",
+   "md5": "f3a3d0e739e5f4fbeddd1452b81f4d89",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_CT1_JPLL.dcm",
+   "md5": "f3a3d0e739e5f4fbeddd1452b81f4d89",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_CT1_RLE.dcm",
+   "md5": "f3a3d0e739e5f4fbeddd1452b81f4d89",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_CT2_JPLL.dcm",
+   "md5": "2e389ddbfc1b29d55c52c97e7f2c6f9c",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_CT2_RLE.dcm",
+   "md5": "2e389ddbfc1b29d55c52c97e7f2c6f9c",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MG1_JPLL.dcm",
+   "md5": "d9b97ad9199d429960123dcc1e74bdbc",
+   "gdcm_dimensions": {
+    "columns": 3064,
+    "rows": 4664,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MG1_JPLY.dcm",
+   "md5": "02742062fcad004500d73d7c61b9b9e6",
+   "gdcm_dimensions": {
+    "columns": 3064,
+    "rows": 4664,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MG1_RLE.dcm",
+   "md5": "d9b97ad9199d429960123dcc1e74bdbc",
+   "gdcm_dimensions": {
+    "columns": 3064,
+    "rows": 4664,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR1_JPLL.dcm",
+   "md5": "7b7424e6115931c371f3c94c2f5d32d9",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR1_JPLY.dcm",
+   "md5": "2824e914ecae250a755a8a0bb1a7d4b1",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR1_RLE.dcm",
+   "md5": "7b7424e6115931c371f3c94c2f5d32d9",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR2_JPLL.dcm",
+   "md5": "a70676f0e60a58f55a5ac517ff662e7e",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR2_JPLY.dcm",
+   "md5": "981510df3a57e98141c7d192b45bd93f",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR2_RLE.dcm",
+   "md5": "a70676f0e60a58f55a5ac517ff662e7e",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR3_JPLL.dcm",
+   "md5": "fb03254fad02d2330d404225c3ea9b4e",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR3_JPLY.dcm",
+   "md5": "d7009808a147f59a9bdf58d5c5924ef2",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR3_RLE.dcm",
+   "md5": "fb03254fad02d2330d404225c3ea9b4e",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR4_JPLL.dcm",
+   "md5": "14fa2ae9f63742af6944edd4a61145e8",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR4_JPLY.dcm",
+   "md5": "a33ad864b49ae7daa59cfaabdf751976",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_MR4_RLE.dcm",
+   "md5": "14fa2ae9f63742af6944edd4a61145e8",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_NM1_JPLL.dcm",
+   "md5": "6b5c1eff0ef65e36b0565f96507e96fd",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_NM1_JPLY.dcm",
+   "md5": "812050a7fc53b5735f7740b60969cb6b",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_NM1_RLE.dcm",
+   "md5": "6b5c1eff0ef65e36b0565f96507e96fd",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG1_JPLL.dcm",
+   "md5": "ae141f6fb91f63769a6adc572a942fb9",
+   "gdcm_dimensions": {
+    "columns": 1841,
+    "rows": 1955,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG1_RLE.dcm",
+   "md5": "ae141f6fb91f63769a6adc572a942fb9",
+   "gdcm_dimensions": {
+    "columns": 1841,
+    "rows": 1955,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG2_JPLL.dcm",
+   "md5": "06900ee4323a91b7f5ffab8655e3c845",
+   "gdcm_dimensions": {
+    "columns": 1760,
+    "rows": 2140,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG2_JPLY.dcm",
+   "md5": "27fa50d4cf6b31baa669e9746ce10f63",
+   "gdcm_dimensions": {
+    "columns": 1760,
+    "rows": 2140,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG2_RLE.dcm",
+   "md5": "06900ee4323a91b7f5ffab8655e3c845",
+   "gdcm_dimensions": {
+    "columns": 1760,
+    "rows": 2140,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG3_JPLL.dcm",
+   "md5": "e7c857ef7e6a2c81498297a072a0332e",
+   "gdcm_dimensions": {
+    "columns": 1760,
+    "rows": 1760,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG3_JPLY.dcm",
+   "md5": "cc2968949ffbb6548288ffde7e5202e4",
+   "gdcm_dimensions": {
+    "columns": 1760,
+    "rows": 1760,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_RG3_RLE.dcm",
+   "md5": "e7c857ef7e6a2c81498297a072a0332e",
+   "gdcm_dimensions": {
+    "columns": 1760,
+    "rows": 1760,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_SC1_JPLL.dcm",
+   "md5": "bd0cccbfd8db465c0af306ba0f482d72",
+   "gdcm_dimensions": {
+    "columns": 2048,
+    "rows": 2487,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_SC1_JPLY.dcm",
+   "md5": "994a5abb70d3f5968672ce4970a9d4da",
+   "gdcm_dimensions": {
+    "columns": 2048,
+    "rows": 2487,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_SC1_RLE.dcm",
+   "md5": "bd0cccbfd8db465c0af306ba0f482d72",
+   "gdcm_dimensions": {
+    "columns": 2048,
+    "rows": 2487,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_US1_RLE.dcm",
+   "md5": "eb52dce9eed5ad677364baadf6144ac4",
+   "gdcm_dimensions": {
+    "columns": 640,
+    "rows": 480,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "D_CLUNIE_VL1_RLE.dcm",
+   "md5": "b07e34ec35ba1be62ee7d4a404cf0b90",
+   "gdcm_dimensions": {
+    "columns": 756,
+    "rows": 486,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "D_CLUNIE_VL2_RLE.dcm",
+   "md5": "d215c88125359d34474a741d793c2215",
+   "gdcm_dimensions": {
+    "columns": 756,
+    "rows": 486,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "D_CLUNIE_VL3_RLE.dcm",
+   "md5": "65cd359ea4c6c13ca89b906215a4b762",
+   "gdcm_dimensions": {
+    "columns": 756,
+    "rows": 486,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "D_CLUNIE_VL4_RLE.dcm",
+   "md5": "e2fdf24d2c03dd0991b4f4e9d6e84ed6",
+   "gdcm_dimensions": {
+    "columns": 2226,
+    "rows": 1868,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "D_CLUNIE_VL5_RLE.dcm",
+   "md5": "0ed86ef35d1fb443e1b63c28afe84bd0",
+   "gdcm_dimensions": {
+    "columns": 2670,
+    "rows": 3340,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "D_CLUNIE_VL6_RLE.dcm",
+   "md5": "b825c0ed35c7c896fb707c14b534c233",
+   "gdcm_dimensions": {
+    "columns": 756,
+    "rows": 486,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "D_CLUNIE_XA1_JPLL.dcm",
+   "md5": "6111657e6b01ec7b243d63f5dec6ec48",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_XA1_JPLY.dcm",
+   "md5": "51af0d83fe795f9c9544c20d0bbac11c",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "D_CLUNIE_XA1_RLE.dcm",
+   "md5": "6111657e6b01ec7b243d63f5dec6ec48",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "DermaColorLossLess.dcm",
+   "md5": "b4f442047a209a98af015c89b4a3c4ed",
+   "gdcm_dimensions": {
+    "columns": 117,
+    "rows": 181,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "ExplicitVRforPublicElementsImplicitVRforShadowElements.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "FLAIR-wrong-group-length.dcm",
+   "md5": "6b92115ec7a394c4aaad74e88d7dbc98",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "FUJI-10-MONO1-ACR_NEMA_2.dcm",
+   "md5": "da2415a1e58b4ca2e588d0de18274f60",
+   "gdcm_dimensions": {
+    "columns": 1670,
+    "rows": 2010,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-ACR-LibIDO.acr",
+   "md5": "59d9851ca0f214d57fdfd6a8c13bc91c",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 301,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-CR-DCMTK-16-NonSamplePerPix.dcm",
+   "md5": "73f20916abaea83abebe9135c365d81a",
+   "gdcm_dimensions": {
+    "columns": 750,
+    "rows": 750,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-JPEG-Extended-Allready_present.dcm",
+   "md5": "f2c026beea9da0a78404f1299c4628bb",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-JPEG-Extended.dcm",
+   "md5": "f2c026beea9da0a78404f1299c4628bb",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-JPEG-LossLess3a.dcm",
+   "md5": "ad67e448e8923c34f1e019c3395e616c",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-JPEG-LossLessThoravision.dcm",
+   "md5": "c15c1e18a0c41970fbded48b20e834a1",
+   "gdcm_dimensions": {
+    "columns": 1876,
+    "rows": 2076,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-MR-PHILIPS-16-Multi-Seq.dcm",
+   "md5": "ad85be428c08ab4166347ef04bda9637",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 128,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-MR-PHILIPS-16-NonSquarePixels.dcm",
+   "md5": "2f7f9ef80b49111c5a7cfdb60a97f523",
+   "gdcm_dimensions": {
+    "columns": 160,
+    "rows": 64,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-MR-SIEMENS-16-2.acr",
+   "md5": "864e2c5d6acf5a371fe9eaa7ee0dcf5f",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "gdcm-US-ALOKA-16.dcm",
+   "md5": "f85ff02a143c426edc4b2f6b9a175305",
+   "gdcm_dimensions": {
+    "columns": 640,
+    "rows": 480,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "GE_CT_With_Private_compressed-icon.dcm",
+   "md5": "80527e9c17a4a3d12d408e9a354f37f9",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "GE_DLX-8-MONO2-Multiframe-Jpeg_Lossless.dcm",
+   "md5": "b8bcbccd17b76a0f8e3d4c342f855f9f",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 67,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "GE_DLX-8-MONO2-Multiframe.dcm",
+   "md5": "71e4ea61df4f7ada2955799c91f93e74",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 56,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "GE_DLX-8-MONO2-PrivateSyntax.dcm",
+   "md5": "51c998d3474c069b5703e98313258a1e",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 54,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "GE_GENESIS-16-MONO2-Uncompressed-UnusualVR.dcm",
+   "md5": "8ac7f7891fb4506e2cd3ae2f0f7e9f46",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "GE_GENESIS-16-MONO2-WrongLengthItem.dcm",
+   "md5": "1497fb9d7467b1eb36d5618e254aac76",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "GE_LOGIQBook-8-RGB-HugePreview.dcm",
+   "md5": "13fd8c7e533a3d7199bb78de45710f5c",
+   "gdcm_dimensions": {
+    "columns": 640,
+    "rows": 480,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "GE_RHAPSODE-16-MONO2-JPEG-Fragments.dcm",
+   "md5": "f3a3d0e739e5f4fbeddd1452b81f4d89",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "KODAK-12-MONO1-Odd_Terminated_Sequence.dcm",
+   "md5": "c1ed06d39821a5fd65abc397982e2ac1",
+   "gdcm_dimensions": {
+    "columns": 1792,
+    "rows": 2392,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-JpegLossless.dcm",
+   "md5": "70166425c4dca767e22d3f25f737922b",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-RLE.dcm",
+   "md5": "70166425c4dca767e22d3f25f737922b",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-16-MONO2-Uncompressed.dcm",
+   "md5": "70166425c4dca767e22d3f25f737922b",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-JpegLossless.dcm",
+   "md5": "279e2b0363394a553ff8571cf3540c6c",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-JpegLossy.dcm",
+   "md5": "38c2784aa485733fef45b6517479a4f5",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-24-RGB-Uncompressed.dcm",
+   "md5": "279e2b0363394a553ff8571cf3540c6c",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-JpegLossy.dcm",
+   "md5": "fa08fec923f34e009ec89f77232e52ad",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-RLE.dcm",
+   "md5": "3cd8bd92db17bff54e376885dfefdd8d",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-MONO2-Uncompressed.dcm",
+   "md5": "3cd8bd92db17bff54e376885dfefdd8d",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-PAL-RLE.dcm",
+   "md5": "16e999d6afc5574bcb075f296c3bcbbc",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-PAL-Uncompressed.dcm",
+   "md5": "16e999d6afc5574bcb075f296c3bcbbc",
+   "gdcm_dimensions": {
+    "columns": 800,
+    "rows": 535,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "LEADTOOLS_FLOWERS-8-PAL-RAW.dcm",
+   "md5": "d613050ca0f9c924fb5282d140281fcc"
+  },
+  {
+   "file": "LIBIDO-16-ACR_NEMA-Volume.dcm",
+   "md5": "ce1cc8ebb1efb86213d5912a1cfde843",
+   "gdcm_dimensions": {
+    "columns": 50,
+    "rows": 50,
+    "frames": 262,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "LIBIDO-24-ACR_NEMA-Rectangle.dcm",
+   "md5": "81a40454eec2b18f4331cfd1ba4e501e",
+   "gdcm_dimensions": {
+    "columns": 400,
+    "rows": 100,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "LIBIDO-8-ACR_NEMA-Lena_128_128.acr",
+   "md5": "fc5db4e2e7fca8445342b83799ff16d8",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 128,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MARCONI_MxTWin-12-MONO2-JpegLossless-ZeroLengthSQ.dcm",
+   "md5": "b1476cacdd32216b3295d2a494af2945",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR-Brucker-CineTagging-NonSquarePixels.dcm",
+   "md5": "d9f47017de79e8755e4bc5d3c9146ebd",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 192,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR_GE_with_Private_Compressed_Icon_0009_1110.dcm",
+   "md5": "8fe67e8e1f849c1b61f59e70d2d53cf7",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR-MONO2-12-an2.acr",
+   "md5": "f54c7ea520ab3ec32b6303581ecd262f",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR-MONO2-12-angio-an1.acr",
+   "md5": "ae5c00b60a58849b19aaabfc6521eeed",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR-MONO2-12-shoulder.dcm",
+   "md5": "a70676f0e60a58f55a5ac517ff662e7e",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR-MONO2-16-head.dcm",
+   "md5": "83be31fb5e5cee60dedaf485bf592ac3",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR-MONO2-8-16x-heart.dcm",
+   "md5": "01db0d71100c47013e588082d5f39bab",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 16,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR_Philips-Intera_BreaksNOSHADOW.dcm",
+   "md5": "b606add66c681bbe674f972799c6d336",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR_Philips_Intera_No_PrivateSequenceImplicitVR.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR_Philips_Intera_PrivateSequenceImplicitVR.dcm",
+   "md5": "f69bca6228b0ca07d97ee11c0ab3b989",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR_Philips_Intera_SwitchIndianess_noLgtSQItem_in_trueLgtSeq.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR_Philips_Intera_PrivateSequenceExplicitVR_in_SQ_2001_e05f_item_wrong_lgt_use_NOSHADOWSEQ.dcm",
+   "md5": "7775ffdd374994b7dd029f45f198844f"
+  },
+  {
+   "file": "MR-SIEMENS-DICOM-WithOverlays-extracted-overlays.dcm",
+   "md5": "8b636107a6d8e6a6b3d1d7eed966d7a0",
+   "gdcm_dimensions": {
+    "columns": 484,
+    "rows": 484,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR-SIEMENS-DICOM-WithOverlays.dcm",
+   "md5": "3027eda10630e5c845f456264dc65210",
+   "gdcm_dimensions": {
+    "columns": 484,
+    "rows": 484,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "MR_SIEMENS_forceLoad29-1010_29-1020.dcm",
+   "md5": "6a925f871c58553f84ad24195e155c52",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 128,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "NM-MONO2-16-13x-heart.dcm",
+   "md5": "c83ef2159abef677229d3afd26f9e6a0",
+   "gdcm_dimensions": {
+    "columns": 64,
+    "rows": 64,
+    "frames": 13,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "OT-MONO2-8-a7.dcm",
+   "md5": "a155c3004bb902ed3f2d78f482923b32",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "OT-PAL-8-face.dcm",
+   "md5": "d7c30d57af821b02c67103250a744235",
+   "gdcm_dimensions": {
+    "columns": 640,
+    "rows": 480,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "PHILIPS_Gyroscan-12-Jpeg_Extended_Process_2_4.dcm",
+   "md5": "d93d2f78d845c7a132489aab92eadd32",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PHILIPS_Gyroscan-12-MONO2-Jpeg_Lossless.dcm",
+   "md5": "b78366162d9d43b2852d2637c5365c89",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PHILIPS_Gyroscan-8-MONO2-Odd_Sequence.dcm",
+   "md5": "4842ccbaac5b563ce915d2e21eb4c06e",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PHILIPS_Integris_H-8-MONO2-Multiframe.dcm",
+   "md5": "1f8951a6f8b599ad4ebc97efd7aab6be",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 76,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PHILIPS_Integris_V-10-MONO2-Multiframe.dcm",
+   "md5": "3d005cd3270c6d2562c2a8d9069c9295",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 31,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PHILIPS_Intera-16-MONO2-Uncompress.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98",
+   "gdcm_dimensions": {
+    "columns": 1024,
+    "rows": 1024,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PICKER-16-MONO2-Nested_icon.dcm",
+   "md5": "6c9e477330d70d4a1360888121c7c3d3",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PICKER-16-MONO2-No_DicomV3_Preamble.dcm",
+   "md5": "5ea911b29f472f371d21f2da2fd6b016",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "PrivateGEImplicitVRBigEndianTransferSyntax16Bits.dcm",
+   "md5": "498f80fd27882351b9a09e6ceef470bc",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "RadBWLossLess.dcm",
+   "md5": "dbbf39ac11a39372b1e961f40ac6f62a",
+   "gdcm_dimensions": {
+    "columns": 136,
+    "rows": 92,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "rle16sti.dcm",
+   "md5": "f799773abbe36a1a8a3a881e27f8084d",
+   "gdcm_dimensions": {
+    "columns": 600,
+    "rows": 430,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "ser002img00026.dcm",
+   "md5": "80527e9c17a4a3d12d408e9a354f37f9",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS-12-Jpeg_Process_2_4-Lossy-a.dcm",
+   "md5": "7b55fd124331adde6276416678543048",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1.acr",
+   "md5": "ea24c09f475a4e9643e27f6d470edc67",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-ACR_NEMA_2-Modern.dcm",
+   "md5": "864e2c5d6acf5a371fe9eaa7ee0dcf5f",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq0.dcm",
+   "md5": "a13466d96b2f068c4844240797069f13",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 128,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq1.dcm",
+   "md5": "73f5986082729c2661cdc8de81fd26d0",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 128,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq2.dcm",
+   "md5": "f932a194df62ec99aef676c563893496",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 128,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-FileSeq3.dcm",
+   "md5": "b6e4780d8aa8c1d3642377a60a5302dd",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 128,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-Uncompressed.dcm",
+   "md5": "4b426d4cd570bd4c998f3d19cfddfbb8",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS-MR-RGB-16Bits.dcm",
+   "md5": "faff9970b905458c0844400b5b869e25",
+   "gdcm_dimensions": {
+    "columns": 192,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "SIEMENS_SOMATOM-12-ACR_NEMA-ZeroLengthUs.acr",
+   "md5": "7ccf7c7c4b2a5fa9d337ea8b01f75c42",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_Sonata-12-MONO2-SQ.dcm",
+   "md5": "a3009bc70444148c5ea2441a099f9dc6",
+   "gdcm_dimensions": {
+    "columns": 192,
+    "rows": 192,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "SIEMENS_Sonata-16-MONO2-Value_Multiplicity.dcm",
+   "md5": "017237320ccded3a367f07b44851788e",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 208,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "test.acr",
+   "md5": "f845c8f283d39a0204c325654493ba53",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "THERALYS-12-MONO2-Uncompressed-E_Film_Template.dcm",
+   "md5": "62c98e89a37c9a527d95d5ac3e2548b0",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "THERALYS-12-MONO2-Uncompressed-Even_Length_Tag.dcm",
+   "md5": "0121cd64c3b9957f76dd338d27454bc6",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 256,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "TOSHIBA_MRT150-16-MONO2-ACR_NEMA_2.dcm",
+   "md5": "09661bd8516aeb5a6f09239f9ca1b092",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 1,
+    "bits_allocated": 16,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "US-GE-4AICL142.dcm",
+   "md5": "23ec8ed09e1ecc353c2e6436a1de6cb2",
+   "gdcm_dimensions": {
+    "columns": 636,
+    "rows": 434,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "US-IRAD-NoPreambleStartWith0003.dcm",
+   "md5": "ba092234639594ee9091b46997532cce",
+   "gdcm_dimensions": {
+    "columns": 640,
+    "rows": 480,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "US-IRAD-NoPreambleStartWith0005.dcm",
+   "md5": "1bde104ba256fb73528c5d9a02e363d7",
+   "gdcm_dimensions": {
+    "columns": 640,
+    "rows": 480,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "US-MONO2-8-8x-execho.dcm",
+   "md5": "bf63affde325b3fa81cd5a700f30bd5b",
+   "gdcm_dimensions": {
+    "columns": 128,
+    "rows": 120,
+    "frames": 8,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "US-PAL-8-10x-echo.dcm",
+   "md5": "1785f4d8af4717c17bfb78ba74c18ea5",
+   "gdcm_dimensions": {
+    "columns": 600,
+    "rows": 430,
+    "frames": 10,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "US-RGB-8-epicard.dcm",
+   "md5": "eb3433568c6b0cee90688ccf228ffc02",
+   "gdcm_dimensions": {
+    "columns": 640,
+    "rows": 480,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "US-RGB-8-esopecho.dcm",
+   "md5": "4b350b9353a93c747917c7c3bf9b8f44",
+   "gdcm_dimensions": {
+    "columns": 256,
+    "rows": 120,
+    "frames": 1,
+    "bits_allocated": 8,
+    "samples_per_pixel": 3
+   }
+  },
+  {
+   "file": "XA-MONO2-8-12x-catheter.dcm",
+   "md5": "136eaf8f7d654bbb08741c201a945561",
+   "gdcm_dimensions": {
+    "columns": 512,
+    "rows": 512,
+    "frames": 12,
+    "bits_allocated": 8,
+    "samples_per_pixel": 1
+   }
+  },
+  {
+   "file": "Image1.dcm",
+   "md5": "1b0768a3518a6b6ed425c3c1d7a7ea3b"
+  },
+  {
+   "file": "Image2.dcm",
+   "md5": "a41c7f4e75cf637ae8912f5c3cd2c69d"
+  },
+  {
+   "file": "deflate_image.dcm",
+   "md5": "22c9be23446a7be61a90d3578f3c9739"
+  },
+  {
+   "file": "brain.dcm",
+   "md5": "d5681b156af55899835293286c57d887"
+  },
+  {
+   "file": "abdominal.dcm",
+   "md5": "d4d365f0500f2ccff932317833d8804b"
+  },
+  {
+   "file": "ankle.dcm",
+   "md5": "138d9bd642c6f1cdc427ef6f99132677"
+  },
+  {
+   "file": "spine.dcm",
+   "md5": "ff8d450e47e8989478a1b6f19d0988cc"
+  },
+  {
+   "file": "42166745.dcm",
+   "md5": "c78c1721a5ac585a12cf9a52abc25d4c"
+  },
+  {
+   "file": "JDDICOM_Sample4.dcm",
+   "md5": "d48ae6ccc815fd171169591a1048c5ed"
+  },
+  {
+   "file": "I20051107115955.dcm",
+   "md5": "63c45c2e73403af781d07ae02247654f"
+  },
+  {
+   "file": "JDDICOM_Sample1.dcm",
+   "md5": "938ac04374eadbe6ac4d7df80e5aa178"
+  },
+  {
+   "file": "JDDICOM_Sample2.dcm",
+   "md5": "33aa469ec024188d692262d03e7108a0"
+  },
+  {
+   "file": "JDDICOM_Sample3.dcm",
+   "md5": "308b1b6fbc01df4dc3fb168830777cb1"
+  },
+  {
+   "file": "JDDICOM_Sample5.dcm",
+   "md5": "b8b5030261f92574227fe91902738558"
+  },
+  {
+   "file": "rle16loo.dcm",
+   "md5": "04b42f011bdcf56e8a22607cb715447c"
+  },
+  {
+   "file": "GE_JPEG-Broken.dcm",
+   "md5": "f1436c1800ccbba8da82acb7f2dff29d"
+  },
+  {
+   "file": "10200901_8b_Palette_RLE_blinker.dcm",
+   "md5": "73dd2a43ab7c2810714a8ea1079f3c38"
+  },
+  {
+   "file": "10200900_8b_Palette_RLE_blinker.dcm",
+   "md5": "609ede096636ae804dbb0fb4d78be2c2"
+  },
+  {
+   "file": "10200905_8b_Palette_RLE_blinker.dcm",
+   "md5": "ed6078d83f467f9eda5d8cd06f87080f"
+  },
+  {
+   "file": "rle16loop_16b_Palette_RLE.dcm",
+   "md5": "49ca8ad45fa7f24b0406a5a03ba8aff6"
+  },
+  {
+   "file": "US.irad.27702.1.dcm",
+   "md5": "1bde104ba256fb73528c5d9a02e363d7"
+  },
+  {
+   "file": "acc-max.dcm",
+   "md5": "1e3acacba2ae92b52011804ebddbf5df"
+  },
+  {
+   "file": "Originale_015.dcm",
+   "md5": "d5037d66855c7815f55185b808e48750"
+  },
+  {
+   "file": "PETAt001_PT001.dcm",
+   "md5": "bbca0e3e26acdd1ab4f6c4871810ac50"
+  },
+  {
+   "file": "i0116.dcm",
+   "md5": "5a33e3a2cd414d734984c7a6a5a32a41"
+  },
+  {
+   "file": "eclipse_dose.dcm",
+   "md5": "5a0ebe04ffe50d4373624e444093b855"
+  },
+  {
+   "file": "MRMN1786V1L.dcm",
+   "md5": "c4e4589b884cfee49db81746cd18a41c"
+  },
+  {
+   "file": "MRMN1786V1T.dcm",
+   "md5": "bc8f9791b75916e85c91e458cd1364a3"
+  },
+  {
+   "file": "MRMN1786V2L.dcm",
+   "md5": "6cee5011d0dcce93d259d272eb94336f"
+  },
+  {
+   "file": "gdcm-CT-GE-16-GantryTilt.dcm",
+   "md5": "793d177bd10188e66483ddc04cbca9e7"
+  },
+  {
+   "file": "MRMN1786V2T.dcm",
+   "md5": "7db6d7da455d94ed1a3afda437c3f09e"
+  },
+  {
+   "file": "angiograms.dcm",
+   "md5": "bea6e06fe30abd455288e35aaf47477d"
+  },
+  {
+   "file": "image09-bis.dcm",
+   "md5": "350aea8820dbbdbb15eabc88f3dd3b16"
+  },
+  {
+   "file": "US.irad.28317.1.dcm",
+   "md5": "ba092234639594ee9091b46997532cce"
+  },
+  {
+   "file": "PETAt001_PT204.dcm",
+   "md5": "21a11f961726c81684be3241eb961819"
+  },
+  {
+   "file": "SiemensIcon.dcm",
+   "md5": "23b5d0a918fb882c08c458c1507c39f7"
+  },
+  {
+   "file": "RMI_Mattes_1_150_001_7_150_cEval0_038.dcm",
+   "md5": "0121cd64c3b9957f76dd338d27454bc6"
+  },
+  {
+   "file": "image09.dcm",
+   "md5": "350aea8820dbbdbb15eabc88f3dd3b16"
+  },
+  {
+   "file": "image12.dcm",
+   "md5": "1bde104ba256fb73528c5d9a02e363d7"
+  },
+  {
+   "file": "JPEGLosslessLongSQ.dcm",
+   "md5": "417ca9bf1db40dd8656cfb6de0aef181"
+  },
+  {
+   "file": "readWrite.dcm",
+   "md5": "d5037d66855c7815f55185b808e48750"
+  },
+  {
+   "file": "vhm.1001.dcm",
+   "md5": "e114252b9acf985cf53b06c39118a290"
+  },
+  {
+   "file": "MR_Philips_Intera_Kosher.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98"
+  },
+  {
+   "file": "0001.dcm",
+   "md5": "f9d9898ad844a73c0656539388fec85c"
+  },
+  {
+   "file": "exp000.dcm",
+   "md5": "c4031c607b7312952bb560e55cbbb072"
+  },
+  {
+   "file": "exp001.dcm",
+   "md5": "2bb620b2c516b66faeef7397d30b83f1"
+  },
+  {
+   "file": "RMI_Mattes_unevenLengthTags.dcm",
+   "md5": "0dfbe8aa4c20b52e1b8bf3cb6cbdf193"
+  },
+  {
+   "file": "MR_forceLoad29-1010_29-1020.dcm",
+   "md5": "6a925f871c58553f84ad24195e155c52"
+  },
+  {
+   "file": "MR_Siemens_ShadowGroupsImplicitVR.dcm",
+   "md5": "255769e6c9d8a161fce520c958c94de7"
+  },
+  {
+   "file": "01f7_7fdf.dcm",
+   "md5": "5c25c435ecd8eeac124ab427668186de"
+  },
+  {
+   "file": "RMI_Mattes_1_1_001_7_1_cEval0_000.dcm",
+   "md5": "0dfbe8aa4c20b52e1b8bf3cb6cbdf193"
+  },
+  {
+   "file": "ElemZeroNotGroupLength.dcm",
+   "md5": "620012cfec4ae2e6dd0137b2e16947d7"
+  },
+  {
+   "file": "File000138.dcm",
+   "md5": "57994245238730f4b4c5eaed21c4144b"
+  },
+  {
+   "file": "File000139.dcm",
+   "md5": "826b6bc1e36efda1b727b08248a71dd2"
+  },
+  {
+   "file": "SYNGORTImage.dcm",
+   "md5": "6b26a5561678b26aa2f21a68ea334819"
+  },
+  {
+   "file": "Implicit-0001.dcm",
+   "md5": "a198893279520631657781d47c4097b2"
+  },
+  {
+   "file": "CT_PET001_CT001.dcm",
+   "md5": "99540b33d088646b8e424a57afdccbe6"
+  },
+  {
+   "file": "rattag.dcm",
+   "md5": "343e27f0867b55af74b21a5ba55bd9cc"
+  },
+  {
+   "file": "i0002.dcm",
+   "md5": "0038402afc09d44d3c75ed207171976b"
+  },
+  {
+   "file": "fudd_post.dcm",
+   "md5": "0ad4eca25cc0f783bd60c07b2d73f8b0"
+  },
+  {
+   "file": "brain_001.dcm",
+   "md5": "b85ca0e38d91ba0ee3a97f9c709415ac"
+  },
+  {
+   "file": "SignedShortLosslessBug.dcm",
+   "md5": "f1436c1800ccbba8da82acb7f2dff29d"
+  },
+  {
+   "file": "ATTMA002_DS.dcm",
+   "md5": "eb87ca4a01e55dc7a7f1c92f0aa31017"
+  },
+  {
+   "file": "libido1.0-vol.acr",
+   "md5": "f17cf873a3c07f3d91dc88f34664bf0d"
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-GDCM12-VRUN.dcm",
+   "md5": "d2fab61e0fff8869e448d69951f1084d"
+  },
+  {
+   "file": "undefined_length_un_vr.dcm",
+   "md5": "e0221ddcc9febdc3c266bb8cd0fcf14f"
+  },
+  {
+   "file": "fffc0000UN.dcm",
+   "md5": "a136e501bcd1b8ee0835981d2bc8dd87"
+  },
+  {
+   "file": "JDDICOM_Sample2-dcmdjpeg.dcm",
+   "md5": "33aa469ec024188d692262d03e7108a0",
+   "upstream_comment": "mismatch DICOM / JPEG"
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-VRUN.dcm",
+   "md5": "d2fab61e0fff8869e448d69951f1084d"
+  },
+  {
+   "file": "simpleImageWithIcon.dcm",
+   "md5": "fc5db4e2e7fca8445342b83799ff16d8"
+  },
+  {
+   "file": "imp.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98"
+  },
+  {
+   "file": "Renal_Clearance.dcm",
+   "md5": "eb5fc6c9e86a69c27b7208d72370a92d"
+  },
+  {
+   "file": "IM0046A0.dcm",
+   "md5": "1b130fa646f8d6b3c14b9443b35c80b4"
+  },
+  {
+   "file": "rvg_analysis.dcm",
+   "md5": "8c00e7f797d8bb4a629ae1e4b08084b9"
+  },
+  {
+   "file": "BRTUM001.dcm",
+   "md5": "0d7c2f8714ed3c7dec8194c6e4b359c3"
+  },
+  {
+   "file": "3DDCM011.dcm",
+   "md5": "e5dbfc8673ea25dd73c95f4df3353b10"
+  },
+  {
+   "file": "MIRA.dcm",
+   "md5": "12150f9067ea72bc56c75d83c42c8108"
+  },
+  {
+   "file": "NM.dcm",
+   "md5": "ae9a191c716dfda2651a147728910a89"
+  },
+  {
+   "file": "QCpatternC-v1.dcm",
+   "md5": "d4444bcca0ee13919f867e486a8f3553"
+  },
+  {
+   "file": "gdcm-MR-PHILIPS-16-Multi-Seq-Correct.dcm",
+   "md5": "ad85be428c08ab4166347ef04bda9637"
+  },
+  {
+   "file": "SIEMENS_ORIGINAL.dcm",
+   "md5": "9c390fc010105325427e3ff29a9b186c"
+  },
+  {
+   "file": "venticles32004-11-09-08-55-57-6750000000.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98"
+  },
+  {
+   "file": "test.dcm",
+   "md5": "bfff320d1b058e91b4819aa4560c16f7"
+  },
+  {
+   "file": "Renal_Flow.dcm",
+   "md5": "8c9666cef26a0cc76491a7a8a5239b85"
+  },
+  {
+   "file": "dclunie.dcm",
+   "md5": "f3a3d0e739e5f4fbeddd1452b81f4d89"
+  },
+  {
+   "file": "Toshiba7005.dcm",
+   "md5": "78dae0e2d9b7a124fe63300b6356ded4"
+  },
+  {
+   "file": "PhilipsWith15Overlays.dcm",
+   "md5": "8240955d1e4b72989f8f49549f1617b2"
+  },
+  {
+   "file": "toto.dcm",
+   "md5": "3cd8bd92db17bff54e376885dfefdd8d"
+  },
+  {
+   "file": "test20.dcm",
+   "md5": "14ad8ae28cc5e5e5dc4c4d010c291a7f"
+  },
+  {
+   "file": "testacr-jpll.dcm",
+   "md5": "e7408198028983cd6643a00fd7668c00"
+  },
+  {
+   "file": "1_172.dcm",
+   "md5": "6633fb8bce0a648763e7ed2b7de1db5c"
+  },
+  {
+   "file": "example.dcm",
+   "md5": "29cfe7038fae548abd4af4551b2a37cb"
+  },
+  {
+   "file": "WrongVRFor00271033.dcm",
+   "md5": "6b18e445fbc917e7d6f55b616f17d3e1"
+  },
+  {
+   "file": "ExplicitVRforPublicElementsImplicitVRforShadowElementsCorrected.dcm",
+   "md5": "0b4dff77726ccf037fa83c42cc186a98"
+  },
+  {
+   "file": "3DT1_5138_0077.dcm",
+   "md5": "9570a06da59988ff3a7271cdde14abf5"
+  },
+  {
+   "file": "FluroWithDisplayShutter.dcm",
+   "md5": "20c5f63d65732703e3fffeb8d67c62ed"
+  },
+  {
+   "file": "fudd_ant.dcm",
+   "md5": "92b62f22fc44b8563c19f5536d9e499f"
+  },
+  {
+   "file": "yazhi.dcm",
+   "md5": "b92a22ef55d6a1fbd24a6a24a7a84a7f"
+  },
+  {
+   "file": "IM_0001.dcm",
+   "md5": "2b69286289543afc3be7df0400abb8fc"
+  },
+  {
+   "file": "PMMA-Treppe.dcm",
+   "md5": "287e002ebf84424fe66558b642c51bce"
+  },
+  {
+   "file": "PERFORM_T1_Symphony_VA25.dcm",
+   "md5": "82a8d3398c98d23e1b34f5364f967287"
+  },
+  {
+   "file": "Al-Treppe.dcm",
+   "md5": "2c0ccfeff0a6d4afd7929a672dec0cc0"
+  },
+  {
+   "file": "ImplicitDeclaredAsExplicit.dcm",
+   "md5": "f891eae2cdfecd578b2204ebbb93f606"
+  },
+  {
+   "file": "CR-Preamble-NoMeta.dcm",
+   "md5": "7ceb7886f9fbcb7ae979fdb6f1305414"
+  },
+  {
+   "file": "db318_MR_STN_stimulator_T2_TSE_TRA__20071005161618048_4.dcm",
+   "md5": "d2fab61e0fff8869e448d69951f1084d"
+  },
+  {
+   "file": "0019004_Baseline_IMG1.dcm",
+   "md5": "2b4d7fb6b039b43145f2766b2339c460"
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1.acr.ovly.6002.dcm",
+   "md5": "f02e48f4b7df2ff4855733febc92e4e6"
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1.acr.ovly.6000.dcm",
+   "md5": "6a34b606135c4cd1c31511164e2cb235"
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1.acr.ovly.6006.dcm",
+   "md5": "65f961aca90fb61952d723feec6dec89"
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1.acr.ovly.6004.dcm",
+   "md5": "fc137690ae436bb44a695fb2f1e49d85"
+  },
+  {
+   "file": "acr_image_with_non_printable_in_0051_1010.acr",
+   "md5": "864e2c5d6acf5a371fe9eaa7ee0dcf5f"
+  },
+  {
+   "file": "mr_r_opptak000_20000925_t2.nema",
+   "md5": "7efed1c332c62ea34d5edad901081c36"
+  },
+  {
+   "file": "mr_r_opptak000_20000925_t1.nema",
+   "md5": "d6995bd1d76eb36913c985c8397ff02d"
+  },
+  {
+   "file": "SIEMENS-IncompletePixelData.dcm",
+   "md5": "dc549f804f1f59bfee245ddf100ee26b"
+  },
+  {
+   "file": "20061119171007906.dcm",
+   "md5": "51b7e83cdc569b8f355662d80bd7036d"
+  },
+  {
+   "file": "MR0001.dcm",
+   "md5": "01db0d71100c47013e588082d5f39bab"
+  },
+  {
+   "file": "ModalityLUT.dcm",
+   "md5": "d9df75ff0394bb9a3753b625933d94fc"
+  },
+  {
+   "file": "PublicElementsImplicitInExplicitDataSet.dcm",
+   "md5": "acd3f756192a9f0484c971db2869d70b"
+  },
+  {
+   "file": "MR3.dcm",
+   "md5": "820575fcc05338f3e95296107d9ddf7a"
+  },
+  {
+   "file": "SIEMENS-JPEG-CorruptFragClean.dcm",
+   "md5": "3c6984afa2af4257565d8f622f7f5e5b"
+  },
+  {
+   "file": "D_CLUNIE_RG3_JPLY_dcmtk.dcm",
+   "md5": "cc2968949ffbb6548288ffde7e5202e4"
+  },
+  {
+   "file": "5decf5b5-6695-4557-867e-a1f97321cd80.dcm",
+   "md5": "83656f4989a2d4be8f9ad56d83a907f5"
+  },
+  {
+   "file": "PMS-IncompletePixelData.dcm",
+   "md5": "92655f77a55eb9c316223b9e73d55800"
+  },
+  {
+   "file": "TOSHIBA-CurveData2.dcm",
+   "md5": "6a23c9f150a360381c8fbceb2277efc5"
+  },
+  {
+   "file": "IM_00003.dcm",
+   "md5": "6ad75566935554fcc60ca35a003fba6d"
+  },
+  {
+   "file": "19872890.dcm",
+   "md5": "ab7cab6e7b5f9043f8fa7c0ae3f1b282"
+  },
+  {
+   "file": "rm6_DICM.dcm",
+   "md5": "48eb24e37d41faca8b629b3807c20d92"
+  },
+  {
+   "file": "T2*_1484_0009.dcm",
+   "md5": "201c9761ed911ad12508248252f4ff16"
+  },
+  {
+   "file": "BogugsItemAndSequenceLength.dcm",
+   "md5": "90017033c3916259cad63615385a1d02"
+  },
+  {
+   "file": "TOSHIBA-CurveData1.dcm",
+   "md5": "b09dc714f6d56d29005996b3204eec25"
+  },
+  {
+   "file": "SCIsMR.dcm",
+   "md5": "5ed3d1de2a086ac7efd31a6f1463f129"
+  },
+  {
+   "file": "Siemens_CT_Sensation64_has_VR_RT.dcm",
+   "md5": "9bbb1d908401299e73e636ad5b19a225"
+  },
+  {
+   "file": "tst_ok.dcm",
+   "md5": "13e41624a8b86c18ac257e3588f818ce"
+  },
+  {
+   "file": "ImplicitVRInExplicitDataSet.dcm",
+   "md5": "17f514732d5f7e9484ed33c35bddc930"
+  },
+  {
+   "file": "29627381.dcm",
+   "md5": "0826b8cc512a8e4d726c1c019af2eaf9"
+  },
+  {
+   "file": "1.2.752.24.6.1820537353.20080220145707750.8.1.dcm",
+   "md5": "727383f164107aaa9ee6c2182f94b91d"
+  },
+  {
+   "file": "22484474.dcm",
+   "md5": "5588652e673e745ad56441f5a26c2305"
+  },
+  {
+   "file": "PHILIPS_PrivateSeqWithPublicElems.dcm",
+   "md5": "cf6fde116c90e4e56512b22004503d96"
+  },
+  {
+   "file": "GEMS-IncompletePixelData.dcm",
+   "md5": "098bba76d4e75a3148c9b62aee35f950"
+  },
+  {
+   "file": "IM03.dcm",
+   "md5": "1fe71a52a211d1a56cc49cdcb71c1dbb"
+  },
+  {
+   "file": "TheralysGDCM1.dcm",
+   "md5": "b857b6cce2afd7033476526b89ed9678"
+  },
+  {
+   "file": "Theralys2048Thingy.dcm",
+   "md5": "e998bbfca8b892fd0955c95b6f1584ea"
+  },
+  {
+   "file": "Compress_16bit_noPVRG.dcm",
+   "md5": "0508d28682e209f87d28184ae10060bd"
+  },
+  {
+   "file": "BogugsItemAndSequenceLengthCorrected.dcm",
+   "md5": "90017033c3916259cad63615385a1d02"
+  },
+  {
+   "file": "debian_medcon_401529.dcm",
+   "md5": "51b7e83cdc569b8f355662d80bd7036d"
+  },
+  {
+   "file": "BogusItemStartItemEnd.dcm",
+   "md5": "51b7e83cdc569b8f355662d80bd7036d"
+  },
+  {
+   "file": "SIEMENS-JPEG-CorruptFrag.dcm",
+   "md5": "3c6984afa2af4257565d8f622f7f5e5b"
+  },
+  {
+   "file": "PhilipsByteSwapping.dcm",
+   "md5": "192f5ebd4d8f6164a4142421408172b2"
+  },
+  {
+   "file": "MismatchSOPClassUID.dcm",
+   "md5": "2438b8feef6c8f682b2f468aff4475e5"
+  },
+  {
+   "file": "YBRisGray.dcm",
+   "md5": "738092e703655b6ae22a907d9f9f0c9c"
+  },
+  {
+   "file": "2mAs.dcm",
+   "md5": "635e947fc156c89a8d10ced8317ace82"
+  },
+  {
+   "file": "OSIRIX_MONOCHROME2_BUG.dcm",
+   "md5": "54d648704507de7cd6e4be12061a5fb2"
+  },
+  {
+   "file": "5mAs.dcm",
+   "md5": "1db40fc52b962c8b6823980fe9dad6d8"
+  },
+  {
+   "file": "IM0046A0_2.dcm",
+   "md5": "1b130fa646f8d6b3c14b9443b35c80b4"
+  },
+  {
+   "file": "ImplicitVRInExplicitDataSet2.dcm",
+   "md5": "cdfb45de5ddad3e7e2b0053c848d0d2b"
+  },
+  {
+   "file": "OverlayPrivateDataInBetween.dcm",
+   "md5": "ec5c421832df7cc43801d038705cd2cf"
+  },
+  {
+   "file": "ItemTerminatorVLnot0.dcm",
+   "md5": "9a375c3b2a72a6ccf687250b17f646c9"
+  },
+  {
+   "file": "I0000017.dcm",
+   "md5": "5269176094127c6f106cbcf9dbdf55b0"
+  },
+  {
+   "file": "EmptyItemStarter.dcm",
+   "md5": "eb87ca4a01e55dc7a7f1c92f0aa31017"
+  },
+  {
+   "file": "169585.dcm",
+   "md5": "cae8f644373163cb3970999f7ac00fd3"
+  },
+  {
+   "file": "VRUNInMetaHeader.dcm",
+   "md5": "5ea911b29f472f371d21f2da2fd6b016"
+  },
+  {
+   "file": "IM000450.dcm",
+   "md5": "ad7b664eed26e95f790c24cdb3060fb9"
+  },
+  {
+   "file": "TOSHIBA-CurveData3.dcm",
+   "md5": "4f113f33863067b8ca8d560cb194da09"
+  },
+  {
+   "file": "mrbrainR.dcm",
+   "md5": "14fa2ae9f63742af6944edd4a61145e8"
+  },
+  {
+   "file": "c42g57hg64ca02.dcm",
+   "md5": "ba17ae006314a097fef7a32fa1a624b0"
+  },
+  {
+   "file": "0020.DCM",
+   "md5": "10047ec574a6401ad90606e63304de6e"
+  },
+  {
+   "file": "001005XA",
+   "md5": "5184839806c9a9583fe192d43cede939"
+  },
+  {
+   "file": "001007XA",
+   "md5": "5291e36a7d54d4c8e00d5765cd0b3d17"
+  },
+  {
+   "file": "001003XA",
+   "md5": "a57df7bc23977977832f98bfb662cdb4"
+  },
+  {
+   "file": "001009XA",
+   "md5": "b36329c27f359daede3205d7c57cccd1"
+  },
+  {
+   "file": "001008XA",
+   "md5": "1d173a6f31e0e4dd1078adf3557774c7"
+  },
+  {
+   "file": "001010XA",
+   "md5": "9b42aa4e5d3b5f889164b5a734b954b3"
+  },
+  {
+   "file": "001004XA",
+   "md5": "87f72a961292c83f8a9230e8eefecc6b"
+  },
+  {
+   "file": "001001XA",
+   "md5": "6c7a303d25b418988ef9a37c4315a746"
+  },
+  {
+   "file": "001002XA",
+   "md5": "9dde002e4e99218891df5f98da56ec9d"
+  },
+  {
+   "file": "001001XA.1",
+   "md5": "6c7a303d25b418988ef9a37c4315a746"
+  },
+  {
+   "file": "001006XA",
+   "md5": "8891d44376bc53c7bd0d36d2b776cd9b"
+  },
+  {
+   "file": "TOSHIBA-EnhancedCT.dcm",
+   "md5": "a6d10a3de9499d8853c6667b82628e86"
+  },
+  {
+   "file": "CroppedArm.dcm",
+   "md5": "71b3b19571f5b9e7ec931071bf5157dd"
+  },
+  {
+   "file": "Bug_Philips_ItemTag_3F3F.dcm",
+   "md5": "bab06b7112dbce4f528bab5c1b89abc1"
+  },
+  {
+   "file": "Nm.dcm",
+   "md5": "8d3a64a67b4d8d15561fb586fd0706ee"
+  },
+  {
+   "file": "MergeCOM3_330_IM50.dcm",
+   "md5": "05392d4f7a0c05223eeb957ee60203a9"
+  },
+  {
+   "file": "ELSCINT1_OW.dcm",
+   "md5": "635c2dbedea549a89f88e959934ed93c"
+  },
+  {
+   "file": "KONICA_VROX.dcm",
+   "md5": "594995a6eb12a565247cd98f967a378d"
+  },
+  {
+   "file": "TheralysNoModalityNoObject.dcm",
+   "md5": "1497b865a4c6ab73cd6797b8834baa9f"
+  },
+  {
+   "file": "gastrolateral.dcm",
+   "md5": "d1f8cbdb279d038e2674ec0907afffe1"
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1-ULis2Bytes.dcm",
+   "md5": "ea24c09f475a4e9643e27f6d470edc67"
+  },
+  {
+   "file": "MR00010001.dcm",
+   "md5": "ecd26fb1fa914918ff9292c4f7340050"
+  },
+  {
+   "file": "006872.003.107.dcm",
+   "md5": "c56567bbb8f1924d6c0c6fd8ca7f239d"
+  },
+  {
+   "file": "SIEMENS_MONOCHROME2_LUT_MOCO.dcm",
+   "md5": "228e9af71b8ce00cae3066e3fdd3641f"
+  },
+  {
+   "file": "GENESIS_SIGNA-JPEG-CorruptFrag.dcm",
+   "md5": "ef8c3435ee7a9b332976f2dc56833d3a",
+   "upstream_comment": "FIXME !"
+  },
+  {
+   "file": "DCMOBJ_IMG57.dcm",
+   "md5": "42a4f33eb34456e3e82f30d707c84870"
+  },
+  {
+   "file": "image.acr",
+   "md5": "3a85617df95abbb63cd84a183515c697"
+  },
+  {
+   "file": "IM-0001-0001.dcm",
+   "md5": "8c5a627c461688cfa5dc708a170c5eda"
+  },
+  {
+   "file": "test_att.acr",
+   "md5": "ec87a838931d4d5d2e94a04644788a55"
+  },
+  {
+   "file": "SIEMENS_ImageLocationUN.dcm",
+   "md5": "0621954acd5815e0b4f7b65fcc6506b1"
+  },
+  {
+   "file": "GDCMFakeJPEG.dcm",
+   "md5": "e1e34e81050d17b07a20c0e43c355187"
+  },
+  {
+   "file": "DMCPACS_ExplicitImplicit_BogusIOP.dcm",
+   "md5": "ef9f915086db838334ddc656a10486f2"
+  },
+  {
+   "file": "ELSCINT1_GDCM12Bug.dcm",
+   "md5": "498f80fd27882351b9a09e6ceef470bc"
+  },
+  {
+   "file": "korean_agfa_infinitt_2008-3.dcm",
+   "md5": "34b5c1ce40f09f0dbede87ebf3f6ed3c"
+  },
+  {
+   "file": "c_vf1001.dcm",
+   "md5": "2c8b8ee9950582af472cf652005f07d4"
+  },
+  {
+   "file": "MARTIN_ALBERT-20010502-2-1.nema",
+   "md5": "a1ea6633f17ef1e0d702cdd46434b393"
+  },
+  {
+   "file": "GDCMPrinterDisplayUNasSQ.dcm",
+   "md5": "d85237c7ff838f5246643a027d3727ae"
+  },
+  {
+   "file": "MissingPixelRepresentation.dcm",
+   "md5": "2dbe2da7fbcf1bd73e2221e9cd4ad7ee"
+  },
+  {
+   "file": "E00001S03I0015.dcm",
+   "md5": "a3009bc70444148c5ea2441a099f9dc6"
+  },
+  {
+   "file": "Martin.dcm",
+   "md5": "afe5937be25ac657e48b1270b52e6d98"
+  },
+  {
+   "file": "MR_ELSCINT1_00e1_1042_SQ_feff_00e0_Item.dcm",
+   "md5": "4d790e17ee35572d64e37c55dbc36725"
+  },
+  {
+   "file": "CT_Image_Storage_multiframe.dcm",
+   "md5": "93ddc0c3d642af60f55630232d2801ae"
+  },
+  {
+   "file": "ELSCINT1_JP2vsJ2K.dcm",
+   "md5": "6127740892542f23e37e6ab516b17caf"
+  },
+  {
+   "file": "GE_MR_0025xx1bProtocolDataBlock.dcm",
+   "md5": "b620a57170941e26dfd07ff334c73cb4"
+  },
+  {
+   "file": "CT-SIEMENS-MissingPixelDataInIconSQ.dcm",
+   "md5": "4b5423b34ab4e104c222359a91448a5d"
+  },
+  {
+   "file": "KODAK_CompressedIcon.dcm",
+   "md5": "79b8705f2e6c7464bd3e2fc7e1d3483b"
+  },
+  {
+   "file": "ima43.dcm",
+   "md5": "59071590099d21dd439896592338bf95"
+  },
+  {
+   "file": "TG18-CH-2k-01.dcm",
+   "md5": "46bf12c412590767bb8cd7f0d53eaa87"
+  },
+  {
+   "file": "LJPEG_BuginGDCM12.dcm",
+   "md5": "9214cc4f62fbea873ffad88e1be877c5"
+  },
+  {
+   "file": "DX_J2K_0Padding.dcm",
+   "md5": "52607a16af1eaddbbc71c14d32e489d8"
+  },
+  {
+   "file": "TheralysGDCM120Bug.dcm",
+   "md5": "6af53848fe77feb56a12aba74dadea8e"
+  },
+  {
+   "file": "TestVRSQUN2.dcm",
+   "md5": "79b8705f2e6c7464bd3e2fc7e1d3483b"
+  },
+  {
+   "file": "TestVRSQUN1.dcm",
+   "md5": "71e4ea61df4f7ada2955799c91f93e74"
+  },
+  {
+   "file": "SIEMENS_MOSAIC_12BitsStored-16BitsJPEG.dcm",
+   "md5": "6396332b75b15bf30b1dd1cd0f212691"
+  },
+  {
+   "file": "DX_GE_FALCON_SNOWY-VOI.dcm",
+   "md5": "ba8dae4b43075c7e8562f5addf5f95c3"
+  },
+  {
+   "file": "JPEG_LossyYBR.dcm",
+   "md5": "d6fb1fb06318dd305a461db9c84cf825"
+  },
+  {
+   "file": "PHILIPS_Brilliance_ExtraBytesInOverlay.dcm",
+   "md5": "43f33c06d56f239ce9ed5ca0d66a69d2"
+  },
+  {
+   "file": "BugGDCM2_UndefItemWrongVL.dcm",
+   "md5": "dae9d2e2b412646fd0a0f31dc2d17aa4"
+  },
+  {
+   "file": "SIEMENS_CSA2.dcm",
+   "md5": "62687f0a17e9c4153f18b55c8abfcef3"
+  },
+  {
+   "file": "MAROTECH_CT_JP2Lossy.dcm",
+   "md5": "a02fa05065b3a93a391f820ac38bd9ee"
+  },
+  {
+   "file": "ITK_GDCM124_MultiframeSecondaryCaptureInvalid.dcm",
+   "md5": "8b5e38699887158c3defd47900a68fc5"
+  },
+  {
+   "file": "DCMTK_JPEGExt_12Bits.dcm",
+   "md5": "c57035e2dac52e339b27e8c965251b3d",
+   "upstream_comment": "checked with dcmdjpeg v3.5.4+ 2009-05-07"
+  },
+  {
+   "file": "PHILIPS_GDCM12xBug.dcm",
+   "md5": "d7673c8575cb2765f8ae25aa3899c77e"
+  },
+  {
+   "file": "PHILIPS_GDCM12xBug2.dcm",
+   "md5": "a597540a79306be4710f4f04497fc23a"
+  },
+  {
+   "file": "multiframegrayscalewordscis.dcm",
+   "md5": "1e8843c2d247f9e9e7a44c9c6de43f6d"
+  },
+  {
+   "file": "signedtruecoloroldsc.dcm",
+   "md5": "928b41468193f0eecaea216866bbe735"
+  },
+  {
+   "file": "multiframesinglebitscis.dcm",
+   "md5": "209bc9b02004a712f0436a1ca5e676b4"
+  },
+  {
+   "file": "multiframegrayscalebytescis.dcm",
+   "md5": "c8698fa1ec0b227113f244954b8e88f4"
+  },
+  {
+   "file": "multiframetruecolorscis.dcm",
+   "md5": "dce1513162a762bf43dcc3c9d5c5c3f7"
+  },
+  {
+   "file": "SinglePrecisionSC.dcm",
+   "md5": "6bf95a48f366bdf8af3a198c7b723c77"
+  },
+  {
+   "file": "MR16BitsAllocated_8BitsStored.dcm",
+   "md5": "42cb593979fcc4630f965c31caaf4ec1"
+  },
+  {
+   "file": "OsirixFake16BitsStoredFakeSpacing.dcm",
+   "md5": "da153c2f438d6dd4277e0c6ad2aeae74"
+  },
+  {
+   "file": "JPEGDefinedLengthSequenceOfFragments.dcm",
+   "md5": "1c485e1ac2b2bdbeeba14391b8c1e0c8"
+  },
+  {
+   "file": "AMIInvalidPrivateDefinedLengthSQasUN.dcm",
+   "md5": "ae1290d59c63b0c334a4834c5995fe45"
+  },
+  {
+   "file": "D_CLUNIE_CT1_JLSL.dcm",
+   "md5": "f3a3d0e739e5f4fbeddd1452b81f4d89"
+  },
+  {
+   "file": "D_CLUNIE_CT1_JLSN.dcm",
+   "md5": "5e9085c66976d2f5f9989d88bf7a90c4"
+  },
+  {
+   "file": "UnexpectedSequenceDelimiterInFixedLengthSequence.dcm",
+   "md5": "9eb513314b2fcf25d895e18ffb2ead0b"
+  },
+  {
+   "file": "IM-0001-0066.CommandTag00.dcm",
+   "md5": "fb8119f30ec32ff575789caa969180ca"
+  },
+  {
+   "file": "NM_Kakadu44_SOTmarkerincons.dcm",
+   "md5": "6f26e552a1b71d386483118779d192ad"
+  },
+  {
+   "file": "GDCMJ2K_TextGBR.dcm",
+   "md5": "56238d3665ebdb0251d1161fb7f4edc6"
+  },
+  {
+   "file": "PhilipsInteraSeqTermInvLen.dcm",
+   "md5": "f8a1f4ce85b51527267e670a8aa0c308"
+  },
+  {
+   "file": "TOSHIBA_J2K_SIZ1_PixRep0.dcm",
+   "md5": "d6347ed051d7b887bdaad1a91433c6ba"
+  },
+  {
+   "file": "TOSHIBA_J2K_SIZ0_PixRep1.dcm",
+   "md5": "d6347ed051d7b887bdaad1a91433c6ba"
+  },
+  {
+   "file": "TOSHIBA_J2K_OpenJPEGv2Regression.dcm",
+   "md5": "94414d8b4300aa3d8cbe4475d34e8e54"
+  },
+  {
+   "file": "NM-PAL-16-PixRep1.dcm",
+   "md5": "304f147752d46adfdcff71a30cd03d0a"
+  },
+  {
+   "file": "MEDILABInvalidCP246_EVRLESQasUN.dcm",
+   "md5": "20b1e4de7b864d44fcd0dda1fc42402c"
+  },
+  {
+   "file": "US_512x512x2496_JPEG_BaseLine_Process_1.dcm",
+   "md5": "cb26bfacea534b5cd6881bc36520ecfc"
+  },
+  {
+   "file": "i32.XADC.7.215MegaBytes.dcm",
+   "md5": "d40e2d27988f0c546b0daeb67fcbfba8"
+  },
+  {
+   "file": "1.3.46.670589.7.5.10.80002138018.20001204.181556.9.1.1.dcm",
+   "md5": "c383b244fd43cb0a9db764b71cb59741"
+  },
+  {
+   "file": "JPEGInvalidSecondFrag.dcm",
+   "md5": "f111ed4eea73f535261039d3f7b112e9"
+  },
+  {
+   "file": "lena512_rot90.j2k.dcm",
+   "md5": "a218fcee00e16d430f30ec7ebd4937dc"
+  },
+  {
+   "file": "SC16BitsAllocated_8BitsStoredJ2K.dcm",
+   "md5": "dbf83984984741c98205d77a947b442c"
+  },
+  {
+   "file": "SC16BitsAllocated_8BitsStoredJPEG.dcm",
+   "md5": "f845c8f283d39a0204c325654493ba53"
+  },
+  {
+   "file": "SIEMENS_SYNGO-12-MONO2-LUTWrongLength512.dcm",
+   "md5": "4a5d8549791432b29948dd8ff63e2534"
+  },
+  {
+   "file": "JPEGLS_CharLS_10742.dcm",
+   "md5": "2c8630ae1bff925b258d98e742dfc632"
+  },
+  {
+   "file": "IllegalGroup2ImplicitTS.dcm",
+   "md5": "f666a95dde9ddfdec0cf9574a7985ae3"
+  },
+  {
+   "file": "RLEDebianBug816607Orig.dcm",
+   "md5": "b85686dd3169b99725149abb00181254"
+  },
+  {
+   "file": "JPEGNote_empty.dcm",
+   "md5": "464960d948dff0ded72b0380080f18a3"
+  },
+  {
+   "file": "JPEGLosslessYBR_FULL_422.dcm",
+   "md5": "cdfb5dd0c999d88badeb00a16f96554f"
+  },
+  {
+   "file": "JPEGNote_missing.dcm",
+   "md5": "464960d948dff0ded72b0380080f18a3"
+  },
+  {
+   "file": "JPEGNote_bogus.dcm",
+   "md5": "161e9fd986ea87adf2596e8e16641f11"
+  },
+  {
+   "file": "GE_MR_0025xx1bProtocolDataBlockXML.dcm",
+   "md5": "ad8f1164f0517ee150bf510d5dba5cc6"
+  },
+  {
+   "file": "EmptyIcon_Bug417.dcm",
+   "md5": "a0e0effa8d5638721b19e592acc11a4c"
+  },
+  {
+   "file": "EnhancedWithIPPPerFrameIOPShared.dcm",
+   "md5": "2b64303085d747956bfdda2ee8cc33bc"
+  },
+  {
+   "file": "FUJI-ffff-MONO1-J2K.dcm",
+   "md5": "4ca2f3a88d21d941f6485a8d91f96e29"
+  },
+  {
+   "file": "JPEGLosslessSeNonZero.dcm",
+   "md5": "b9697e3615a841e4c04f45ede6923278"
+  },
+  {
+   "file": "US-YBR_FULL_422-EVRLE.dcm",
+   "md5": "5fcd7d6573cab16d2ef575bba878ec78"
+  },
+  {
+   "file": "Osirix10vs8BitsStored.dcm",
+   "md5": "d62b4c13e8108671f1c66626c5bdee55"
+  },
+  {
+   "file": "Bug_Siemens_PrivateIconNoItem.dcm",
+   "md5": "b7c6fb507da1b7a3f81f821a2e3eaf49"
+  },
+  {
+   "file": "HardcopyColor_YBR_RCT_J2K_PC1.dcm",
+   "md5": "56238d3665ebdb0251d1161fb7f4edc6"
+  },
+  {
+   "file": "PET-GE-dicomwrite-PixelDataSQUNv2.dcm",
+   "md5": "5fe2b8742f05a0ba06d354f965266dbc"
+  },
+  {
+   "file": "MEDILABValidCP246_EVRLESQasOB.dcm",
+   "md5": "20b1e4de7b864d44fcd0dda1fc42402c"
+  }
+ ]
+}

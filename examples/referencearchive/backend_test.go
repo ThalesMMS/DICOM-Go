@@ -35,6 +35,34 @@ func storeRequest(ds *object.Object) dimse.CStoreRequestContext {
 	uid, _ := ds.GetUID(core.NewTag(0x0008, 0x0018))
 	return dimse.CStoreRequestContext{Request: dimse.CStoreRequest{AffectedSOPClassUID: archiveTestClass, AffectedSOPInstanceUID: uid}, PresentationContext: ul.AcceptedContext{AbstractSyntaxUID: archiveTestClass, TransferSyntaxUID: transfer.ExplicitVRLittleEndian.UID}, DataSet: ds, DataSetSyntax: transfer.ExplicitVRLittleEndian}
 }
+
+func TestArchiveFindPreservesRequestCharacterSetWhenFiltering(t *testing.T) {
+	ctx := context.Background()
+	a, err := openArchive(ctx, t.TempDir(), defaultArchiveLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+	ds := syntheticInstance("1.2.1", "1.2.1.1", "1.2.1.1.1")
+	ds.Put(textElement("SpecificCharacterSet", "ISO_IR 192"))
+	ds.Put(textElement("PatientName", "Érable^Célia"))
+	if status, err := a.Store(ctx, storeRequest(ds)); err != nil || status != 0 {
+		t.Fatalf("store: %04X %v", status, err)
+	}
+	query := object.FromElements([]core.Element{
+		textElement("QueryRetrieveLevel", "STUDY"), textElement("StudyInstanceUID", ""),
+		textElement("SpecificCharacterSet", "ISO_IR 100"),
+		core.NewRawElement(core.NewTag(0x0010, 0x0010), core.VRPN, []byte("\xe9rable^C?lia")),
+	}, std.Dictionary)
+	matches, err := a.Find(ctx, dimse.CFindRequestContext{Identifier: query, QueryRetrieveLevel: "STUDY"})
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("find: %d %v", len(matches), err)
+	}
+	if name, ok := matches[0].GetString(core.NewTag(0x0010, 0x0010)); !ok || name != "Érable^Célia" {
+		t.Fatalf("matching Patient Name = %q", name)
+	}
+}
+
 func TestArchiveStoreQueryRetrieveRestart(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

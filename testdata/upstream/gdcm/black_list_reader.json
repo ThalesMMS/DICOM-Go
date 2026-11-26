@@ -1,0 +1,190 @@
+{
+ "description": "Files GDCM's reader tests skip (BLACK_LIST_READER), with the CMake condition that adds them and the adjacent upstream comment.",
+ "entries": [
+  {
+   "file": "LIBIDO-16-ACR_NEMA-Volume.dcm",
+   "condition": "always",
+   "reason": "grrrrrr do not handle swapping correctly (implicit dataset are such a pain)"
+  },
+  {
+   "file": "PET-cardio-Multiframe-Papyrus.dcm",
+   "condition": "always",
+   "reason": "Papyrus:"
+  },
+  {
+   "file": "ELSCINT1_LOSSLESS_RICE.dcm",
+   "condition": "always",
+   "reason": "No way to read this image:"
+  },
+  {
+   "file": "SignedShortLosslessBug.dcm",
+   "condition": "always",
+   "reason": "SignedShortLossless has never really been supported anyway:"
+  },
+  {
+   "file": "PET-GE-dicomwrite-PixelDataSQUNv3.dcm",
+   "condition": "always",
+   "reason": "Would need to process ALL Pixel Data element when decompressing:"
+  },
+  {
+   "file": "TOSHIBA_MDW_HEADER.dcm",
+   "condition": "always",
+   "reason": "Toshiba US Private Data Storage 1.2.392.200036.9116.7.8.1.1.1"
+  },
+  {
+   "file": "PhilipsLosslessRice.dcm",
+   "condition": "always",
+   "reason": "TODO, nasty:"
+  },
+  {
+   "file": "IM-0001-0066.dcm",
+   "condition": "always",
+   "reason": "This file is incorrect"
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1.acr",
+   "condition": "always",
+   "reason": "Problem with RLE"
+  },
+  {
+   "file": "SIEMENS_GBS_III-16-ACR_NEMA_1-ULis2Bytes.dcm",
+   "condition": "always",
+   "reason": "Problem with RLE"
+  },
+  {
+   "file": "MR-MONO2-12-angio-an1.acr",
+   "condition": "always",
+   "reason": "TestImageChangeTransferSyntax1"
+  },
+  {
+   "file": "lena512_rot90.j2k.dcm",
+   "condition": "always",
+   "reason": "Openjpeg / Part 2:"
+  },
+  {
+   "file": "LengthOfItemLarger.dcm",
+   "condition": "always",
+   "reason": "Remove this one for now:"
+  },
+  {
+   "file": "JPEG_LS_InvalidEscapeSequence_COM_padding.dcm",
+   "condition": "always",
+   "reason": "https://github.com/team-charls/charls/issues/16"
+  },
+  {
+   "file": "MITRA_CORNELL.dcm",
+   "condition": "always",
+   "reason": "MITRA_CORNELL"
+  },
+  {
+   "file": "PET-GE-dicomwrite-PixelDataSQUN.dcm",
+   "condition": "always",
+   "reason": "FIXME"
+  },
+  {
+   "file": "PHILIPS_Gyroscan-12-Jpeg_Extended_Process_2_4.dcm",
+   "condition": "NOT GDCM_USE_PVRG",
+   "reason": "The following should really fails according to JPEG spec, IJG is failing and even when forcing decompression using IJG output is different from PVRG... Apparently pvrg likes it this way..."
+  },
+  {
+   "file": "MR_Philips_Intera_PrivateSequenceExplicitVR_in_SQ_2001_e05f_item_wrong_lgt_use_NOSHADOWSEQ.dcm",
+   "condition": "GDCM_WORDS_BIGENDIAN",
+   "reason": ""
+  },
+  {
+   "file": "MR_Philips_Intera_SwitchIndianess_noLgtSQItem_in_trueLgtSeq.dcm",
+   "condition": "GDCM_WORDS_BIGENDIAN",
+   "reason": ""
+  },
+  {
+   "file": "PHILIPS_Intera-16-MONO2-Uncompress.dcm",
+   "condition": "GDCM_WORDS_BIGENDIAN",
+   "reason": ""
+  },
+  {
+   "file": "SIEMENS_MAGNETOM-12-MONO2-GDCM12-VRUN.dcm",
+   "condition": "GDCM_WORDS_BIGENDIAN",
+   "reason": ""
+  },
+  {
+   "file": "PICKER-16-MONO2-No_DicomV3_Preamble.dcm",
+   "condition": "GDCM_WORDS_BIGENDIAN",
+   "reason": ""
+  },
+  {
+   "file": "GE_GENESIS-16-MONO2-WrongLengthItem.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "can't read odd length"
+  },
+  {
+   "file": "PHILIPS_GDCM12xBug2.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "odd length"
+  },
+  {
+   "file": "KODAK-12-MONO1-Odd_Terminated_Sequence.dcmq",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "odd length"
+  },
+  {
+   "file": "PrivateGEImplicitVRBigEndianTransferSyntax16Bits.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "odd length"
+  },
+  {
+   "file": "PHILIPS_Gyroscan-8-MONO2-Odd_Sequence.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "odd length"
+  },
+  {
+   "file": "BugGDCM2_UndefItemWrongVL.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "odd length"
+  },
+  {
+   "file": "THERALYS-12-MONO2-Uncompressed-Even_Length_Tag.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": ""
+  },
+  {
+   "file": "CT-SIEMENS-MissingPixelDataInIconSQ.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "odd length"
+  },
+  {
+   "file": "00191113.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": ""
+  },
+  {
+   "file": "MR_Philips_Intera_PrivateSequenceImplicitVR.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": ""
+  },
+  {
+   "file": "PICKER-16-MONO2-Nested_icon.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": ""
+  },
+  {
+   "file": "PHILIPS_GDCM12xBug.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": "odd length"
+  },
+  {
+   "file": "MR_Philips-Intera_BreaksNOSHADOW.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": ""
+  },
+  {
+   "file": "NM_Kakadu44_SOTmarkerincons.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": ""
+  },
+  {
+   "file": "MARCONI_MxTWin-12-MONO2-JpegLossless-ZeroLengthSQ.dcm",
+   "condition": "NOT GDCM_SUPPORT_BROKEN_IMPLEMENTATION",
+   "reason": ""
+  }
+ ]
+}

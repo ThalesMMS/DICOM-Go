@@ -238,6 +238,7 @@ func ppmToFrameBytes(data []byte, metadata pixeldata.Metadata) ([]byte, error) {
 			binary.LittleEndian.PutUint16(out[destinationOffset:], stored)
 		}
 	}
+	unshiftSigned(out, metadata)
 	return out, nil
 }
 

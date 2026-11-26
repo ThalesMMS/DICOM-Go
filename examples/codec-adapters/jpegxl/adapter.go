@@ -187,6 +187,26 @@ func (c *Codec) decodeFrame(ctx context.Context, payload []byte, metadata pixeld
 	return c.decoder.DecodeFrame(payload, metadata)
 }
 
+// unshiftSigned converts decoded codestream samples of a signed monochrome
+// image to two's complement in place. JPEG XL holds unsigned samples; signed
+// DICOM samples are stored offset-binary (value + 2^(BitsStored-1)), the
+// convention of the base module's pure-Go codec (pixeldata/jpegxl).
+func unshiftSigned(frame []byte, metadata pixeldata.Metadata) {
+	if metadata.PixelRepresentation != 1 || metadata.BitsStored == 0 {
+		return
+	}
+	offset := int32(1) << (metadata.BitsStored - 1)
+	if metadata.BitsAllocated == 8 {
+		for i, b := range frame {
+			frame[i] = byte(int32(b) - offset)
+		}
+		return
+	}
+	for i := 0; i+1 < len(frame); i += 2 {
+		binary.LittleEndian.PutUint16(frame[i:], uint16(int32(binary.LittleEndian.Uint16(frame[i:]))-offset))
+	}
+}
+
 func decodedFrameSize(metadata pixeldata.Metadata) int64 {
 	bytesPerSample := int64(metadata.BitsAllocated / 8)
 	return int64(metadata.Rows) * int64(metadata.Columns) * int64(metadata.SamplesPerPixel) * bytesPerSample

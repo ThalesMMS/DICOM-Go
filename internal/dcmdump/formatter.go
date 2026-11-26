@@ -84,8 +84,8 @@ func (f *Formatter) DumpTokenStream(reader *parser.Reader, syntax transfer.Synta
 		return nil
 	}
 	for {
-		offset := reader.Position()
 		tok, err := reader.Next()
+		offset := tok.Offset
 		if errors.Is(err, io.EOF) {
 			return nil
 		}

@@ -14,6 +14,7 @@ func TestRunGeneratesOutputFile(t *testing.T) {
 	outputPath := filepath.Join(t.TempDir(), "std_gen.go")
 
 	input := strings.Join([]string{
+		"# Generated automatically from DICOM PS 3.6-2026d and PS 3.7-2026d.",
 		"(0010,0010)\tPN\tPatientName\t1\tDICOM",
 		"(0010,0020)\tLO\tPatientID\t1\tDICOM",
 	}, "\n")
@@ -67,6 +68,7 @@ func TestRunProducesDeterministicOutputForSameInput(t *testing.T) {
 	outputPathB := filepath.Join(t.TempDir(), "std_b.go")
 
 	input := strings.Join([]string{
+		"# Generated automatically from DICOM PS 3.6-2026d and PS 3.7-2026d.",
 		"# File created on 2026-03-28 10:26:30 by Test.",
 		"(0010,0010)\tPN\tPatientName\t1\tDICOM",
 		"(0008,0060)\tCS\tModality\t1\tDICOM",
@@ -99,19 +101,54 @@ func TestRunProducesDeterministicOutputForSameInput(t *testing.T) {
 	}
 }
 
-func TestDictionaryTimestampParsesDCMTKHeader(t *testing.T) {
+func TestScanHeaderParsesDCMTKHeader(t *testing.T) {
 	inputPath := filepath.Join(t.TempDir(), "dicom.dic")
-	input := "# File created on 2026-03-28 10:26:30 by Test.\n(0010,0010)\tPN\tPatientName\t1\tDICOM\n"
+	input := "# Generated automatically from DICOM PS 3.6-2026d and PS 3.7-2026d.\n# File created on 2026-03-28 10:26:30 by Test.\n(0010,0010)\tPN\tPatientName\t1\tDICOM\n"
 	if err := os.WriteFile(inputPath, []byte(input), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := dictionaryTimestamp(inputPath)
+	got, err := scanHeader(inputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := time.Date(2026, 3, 28, 10, 26, 30, 0, time.UTC)
-	if !got.Equal(want) {
-		t.Fatalf("dictionaryTimestamp() = %s, want %s", got, want)
+	if !got.CreatedAt.Equal(want) || got.Edition != "2026d" {
+		t.Fatalf("scanHeader() = %+v, want edition 2026d created %s", got, want)
+	}
+}
+
+func TestScanHeaderRejectsInconsistentEditions(t *testing.T) {
+	for name, input := range map[string]string{
+		"PS3.6 and PS3.7 differ": "# Generated automatically from DICOM PS 3.6-2026d and PS 3.7-2026b.\n",
+		"two editions":           "# Generated automatically from DICOM PS 3.6-2026d and PS 3.7-2026d.\n# Generated automatically from DICOM PS 3.6-2026b and PS 3.7-2026b.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			inputPath := filepath.Join(t.TempDir(), "dicom.dic")
+			if err := os.WriteFile(inputPath, []byte(input), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := scanHeader(inputPath); err == nil {
+				t.Fatal("scanHeader accepted an inconsistent edition header")
+			}
+		})
+	}
+}
+
+func TestRunRejectsDictionaryWithoutEdition(t *testing.T) {
+	inputPath := filepath.Join(t.TempDir(), "dicom.dic")
+	if err := os.WriteFile(inputPath, []byte("(0010,0010)\tPN\tPatientName\t1\tDICOM\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-input", inputPath, "-output", filepath.Join(t.TempDir(), "std_gen.go")}, &stdout, &stderr); code != 1 {
+		t.Fatalf("run() exit code = %d, want 1 (stderr %q)", code, stderr.String())
+	}
+}
+
+func TestRunRejectsAbbreviatedCommit(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-commit", "8d68392d"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("run() exit code = %d, want 2", code)
 	}
 }

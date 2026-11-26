@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,11 +11,15 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/internal/clidiag"
+	"github.com/ThalesMMS/dicom-go/internal/clireadopts"
+	"github.com/ThalesMMS/dicom-go/internal/dimsecli"
 	"github.com/ThalesMMS/dicom-go/internal/netstore"
 	"github.com/ThalesMMS/dicom-go/net/dimse"
+	"github.com/ThalesMMS/dicom-go/net/netconf"
 	"github.com/ThalesMMS/dicom-go/net/ul"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/parser"
@@ -54,18 +59,34 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 var errUsage = errors.New("usage error")
 
 type options struct {
-	address string
-	aeTitle string
-	outDir  string
-	single  bool
-	limits  storescpLimits
+	storage                 storageFeatureFlags
+	storagePolicy           *storageLayoutPolicy
+	conn                    dimsecli.ConnectionFlags
+	network                 storescpNetworkFlags
+	networkConfig           *netconf.CompiledConnection
+	configFile, profileName string
+	associationProfile      *ul.AssociationProfile
+	address                 string
+	aeTitle                 string
+	outDir                  string
+	single                  bool
+	limits                  storescpLimits
+	tls                     dimsecli.TLSFlags
+	promiscuous             bool
+	transferSyntaxUIDs      []string
+	// tlsConfig is built from tls when the server starts.
+	tlsConfig *tls.Config
 }
 
 type storescpLimits struct {
+	storageRuntime        *storescpStorageRuntime
+	readPolicy            clireadopts.Options
+	readSink              *clireadopts.Sink
 	maxAssociations       int
 	maxStores             int
 	storeQueueDepth       int
 	maxPDU                uint
+	maxAssociatePDU       uint
 	maxCommandBytes       int64
 	maxDataSetBytes       int64
 	maxElementBytes       int64
@@ -79,6 +100,9 @@ type storescpLimits struct {
 	writeProgressTimeout  time.Duration
 	releaseTimeout        time.Duration
 	shutdownTimeout       time.Duration
+	// bitPreserving stores data sets as received (#1050); it travels with
+	// the limits because both configure every C-STORE.
+	bitPreserving bool
 }
 
 const (
@@ -112,14 +136,38 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 
 	fs := flag.NewFlagSet("storescp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&opts.address, "address", opts.address, "address to listen on")
-	fs.StringVar(&opts.aeTitle, "aetitle", opts.aeTitle, "SCP AE title")
+	opts.storage.register(fs)
+	opts.conn.RegisterWithDefaults(fs, dimsecli.ConnectionDefaults{Host: "127.0.0.1", Port: 11112, CalledAE: opts.aeTitle, Timeout: opts.limits.negotiationTimeout, Listener: true})
+	opts.conn.RegisterAddressAlias(fs, "address")
+	opts.conn.Alias(fs, "aetitle", "called")
+	opts.conn.Alias(fs, "negotiation-timeout", "timeout")
+	opts.limits.readPolicy.Register(fs, false)
+	opts.network.register(fs)
+	fs.StringVar(&opts.configFile, "config-file", "", "DCMTK association cfg file; requires -profile and excludes syntax preference/promiscuous flags")
+	fs.StringVar(&opts.profileName, "profile", "", "named acceptor profile in -config-file; exclusive SOP/transfer-syntax policy")
 	fs.StringVar(&opts.outDir, "output", opts.outDir, "directory for received Part 10 files")
 	fs.BoolVar(&opts.single, "single", false, "handle one association and exit")
+	var acceptAll bool
+	var transferSyntaxList, preferredSyntaxList string
+	fs.BoolVar(&acceptAll, "accept-all", false, "accept every known storage transfer syntax with a readable DICOM dataset envelope; pixel decoding is not required")
+	fs.BoolVar(&opts.promiscuous, "promiscuous", false, "also accept unknown SOP classes; dataset identity and resource limits are still checked")
+	fs.StringVar(&transferSyntaxList, "transfer-syntaxes", "", "restrict storage transfer syntaxes to these comma-separated UIDs in preference order")
+	fs.StringVar(&preferredSyntaxList, "prefer-transfer-syntaxes", "", "prefer these comma-separated readable transfer syntax UIDs in order, before the defaults")
+	preferences := []struct {
+		name string
+		set  bool
+	}{
+		{name: "lossless"}, {name: "jpeg8"}, {name: "jpeg12"},
+		{name: "jls"}, {name: "j2k"}, {name: "rle"}, {name: "hevc"},
+	}
+	for i := range preferences {
+		fs.BoolVar(&preferences[i].set, "prefer-"+preferences[i].name, false, "prefer the "+preferences[i].name+" transfer syntax family before native syntaxes")
+	}
 	fs.IntVar(&opts.limits.maxAssociations, "max-associations", opts.limits.maxAssociations, "maximum concurrent negotiating and established associations")
 	fs.IntVar(&opts.limits.maxStores, "max-stores", opts.limits.maxStores, "maximum C-STORE operations processed concurrently")
 	fs.IntVar(&opts.limits.storeQueueDepth, "store-queue-depth", opts.limits.storeQueueDepth, "maximum C-STORE operations waiting for a processing slot")
 	fs.UintVar(&opts.limits.maxPDU, "max-pdu-bytes", opts.limits.maxPDU, "maximum inbound PDU body bytes")
+	fs.UintVar(&opts.limits.maxAssociatePDU, "max-associate-pdu-bytes", opts.limits.maxAssociatePDU, "maximum inbound A-ASSOCIATE-RQ body bytes, read before admission")
 	fs.Int64Var(&opts.limits.maxCommandBytes, "max-command-bytes", opts.limits.maxCommandBytes, "maximum reassembled DIMSE command bytes")
 	fs.Int64Var(&opts.limits.maxDataSetBytes, "max-dataset-bytes", opts.limits.maxDataSetBytes, "maximum encoded dataset bytes")
 	fs.Int64Var(&opts.limits.maxElementBytes, "max-element-bytes", opts.limits.maxElementBytes, "maximum non-Pixel-Data element value bytes")
@@ -127,11 +175,11 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	fs.IntVar(&opts.limits.maxSequenceDepth, "max-sequence-depth", opts.limits.maxSequenceDepth, "maximum combined sequence/item nesting depth")
 	fs.Int64Var(&opts.limits.maxPixelDataBytes, "max-pixel-data-bytes", opts.limits.maxPixelDataBytes, "maximum native or cumulative encapsulated Pixel Data bytes")
 	fs.IntVar(&opts.limits.maxPixelDataFragments, "max-pixel-fragments", opts.limits.maxPixelDataFragments, "maximum encapsulated Pixel Data fragments")
-	fs.DurationVar(&opts.limits.negotiationTimeout, "negotiation-timeout", opts.limits.negotiationTimeout, "association negotiation timeout")
 	fs.DurationVar(&opts.limits.idleTimeout, "idle-timeout", opts.limits.idleTimeout, "idle association timeout")
 	fs.DurationVar(&opts.limits.readProgressTimeout, "read-progress-timeout", opts.limits.readProgressTimeout, "maximum time without inbound byte progress")
 	fs.DurationVar(&opts.limits.writeProgressTimeout, "write-progress-timeout", opts.limits.writeProgressTimeout, "maximum time without outbound byte progress")
 	fs.DurationVar(&opts.limits.releaseTimeout, "release-timeout", opts.limits.releaseTimeout, "association release timeout")
+	fs.BoolVar(&opts.limits.bitPreserving, "bit-preserving", false, "store each data set's bytes as received after a File Meta header built from the command, instead of re-encoding the parsed data set; the stored file is still parsed within the limits and its identity checked before publication")
 	fs.DurationVar(&opts.limits.shutdownTimeout, "shutdown-timeout", opts.limits.shutdownTimeout, "grace period before active associations are aborted")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Usage: %s [flags]\n\nServe DICOM C-STORE requests, answer C-ECHO verification, and save received Part 10 files.\nUnsupported DIMSE commands abort only the affected association.\n\nFlags:\n", fs.Name())
@@ -144,7 +192,58 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		}
 		return opts, errUsage
 	}
+	if err := opts.conn.Validate(); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	opts.address, opts.aeTitle, opts.tls = opts.conn.Address(), opts.conn.CalledAE, opts.conn.TLS
+	opts.limits.negotiationTimeout = opts.conn.Timeout
+
+	if err := opts.limits.readPolicy.Validate(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
 	if fs.NArg() != 0 {
+		fs.Usage()
+		return opts, errUsage
+	}
+	if err := validateStorescpNetworkFlags(fs, opts.network); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	if err := validateStorescpProfileFlags(fs, opts.configFile, opts.profileName); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	var emptySyntaxList bool
+	fs.Visit(func(f *flag.Flag) {
+		if (f.Name == "transfer-syntaxes" && strings.TrimSpace(transferSyntaxList) == "") ||
+			(f.Name == "prefer-transfer-syntaxes" && strings.TrimSpace(preferredSyntaxList) == "") {
+			emptySyntaxList = true
+		}
+	})
+	if emptySyntaxList {
+		_, _ = fmt.Fprintln(stderr, "transfer syntax lists must not be empty")
+		return opts, errUsage
+	}
+	var preference string
+	for _, candidate := range preferences {
+		if candidate.set {
+			if preference != "" || preferredSyntaxList != "" {
+				_, _ = fmt.Fprintln(stderr, "choose only one transfer syntax preference option")
+				return opts, errUsage
+			}
+			preference = candidate.name
+		}
+	}
+	var err error
+	opts.transferSyntaxUIDs, err = storescpTransferSyntaxPolicy(acceptAll, transferSyntaxList, preference, preferredSyntaxList)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return opts, errUsage
+	}
+	if err := opts.tls.Validate(); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
 		fs.Usage()
 		return opts, errUsage
 	}
@@ -163,6 +262,11 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		fs.Usage()
 		return opts, errUsage
 	}
+	opts.storagePolicy, err = compileStorageFeatures(fs, opts.storage, opts.single)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, errStorageFeatureUsage)
+		return opts, errUsage
+	}
 	return opts, nil
 }
 
@@ -172,6 +276,7 @@ func defaultStorescpLimits() storescpLimits {
 		maxStores:             defaultMaxStores,
 		storeQueueDepth:       defaultStoreQueueDepth,
 		maxPDU:                uint(ul.DefaultMaxPDU),
+		maxAssociatePDU:       uint(ul.DefaultMaxAssociationPDU),
 		maxCommandBytes:       dimse.MaxCommandSetBytes,
 		maxDataSetBytes:       defaultMaxDataSetBytes,
 		maxElementBytes:       defaultMaxElementBytes,
@@ -198,6 +303,9 @@ func validateStorescpLimits(limits storescpLimits) error {
 	if limits.maxPDU == 0 || uint64(limits.maxPDU) > math.MaxUint32 {
 		return errors.New("-max-pdu-bytes must be between 1 and 4294967295")
 	}
+	if limits.maxAssociatePDU == 0 || uint64(limits.maxAssociatePDU) > math.MaxUint32 {
+		return errors.New("-max-associate-pdu-bytes must be between 1 and 4294967295")
+	}
 	if limits.maxCommandBytes <= 0 || limits.maxDataSetBytes <= 0 || limits.maxElementBytes <= 0 ||
 		limits.maxElements <= 0 || limits.maxSequenceDepth <= 0 || limits.maxPixelDataBytes <= 0 ||
 		limits.maxPixelDataFragments <= 0 {
@@ -221,10 +329,66 @@ func runServerWithContext(ctx context.Context, opts options, stdout, stderr io.W
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	profile, err := loadStorescpProfile(ctx, opts)
+	if err != nil {
+		return err
+	}
+	opts.associationProfile = profile
+	if opts.storagePolicy != nil {
+		stdout = &storageSerialWriter{writer: stdout}
+		stderr = &storageSerialWriter{writer: stderr}
+	}
+	opts.limits.readSink = &clireadopts.Sink{Writer: stderr}
+	tlsConfig, err := opts.tls.Config()
+	if err != nil {
+		return err
+	}
+	opts.tlsConfig = tlsConfig
+	opts.networkConfig, err = loadStorescpNetwork(ctx, opts.network, tlsConfig != nil)
+	if err != nil {
+		return err
+	}
+	if opts.networkConfig != nil {
+		opts.address = opts.networkConfig.Address()
+		opts.aeTitle = opts.networkConfig.AETitles()[0]
+	}
+	if err = ctx.Err(); err != nil {
+		return nil
+	}
 	if err := os.MkdirAll(opts.outDir, 0o755); err != nil {
 		return err
 	}
-	listener, err := ul.Listen(ul.ListenOptions{Address: opts.address})
+	storageRuntime, err := newStorescpStorageRuntime(opts.storagePolicy, opts.outDir)
+	if err != nil {
+		return errStorageFeatureUsage
+	}
+	if storageRuntime != nil {
+		opts.limits.storageRuntime = storageRuntime
+		opts.outDir = storageRuntime.root
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = storageRuntime.Close(ctx)
+			case <-storageRuntime.done:
+			}
+		}()
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), opts.limits.shutdownTimeout)
+			defer cancel()
+			if ctx.Err() != nil {
+				cancel()
+			}
+			_ = storageRuntime.Close(closeCtx)
+			storageRuntimeSummary(stderr, storageRuntime)
+		}()
+	}
+	if err = ctx.Err(); err != nil {
+		return nil
+	}
+	listener, err := ul.Listen(ul.ListenOptions{Address: opts.address, Context: ctx})
 	if err != nil {
 		return err
 	}
@@ -289,17 +453,35 @@ func runServerWithContext(ctx context.Context, opts options, stdout, stderr io.W
 }
 
 func storescpAcceptOptions(opts options) ul.AcceptOptions {
-	return ul.AcceptOptions{
+	syntaxes := opts.transferSyntaxUIDs
+	if len(syntaxes) == 0 {
+		syntaxes = supportedTransferSyntaxUIDs()
+	}
+	accept := ul.AcceptOptions{
 		AETitle:                   opts.aeTitle,
 		MaxPDU:                    uint32(opts.limits.maxPDU),
+		MaxAssociationPDU:         uint32(opts.limits.maxAssociatePDU),
+		TLSConfig:                 opts.tlsConfig,
 		SupportedAbstractSyntaxes: acceptedAbstractSyntaxes(),
-		SupportedTransferSyntaxes: supportedTransferSyntaxUIDs(),
-		NegotiationTimeout:        opts.limits.negotiationTimeout,
-		IdleTimeout:               opts.limits.idleTimeout,
-		ReadProgressTimeout:       opts.limits.readProgressTimeout,
-		WriteProgressTimeout:      opts.limits.writeProgressTimeout,
-		ReleaseTimeout:            opts.limits.releaseTimeout,
+		SupportedTransferSyntaxes: append([]string(nil), syntaxes...),
+		AcceptAnyAbstractSyntax:   opts.promiscuous,
+		PresentationContextRules: []ul.PresentationContextRule{{
+			AbstractSyntaxUID: dimse.VerificationSOPClassUID,
+			TransferSyntaxes:  nativeTransferSyntaxUIDs(),
+		}},
+		NegotiationTimeout:   opts.limits.negotiationTimeout,
+		IdleTimeout:          opts.limits.idleTimeout,
+		ReadProgressTimeout:  opts.limits.readProgressTimeout,
+		WriteProgressTimeout: opts.limits.writeProgressTimeout,
+		ReleaseTimeout:       opts.limits.releaseTimeout,
 	}
+	if opts.associationProfile != nil {
+		accept.SupportedAbstractSyntaxes = nil
+		accept.SupportedTransferSyntaxes = nil
+		accept.AcceptAnyAbstractSyntax = false
+		accept.PresentationContextRules = opts.associationProfile.Rules
+	}
+	return opts.conn.ApplyListenerOptions(applyStorescpNetwork(accept, opts.networkConfig))
 }
 
 func handleAssociation(assoc *ul.Association, outDir string, stdout io.Writer) error {
@@ -329,7 +511,7 @@ func handleAssociationWithRuntime(ctx context.Context, assoc *ul.Association, ou
 		}
 		switch field {
 		case dimse.CEchoRQ:
-			if err := handleCEchoCommand(assoc, incoming, stdout); err != nil {
+			if err := handleCEchoCommand(ctx, assoc, incoming, stdout); err != nil {
 				return err
 			}
 		case dimse.CStoreRQ:
@@ -402,19 +584,8 @@ func dimseCommandName(field uint16) string {
 	}
 }
 
-func handleCEchoCommand(assoc *ul.Association, incoming incomingCommand, stdout io.Writer) error {
-	messageID, err := dimse.CommandUint16(incoming.command, dimse.MessageID)
-	if err != nil {
-		return err
-	}
-	dataSetType, err := dimse.CommandUint16(incoming.command, dimse.CommandDataSetType)
-	if err != nil {
-		return err
-	}
-	if dataSetType != dimse.NoDataSet {
-		return fmt.Errorf("C-ECHO request dataset type 0x%04X, want no dataset", dataSetType)
-	}
-	if err := dimse.SendCEchoResponse(assoc, incoming.pcID, messageID, dimse.StatusSuccess); err != nil {
+func handleCEchoCommand(ctx context.Context, assoc *ul.Association, incoming incomingCommand, stdout io.Writer) error {
+	if err := dimse.ServeCEchoCommand(ctx, assoc, incoming.pcID, incoming.command); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "C-ECHO response sent status=0x%04X\n", dimse.StatusSuccess)
@@ -438,6 +609,10 @@ func handleCStoreCommandWithRuntime(ctx context.Context, assoc *ul.Association, 
 	if err != nil {
 		return err
 	}
+	if !netstore.CStoreContextMatches(req.AffectedSOPClassUID, pc) {
+		err := discardDataSetWithLimits(assoc, incoming, limits)
+		return sendCStoreResponse(assoc, incoming.pcID, *req, statusDataSetDoesNotMatch, stdout, err)
+	}
 	syntax, ok := transfer.DefaultRegistry.Get(pc.TransferSyntaxUID)
 	if !ok {
 		return transfer.ErrUnknownTransferSyntax
@@ -458,6 +633,13 @@ func handleCStoreCommandWithRuntime(ctx context.Context, assoc *ul.Association, 
 		if releaseStore != nil {
 			defer releaseStore()
 		}
+		if limits.bitPreserving {
+			status, err = storeBitPreserving(ctx, assoc, incoming, *req, pc, syntax, outDir, limits)
+			if status == dimse.StatusSuccess && err == nil {
+				_, _ = fmt.Fprintln(stdout, "stored DICOM instance")
+			}
+			return sendCStoreResponse(assoc, incoming.pcID, *req, status, stdout, err)
+		}
 		var dataset *object.Object
 		dataset, err = receiveDataSetWithLimits(assoc, incoming, syntax, limits)
 		if err != nil {
@@ -465,23 +647,49 @@ func handleCStoreCommandWithRuntime(ctx context.Context, assoc *ul.Association, 
 		} else if validateErr := netstore.ValidateCStoreDataSet(req.AffectedSOPClassUID, req.AffectedSOPInstanceUID, pc, dataset); validateErr != nil {
 			status = statusDataSetDoesNotMatch
 		} else {
-			_, saveErr := netstore.SavePart10WithContext(ctx, outDir, dataset, syntax)
+			// This SCP (the called AE) received the instance from the calling AE.
+			titles := netstore.ReceivedAETitles(assoc.CalledAETitle, assoc.CallingAETitle)
+			var prepared *storagePrepared
+			var prepareErr error
+			if limits.storageRuntime != nil {
+				prepared, prepareErr = limits.storageRuntime.prepare(ctx, dataset, assoc, *req)
+				if prepareErr == nil {
+					prepareErr = prepared.format(ctx, dataset)
+				}
+			}
+			if prepareErr != nil {
+				status = storageFeatureErrorStatus(prepareErr)
+				return sendCStoreResponse(assoc, incoming.pcID, *req, status, stdout, nil)
+			}
+			var storedPath string
+			var saveErr error
+			if prepared == nil {
+				storedPath, saveErr = netstore.SavePart10WithOptions(ctx, outDir, dataset, syntax, netstore.SaveOptions{AETitles: titles})
+			} else {
+				storedPath, saveErr = netstore.SavePart10RelativeWithOptions(ctx, outDir, prepared.relative, dataset, syntax, netstore.SaveOptions{AETitles: titles})
+			}
 			if saveErr != nil {
+				prepared.abort()
 				status = statusOutOfResources
 				_, _ = fmt.Fprintf(stdout, "store failed: %v\n", saveErr)
 			} else {
+				prepared.stored(storedPath)
 				_, _ = fmt.Fprintln(stdout, "stored DICOM instance")
 			}
 		}
 	}
 
+	return sendCStoreResponse(assoc, incoming.pcID, *req, status, stdout, err)
+}
+
+func sendCStoreResponse(assoc *ul.Association, pcID byte, req dimse.CStoreRequest, status uint16, stdout io.Writer, err error) error {
 	rsp := dimse.CStoreResponse{
 		AffectedSOPClassUID:       req.AffectedSOPClassUID,
 		MessageIDBeingRespondedTo: req.MessageID,
 		AffectedSOPInstanceUID:    req.AffectedSOPInstanceUID,
 		Status:                    status,
 	}
-	if rspErr := dimse.SendCStoreResponse(assoc, incoming.pcID, rsp); rspErr != nil && err == nil {
+	if rspErr := dimse.SendCStoreResponse(assoc, pcID, rsp); rspErr != nil && err == nil {
 		err = rspErr
 	}
 	_, _ = fmt.Fprintf(stdout, "C-STORE response sent status=0x%04X\n", status)
@@ -614,14 +822,23 @@ func receiveDataSetWithLimits(assoc *ul.Association, incoming incomingCommand, s
 		MaxPixelDataBytes: limits.maxPixelDataBytes,
 		MaxFragments:      limits.maxPixelDataFragments,
 	}
-	if incoming.dataLast {
-		return object.ReadDataSetWithOptions(bytes.NewReader(incoming.dataPrefix), syntax, readOptions)
+	// The shared reader continues after the PDVs that arrived with the
+	// command and, for a Deflated data set, consumes the pad byte or empty
+	// PDV after the end of the deflate stream so the next command starts on
+	// a clean P-DATA boundary.
+	reader := dimse.NewPDataReaderWithPrefix(assoc, incoming.pcID, incoming.dataPrefix, incoming.dataLast)
+	dataset, err := dimse.ReadPDataDataSet(reader, syntax, limits.readPolicy.Apply(readOptions))
+	if err != nil {
+		return nil, err
 	}
-	if len(incoming.dataPrefix) == 0 {
-		return object.ReadDataSetWithOptions(dimse.NewPDataReader(assoc, incoming.pcID), syntax, readOptions)
+	report, err := clireadopts.CollectObject(context.Background(), dataset, limits.readPolicy, "dataset")
+	if err != nil {
+		return nil, err
 	}
-	reader := io.MultiReader(bytes.NewReader(incoming.dataPrefix), dimse.NewPDataReader(assoc, incoming.pcID))
-	return object.ReadDataSetWithOptions(reader, syntax, readOptions)
+	if err := limits.readSink.Emit("storescp", report); err != nil {
+		return nil, err
+	}
+	return dataset, nil
 }
 
 func discardDataSetWithLimits(assoc *ul.Association, incoming incomingCommand, limits storescpLimits) error {
@@ -685,9 +902,128 @@ func acceptedAbstractSyntaxes() []string {
 	return uids
 }
 
-func supportedTransferSyntaxUIDs() []string {
+// nativeTransferSyntaxUIDs keeps the existing default negotiation order.
+func nativeTransferSyntaxUIDs() []string {
 	return []string{
 		transfer.ImplicitVRLittleEndian.UID,
 		transfer.ExplicitVRLittleEndian.UID,
+		transfer.DeflatedExplicitVRLittleEndian.UID,
 	}
+}
+
+// supportedTransferSyntaxUIDs keeps native preference while accepting common
+// compressed storage envelopes without decoding/re-encoding their frames.
+func supportedTransferSyntaxUIDs() []string {
+	return append(nativeTransferSyntaxUIDs(),
+		transfer.JPEGBaseline.UID, transfer.JPEGExtended.UID,
+		transfer.JPEGLosslessNonHierarchical.UID, transfer.JPEGLosslessSV1.UID,
+		transfer.JPEGLSLossless.UID, transfer.JPEGLSNearLossless.UID,
+		transfer.JPEG2000LosslessOnly.UID, transfer.JPEG2000.UID,
+		transfer.RLELossless.UID,
+	)
+}
+
+func storescpTransferSyntaxPolicy(acceptAll bool, acceptedList, preference, preferredList string) ([]string, error) {
+	if acceptAll && acceptedList != "" {
+		return nil, errors.New("-accept-all and -transfer-syntaxes are mutually exclusive")
+	}
+	accepted := supportedTransferSyntaxUIDs()
+	if acceptAll {
+		// Supported describes dataset-envelope I/O, not installed pixel codecs.
+		// MIME/XML/ST2110 and other known unreadable envelopes stay refused.
+		accepted = nativeTransferSyntaxUIDs()
+		for _, syntax := range transfer.DefaultRegistry.All() {
+			if syntax.Supported {
+				accepted = appendUniqueSyntaxes(accepted, syntax.UID)
+			}
+		}
+	}
+	if acceptedList != "" {
+		var err error
+		accepted, err = parseReadableTransferSyntaxUIDs(acceptedList)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var preferred []string
+	if preferredList != "" {
+		var err error
+		preferred, err = parseReadableTransferSyntaxUIDs(preferredList)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		switch preference {
+		case "lossless":
+			preferred = []string{transfer.JPEGLosslessSV1.UID, transfer.JPEGLosslessNonHierarchical.UID}
+		case "jpeg8":
+			preferred = []string{transfer.JPEGBaseline.UID}
+		case "jpeg12":
+			preferred = []string{transfer.JPEGExtended.UID}
+		case "jls":
+			preferred = []string{transfer.JPEGLSLossless.UID, transfer.JPEGLSNearLossless.UID}
+		case "j2k":
+			preferred = []string{transfer.JPEG2000LosslessOnly.UID, transfer.JPEG2000.UID}
+		case "rle":
+			preferred = []string{transfer.RLELossless.UID}
+		case "hevc":
+			preferred = []string{transfer.HEVCMP51.UID, transfer.HEVCM10P51.UID}
+		case "":
+		default:
+			return nil, errors.New("unknown transfer syntax preference")
+		}
+	}
+	if acceptedList != "" {
+		var allowedPreferences []string
+		for _, uid := range preferred {
+			found := false
+			for _, allowed := range accepted {
+				found = found || allowed == uid
+			}
+			if !found {
+				if preferredList != "" {
+					return nil, errors.New("preferred transfer syntax is excluded by -transfer-syntaxes")
+				}
+				continue
+			}
+			allowedPreferences = append(allowedPreferences, uid)
+		}
+		if len(preferred) > 0 && len(allowedPreferences) == 0 {
+			return nil, errors.New("preferred transfer syntax family is excluded by -transfer-syntaxes")
+		}
+		preferred = allowedPreferences
+	}
+	return appendUniqueSyntaxes(preferred, accepted...), nil
+}
+
+func parseReadableTransferSyntaxUIDs(list string) ([]string, error) {
+	var out []string
+	for _, value := range strings.Split(list, ",") {
+		uid := strings.TrimSpace(value)
+		syntax, ok := transfer.DefaultRegistry.Get(uid)
+		if uid == "" || !ok || syntax.UID != uid || !syntax.Supported {
+			// Do not echo user-supplied values into operational diagnostics.
+			return nil, errors.New("transfer syntax list contains an unknown or unreadable UID")
+		}
+		for _, prior := range out {
+			if uid == prior {
+				return nil, errors.New("transfer syntax list contains a duplicate UID")
+			}
+		}
+		out = append(out, uid)
+	}
+	return out, nil
+}
+
+func appendUniqueSyntaxes(out []string, uids ...string) []string {
+	for _, uid := range uids {
+		found := false
+		for _, prior := range out {
+			found = found || uid == prior
+		}
+		if !found {
+			out = append(out, uid)
+		}
+	}
+	return out
 }

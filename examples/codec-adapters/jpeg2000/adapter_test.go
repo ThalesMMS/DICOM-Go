@@ -2,6 +2,7 @@ package jpeg2000
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"image"
@@ -17,6 +18,7 @@ import (
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
+	j2kenc "github.com/ThalesMMS/dicom-go/pixeldata/jpeg2000"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
@@ -315,7 +317,7 @@ func TestDecodeRejectsCodestreamMetadataMismatch(t *testing.T) {
 			encoded:       encodeGray16J2K(t, false, true, []uint16{0, 4096, 32768, 65534}),
 			opts:          jpeg2000MetadataOptions{rows: 2, columns: 2, bitsAllocated: 8},
 			want:          ErrUnsupportedMetadata,
-			wantSubstring: "JPEG 2000 precision=16 BitsStored=8",
+			wantSubstring: "JPEG 2000 precision=16 BitsAllocated=8",
 		},
 		{
 			name:          "dimensions",
@@ -471,9 +473,10 @@ func TestDecodeRejectsUnsupportedMetadata(t *testing.T) {
 			wantSubstring: "SamplesPerPixel=2",
 		},
 		{
+			// The core backend decodes signed streams; this one is unsigned.
 			name:          "signed pixel data",
 			opts:          jpeg2000MetadataOptions{pixelRepresentation: 1},
-			want:          ErrUnsupportedMetadata,
+			want:          ErrSignednessMismatch,
 			wantSubstring: "PixelRepresentation=1",
 		},
 		{
@@ -653,6 +656,12 @@ func encodeJ2K(t testing.TB, img image.Image, highThroughput bool, lossless bool
 
 func encodeJ2KWithEncodeOptions(t testing.TB, img image.Image, enc encodeOptions) []byte {
 	t.Helper()
+	if enc.highThroughput {
+		return encodeStandardHTJ2K(t, img, enc)
+	}
+	if enc.profile != j2k.ProfilePart2 && (enc.format == 0 || enc.format == j2k.FormatJ2K) {
+		return encodeStandardPart1(t, img, enc)
+	}
 	var buf bytes.Buffer
 	opts := j2k.DefaultOptions()
 	if enc.format == 0 {
@@ -872,4 +881,87 @@ func equalFrames(got, want [][]byte) bool {
 		}
 	}
 	return true
+}
+
+// encodeStandardPart1 encodes img with the base module's ISO/IEC 15444-1
+// encoder: OpenJPEG and the core backend read go-jpeg2000's Part 1 output as
+// a flat image, so only go-jpeg2000 itself decodes it (#1276).
+func encodeStandardPart1(t testing.TB, img image.Image, enc encodeOptions) []byte {
+	t.Helper()
+	return encodeStandard(t, img, enc, false)
+}
+
+// encodeStandardHTJ2K encodes img with the base module's ISO/IEC 15444-15
+// encoder: go-jpeg2000's HT output is not standard HTJ2K and only its own
+// decoder reads it (#1270).
+func encodeStandardHTJ2K(t testing.TB, img image.Image, enc encodeOptions) []byte {
+	t.Helper()
+	return encodeStandard(t, img, enc, true)
+}
+
+func encodeStandard(t testing.TB, img image.Image, enc encodeOptions, ht bool) []byte {
+	t.Helper()
+	bounds := img.Bounds()
+	metadata := pixeldata.Metadata{
+		Rows: uint16(bounds.Dy()), Columns: uint16(bounds.Dx()), SamplesPerPixel: 1,
+		BitsAllocated: 8, BitsStored: 8, HighBit: 7, NumberOfFrames: 1,
+		PhotometricInterpretation: "MONOCHROME2",
+	}
+	var frame []byte
+	switch img := img.(type) {
+	case *image.Gray:
+		frame = append(frame, img.Pix...)
+	case *image.Gray16:
+		bits := enc.precision
+		if bits == 0 {
+			bits = 16
+		}
+		metadata.BitsAllocated, metadata.BitsStored, metadata.HighBit = 16, uint16(bits), uint16(bits-1)
+		for i := 0; i+1 < len(img.Pix); i += 2 {
+			// go-jpeg2000 scales full-range samples to the precision.
+			v := uint32(img.Pix[i])<<8 | uint32(img.Pix[i+1])
+			v = (v*(1<<bits-1) + 32767) / 65535
+			frame = append(frame, byte(v), byte(v>>8))
+		}
+	default:
+		metadata.SamplesPerPixel, metadata.PhotometricInterpretation = 3, "RGB"
+		metadata.PlanarConfigurationPresent = true
+		wide := enc.precision > 8
+		if wide {
+			metadata.BitsAllocated, metadata.BitsStored, metadata.HighBit = 16, uint16(enc.precision), uint16(enc.precision-1)
+		}
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				r, g, b, _ := img.At(x, y).RGBA()
+				for _, v := range []uint32{r, g, b} {
+					if wide {
+						v >>= 16 - uint32(enc.precision)
+						frame = append(frame, byte(v), byte(v>>8))
+					} else {
+						frame = append(frame, byte(v>>8))
+					}
+				}
+			}
+		}
+	}
+	options := j2kenc.Options{TransferSyntaxUID: transfer.HTJ2KLossless.UID}
+	switch {
+	case !ht && !enc.lossless:
+		options = j2kenc.Options{TransferSyntaxUID: transfer.JPEG2000.UID, StepSize: 1, AllowLossy: true}
+	case !ht:
+		options.TransferSyntaxUID = transfer.JPEG2000LosslessOnly.UID
+	case !enc.lossless:
+		options = j2kenc.Options{TransferSyntaxUID: transfer.HTJ2K.UID, StepSize: 1, AllowLossy: true}
+	case enc.progressionOrder == j2k.RPCL:
+		options.TransferSyntaxUID = transfer.HTJ2KLosslessRPCL.UID
+	}
+	encoder, err := j2kenc.NewEncoder(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := encoder.EncodeFrame(context.Background(), frame, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Data
 }

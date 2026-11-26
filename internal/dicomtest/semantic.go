@@ -99,7 +99,10 @@ func semanticDataSet(ds core.DataSet, order binary.ByteOrder, depth int) ([]Sema
 		}
 		if e.VR() == core.VRDS || e.VR() == core.VRIS {
 			for i, value := range n.Values {
+				// Leading/trailing spaces are IS/DS padding (PS3.5 6.2).
+				value = strings.Trim(value, " ")
 				if value == "" {
+					n.Values[i] = ""
 					continue
 				}
 				number, ok := new(big.Rat).SetString(value)

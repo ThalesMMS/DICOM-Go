@@ -14,6 +14,8 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/ThalesMMS/dicom-go/render"
 )
 
 func main() {
@@ -154,7 +156,7 @@ func newViewer(series *Series) *viewer {
 		if v.setting {
 			return
 		}
-		v.setIndex(int(math.Round(value)) - 1)
+		v.setIndex(render.NearestIndex(value) - 1)
 	}
 
 	centerMin, centerMax, widthMax := sliderRanges(initial)

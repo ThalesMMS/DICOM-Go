@@ -1,0 +1,68 @@
+{
+ "description": "MD5 of each unpacked overlay (one byte per pixel, as produced by gdcm::Overlay::GetUnpackBuffer) for TestOverlay3.",
+ "entries": [
+  {
+   "corpus": "gdcmData",
+   "file": "MR-SIEMENS-DICOM-WithOverlays-extracted-overlays.dcm",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "d42bff3545ed8c5fccb39d9a61828992"
+  },
+  {
+   "corpus": "gdcmData",
+   "file": "PHILIPS_Brilliance_ExtraBytesInOverlay.dcm",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "2cf60257b75a034fbdc98e560881184e"
+  },
+  {
+   "corpus": "gdcmData",
+   "file": "05115014-mr-siemens-avanto-syngo-with-palette-icone.dcm",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "b2dd1007e018b3b9691761cf93f77552"
+  },
+  {
+   "corpus": "gdcmData",
+   "file": "MR-SIEMENS-DICOM-WithOverlays.dcm",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "d42bff3545ed8c5fccb39d9a61828992"
+  },
+  {
+   "corpus": "gdcmDataExtra",
+   "file": "05119848_IS_Black_hasOverlayData.dcm",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "4b0240033afba211eeac42a44417d4c9"
+  },
+  {
+   "corpus": "gdcmDataExtra",
+   "file": "45909476",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "349d1f9510f64467ecf73eeea46c9c6e"
+  },
+  {
+   "corpus": "gdcmDataExtra",
+   "file": "45909517",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "6a5f8038cc8cf753bf74422164adc24c"
+  },
+  {
+   "corpus": "gdcmDataExtra",
+   "file": "OverlayDICOMDataSet.dcm",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "1a3bf73e42b0f6dc282a9be59c054027"
+  },
+  {
+   "corpus": "gdcmConformanceTests",
+   "file": "CT_OSIRIX_OddOverlay.dcm",
+   "overlay_index": 0,
+   "type": "Graphics",
+   "unpacked_md5": "040560796c1a53ffce0d2f7e90c9dc26"
+  }
+ ]
+}

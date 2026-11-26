@@ -1,0 +1,528 @@
+{
+ "description": "DCMTK DcmAttributeMatching vectors (tmatch.cc): whether a query value is a valid date/time/datetime range query ('valid_query'), and whether a query matches a candidate ('match') under wild card, date, time, datetime, UID list, single value or VR-selected matching.",
+ "entries": [
+  {
+   "line": 77,
+   "kind": "wildcard",
+   "query": "",
+   "candidate": "hello world",
+   "match": true
+  },
+  {
+   "line": 78,
+   "kind": "wildcard",
+   "query": "*",
+   "candidate": "hello world",
+   "match": true
+  },
+  {
+   "line": 79,
+   "kind": "wildcard",
+   "query": "?",
+   "candidate": "hello world",
+   "match": false
+  },
+  {
+   "line": 80,
+   "kind": "wildcard",
+   "query": "?*",
+   "candidate": "hello world",
+   "match": true
+  },
+  {
+   "line": 81,
+   "kind": "wildcard",
+   "query": "?ell*??l?",
+   "candidate": "hello world",
+   "match": true
+  },
+  {
+   "line": 82,
+   "kind": "wildcard",
+   "query": "?ell***?*?l??",
+   "candidate": "hello world",
+   "match": false
+  },
+  {
+   "line": 83,
+   "kind": "wildcard",
+   "query": "?ell*?**?l?*",
+   "candidate": "hello world",
+   "match": true
+  },
+  {
+   "line": 85,
+   "kind": "date",
+   "query": "17000101",
+   "valid_query": true
+  },
+  {
+   "line": 86,
+   "kind": "date",
+   "query": "30001010",
+   "valid_query": true
+  },
+  {
+   "line": 87,
+   "kind": "date",
+   "query": "-12000101",
+   "valid_query": true
+  },
+  {
+   "line": 88,
+   "kind": "date",
+   "query": "12451210-",
+   "valid_query": true
+  },
+  {
+   "line": 89,
+   "kind": "date",
+   "query": "20451210-29110114",
+   "valid_query": true
+  },
+  {
+   "line": 90,
+   "kind": "date",
+   "query": "204512101-29110114",
+   "valid_query": false
+  },
+  {
+   "line": 91,
+   "kind": "date",
+   "query": "20451210-29110134",
+   "valid_query": false
+  },
+  {
+   "line": 92,
+   "kind": "date",
+   "query": "3124",
+   "valid_query": false
+  },
+  {
+   "line": 93,
+   "kind": "date",
+   "query": "2017.05.12",
+   "valid_query": false
+  },
+  {
+   "line": 94,
+   "kind": "date",
+   "query": "",
+   "candidate": "20170224",
+   "match": true
+  },
+  {
+   "line": 95,
+   "kind": "date",
+   "query": "1987.08.02",
+   "candidate": "19870802",
+   "match": true
+  },
+  {
+   "line": 96,
+   "kind": "date",
+   "query": "-20000101",
+   "candidate": "20000101",
+   "match": true
+  },
+  {
+   "line": 97,
+   "kind": "date",
+   "query": "-20000101",
+   "candidate": "19990531",
+   "match": true
+  },
+  {
+   "line": 98,
+   "kind": "date",
+   "query": "-20000101",
+   "candidate": "20010101",
+   "match": false
+  },
+  {
+   "line": 99,
+   "kind": "date",
+   "query": "20000101-",
+   "candidate": "20010101",
+   "match": true
+  },
+  {
+   "line": 100,
+   "kind": "date",
+   "query": "20000101-",
+   "candidate": "19991231",
+   "match": false
+  },
+  {
+   "line": 101,
+   "kind": "date",
+   "query": "19990101-20000305",
+   "candidate": "20000101",
+   "match": true
+  },
+  {
+   "line": 102,
+   "kind": "date",
+   "query": "19990101-20000305",
+   "candidate": "19980107",
+   "match": false
+  },
+  {
+   "line": 103,
+   "kind": "date",
+   "query": "19990101-20000305",
+   "candidate": "20000306",
+   "match": false
+  },
+  {
+   "line": 104,
+   "kind": "date",
+   "query": "19990101-20000305",
+   "candidate": "122713.114122",
+   "match": false
+  },
+  {
+   "line": 106,
+   "kind": "time",
+   "query": "12",
+   "valid_query": true
+  },
+  {
+   "line": 107,
+   "kind": "time",
+   "query": "49",
+   "valid_query": false
+  },
+  {
+   "line": 108,
+   "kind": "time",
+   "query": "12:00:00",
+   "valid_query": false
+  },
+  {
+   "line": 109,
+   "kind": "time",
+   "query": "122413.123456-13",
+   "valid_query": true
+  },
+  {
+   "line": 110,
+   "kind": "time",
+   "query": "29-13",
+   "valid_query": false
+  },
+  {
+   "line": 111,
+   "kind": "time",
+   "query": "04-25",
+   "valid_query": false
+  },
+  {
+   "line": 112,
+   "kind": "time",
+   "query": "-231211",
+   "valid_query": true
+  },
+  {
+   "line": 113,
+   "kind": "time",
+   "query": "124222-",
+   "valid_query": true
+  },
+  {
+   "line": 114,
+   "kind": "time",
+   "query": "",
+   "candidate": "120224",
+   "match": true
+  },
+  {
+   "line": 115,
+   "kind": "time",
+   "query": "11:23:17.123456",
+   "candidate": "112317.123456",
+   "match": true
+  },
+  {
+   "line": 116,
+   "kind": "time",
+   "query": "-12",
+   "candidate": "120000",
+   "match": true
+  },
+  {
+   "line": 117,
+   "kind": "time",
+   "query": "-12",
+   "candidate": "113059.654321",
+   "match": true
+  },
+  {
+   "line": 118,
+   "kind": "time",
+   "query": "-12",
+   "candidate": "120000.000001",
+   "match": false
+  },
+  {
+   "line": 119,
+   "kind": "time",
+   "query": "1200-",
+   "candidate": "120000.000000",
+   "match": true
+  },
+  {
+   "line": 120,
+   "kind": "time",
+   "query": "12-",
+   "candidate": "115959.999999",
+   "match": false
+  },
+  {
+   "line": 121,
+   "kind": "time",
+   "query": "11-121428.234763",
+   "candidate": "12",
+   "match": true
+  },
+  {
+   "line": 122,
+   "kind": "time",
+   "query": "11-121428.234763",
+   "candidate": "105959.999999",
+   "match": false
+  },
+  {
+   "line": 123,
+   "kind": "time",
+   "query": "11-121428.234763",
+   "candidate": "121428.234764",
+   "match": false
+  },
+  {
+   "line": 124,
+   "kind": "time",
+   "query": "11-121428.234763",
+   "candidate": "20140909",
+   "match": false
+  },
+  {
+   "line": 126,
+   "kind": "datetime",
+   "query": "20170224120224+0100",
+   "valid_query": true
+  },
+  {
+   "line": 127,
+   "kind": "datetime",
+   "query": "2017224120224+0100",
+   "valid_query": false
+  },
+  {
+   "line": 128,
+   "kind": "datetime",
+   "query": "2017-2018",
+   "valid_query": true
+  },
+  {
+   "line": 129,
+   "kind": "datetime",
+   "query": "201713-2018",
+   "valid_query": false
+  },
+  {
+   "line": 130,
+   "kind": "datetime",
+   "query": "2017-201813",
+   "valid_query": false
+  },
+  {
+   "line": 131,
+   "kind": "datetime",
+   "query": "2017-201812",
+   "valid_query": true
+  },
+  {
+   "line": 132,
+   "kind": "datetime",
+   "query": "191712-19991231235959.999999",
+   "valid_query": true
+  },
+  {
+   "line": 133,
+   "kind": "datetime",
+   "query": "19991231235959.999999-",
+   "valid_query": true
+  },
+  {
+   "line": 134,
+   "kind": "datetime",
+   "query": "-20000305173259.123456",
+   "valid_query": true
+  },
+  {
+   "line": 135,
+   "kind": "datetime",
+   "query": "",
+   "candidate": "20170224120224+0100",
+   "match": true
+  },
+  {
+   "line": 136,
+   "kind": "datetime",
+   "query": "20170224113224.000000+0030",
+   "candidate": "20170224120224+0100",
+   "match": true
+  },
+  {
+   "line": 137,
+   "kind": "datetime",
+   "query": "-2000",
+   "candidate": "20000101000000.000000",
+   "match": true
+  },
+  {
+   "line": 138,
+   "kind": "datetime",
+   "query": "-2000",
+   "candidate": "19990531132417.231194",
+   "match": true
+  },
+  {
+   "line": 139,
+   "kind": "datetime",
+   "query": "-2000",
+   "candidate": "20000102000000.000001",
+   "match": false
+  },
+  {
+   "line": 140,
+   "kind": "datetime",
+   "query": "200001-",
+   "candidate": "2001010100",
+   "match": true
+  },
+  {
+   "line": 141,
+   "kind": "datetime",
+   "query": "2000-",
+   "candidate": "19991231235959.999999",
+   "match": false
+  },
+  {
+   "line": 142,
+   "kind": "datetime",
+   "query": "1999-20000305173259.123456",
+   "candidate": "1998010712+0430",
+   "match": false
+  },
+  {
+   "line": 143,
+   "kind": "datetime",
+   "query": "1999-20000305173259.123456",
+   "candidate": "20000306",
+   "match": false
+  },
+  {
+   "line": 144,
+   "kind": "datetime",
+   "query": "1999-20000305173259.123456",
+   "candidate": "122713.114122",
+   "match": false
+  },
+  {
+   "line": 146,
+   "kind": "uid_list",
+   "query": "",
+   "candidate": "123.456.789.10",
+   "match": true
+  },
+  {
+   "line": 147,
+   "kind": "uid_list",
+   "query": "123.456.789.10",
+   "candidate": "123.456.789.10",
+   "match": true
+  },
+  {
+   "line": 148,
+   "kind": "uid_list",
+   "query": "456.789.10",
+   "candidate": "123.456.789.10",
+   "match": false
+  },
+  {
+   "line": 149,
+   "kind": "uid_list",
+   "query": "456.789.10\\123.456.789.10",
+   "candidate": "123.456.789.10",
+   "match": true
+  },
+  {
+   "line": 150,
+   "kind": "uid_list",
+   "query": "456.789.10\\123.456.789.10\\456.123.789.10",
+   "candidate": "123.456.789.10",
+   "match": true
+  },
+  {
+   "line": 151,
+   "kind": "uid_list",
+   "query": "456.789.10\\123.456.79.10\\456.123.789.10",
+   "candidate": "123.456.789.10",
+   "match": false
+  },
+  {
+   "line": 153,
+   "kind": "single_value",
+   "query": "",
+   "candidate": "Hello world!",
+   "match": true
+  },
+  {
+   "line": 154,
+   "kind": "single_value",
+   "query": "Hello world!",
+   "candidate": "Hello world!",
+   "match": true
+  },
+  {
+   "line": 155,
+   "kind": "single_value",
+   "query": "Hello*world!",
+   "candidate": "Hello*world!",
+   "match": true
+  },
+  {
+   "line": 156,
+   "kind": "single_value",
+   "query": "Hello*world!",
+   "candidate": "Hello world!",
+   "match": false
+  },
+  {
+   "line": 161,
+   "kind": "vr",
+   "vr": "DA",
+   "query": "20160101-20181231",
+   "candidate": "20170713",
+   "match": true
+  },
+  {
+   "line": 163,
+   "kind": "vr",
+   "vr": "TM",
+   "query": "-12",
+   "candidate": "11",
+   "match": true
+  },
+  {
+   "line": 164,
+   "kind": "vr",
+   "vr": "PN",
+   "query": "M?ller",
+   "candidate": "^Martin",
+   "match": false
+  }
+ ]
+}

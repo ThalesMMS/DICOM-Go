@@ -1,0 +1,344 @@
+{
+  "source": "ITK Modules/IO/GDCM/test/itkGDCMSeriesDirectionGTest.cxx at 35b196e13c366e0386389a71c936a0436c568cea (Apache-2.0)",
+  "modifications": "Re-expressed as data for dicom-go: each ITK SeriesSpec becomes row, column, origin, step, slices and the expected slice spacing; oblique cosines are evaluated in float64 as ITK composes them. ITK's direction/origin assertions are adapted in render/itk_series_direction_test.go.",
+  "cases": [
+    {
+      "name": "SimpleITK2292",
+      "itk_test": "SimpleITK2292_BottomToTop_OriginAndDirectionAgree, SimpleITK2292_TopToBottom_OriginAndDirectionAgree",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        -216.5,
+        -216.5,
+        70
+      ],
+      "step": [
+        0,
+        0,
+        -1.25
+      ],
+      "slices": 9,
+      "slice_spacing": 1.25
+    },
+    {
+      "name": "AxialReversal",
+      "itk_test": "PhysicalPointInvariance_AxialReversal",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "step": [
+        0,
+        0,
+        2.5
+      ],
+      "slices": 6,
+      "slice_spacing": 2.5
+    },
+    {
+      "name": "ReverseOrder",
+      "itk_test": "PhysicalPointInvariance_ReverseOrderFlag",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        10,
+        -5,
+        100
+      ],
+      "step": [
+        0,
+        0,
+        3
+      ],
+      "slices": 7,
+      "slice_spacing": 3
+    },
+    {
+      "name": "Sagittal",
+      "itk_test": "Sagittal_AxisAligned_Reversal",
+      "row": [
+        0,
+        1,
+        0
+      ],
+      "column": [
+        0,
+        0,
+        -1
+      ],
+      "origin": [
+        -100,
+        -120,
+        80
+      ],
+      "step": [
+        1,
+        0,
+        0
+      ],
+      "slices": 5,
+      "slice_spacing": 1
+    },
+    {
+      "name": "Coronal",
+      "itk_test": "Coronal_AxisAligned_Reversal",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        0,
+        -1
+      ],
+      "origin": [
+        -50,
+        30,
+        5
+      ],
+      "step": [
+        0,
+        -2,
+        0
+      ],
+      "slices": 6,
+      "slice_spacing": 2
+    },
+    {
+      "name": "Oblique",
+      "itk_test": "Oblique_NonAxisAligned_Reversal (Rz(0.27)\u00b7Rx(0.41))",
+      "row": [
+        0.9637708963658905,
+        0.24462495468711604,
+        0.10632163873085462
+      ],
+      "column": [
+        -0.26673143668883115,
+        0.8838943574817826,
+        0.3841680693313525
+      ],
+      "origin": [
+        -45.5,
+        12.25,
+        88.125
+      ],
+      "step": [
+        0.0,
+        -0.677635857573519,
+        1.5591053987882286
+      ],
+      "slices": 5,
+      "slice_spacing": 1.7
+    },
+    {
+      "name": "ThirdColumnCrossProduct",
+      "itk_test": "ThirdColumnEqualsCrossProduct_Oblique (Rz(0.31)\u00b7Rx(0.19))",
+      "row": [
+        0.9523335698857134,
+        0.29956887294656115,
+        0.05761303698174677
+      ],
+      "column": [
+        -0.3050586364434435,
+        0.9351955988721194,
+        0.1798566656576418
+      ],
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "step": [
+        -1.3877787807814457e-17,
+        -0.3777177899530011,
+        1.9640084702345406
+      ],
+      "slices": 4,
+      "slice_spacing": 2
+    },
+    {
+      "name": "TwoSlices",
+      "itk_test": "TwoSlices_MinimumValidCase",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        0,
+        0,
+        100
+      ],
+      "step": [
+        0,
+        0,
+        -7.5
+      ],
+      "slices": 2,
+      "slice_spacing": 7.5
+    },
+    {
+      "name": "ManySlicesFineSpacing",
+      "itk_test": "ManySlices_FineSpacing",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "step": [
+        0,
+        0,
+        0.625
+      ],
+      "slices": 64,
+      "slice_spacing": 0.625
+    },
+    {
+      "name": "Elastix291",
+      "itk_test": "ITKElastix291_TimeSeriesShapedDirection",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "step": [
+        0,
+        0,
+        1
+      ],
+      "slices": 8,
+      "slice_spacing": 1
+    },
+    {
+      "name": "OriginFirstListed",
+      "itk_test": "OriginEqualsFirstListedSliceIPP",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        11.5,
+        -22.5,
+        33.5
+      ],
+      "step": [
+        0,
+        0,
+        -3
+      ],
+      "slices": 4,
+      "slice_spacing": 3
+    },
+    {
+      "name": "SpacingPositiveDescending",
+      "itk_test": "SpacingAlwaysPositive (dz = -1.25)",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "step": [
+        0,
+        0,
+        -1.25
+      ],
+      "slices": 4,
+      "slice_spacing": 1.25
+    },
+    {
+      "name": "SpacingPositiveAscending",
+      "itk_test": "SpacingAlwaysPositive (dz = +1.25)",
+      "row": [
+        1,
+        0,
+        0
+      ],
+      "column": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "step": [
+        0,
+        0,
+        1.25
+      ],
+      "slices": 4,
+      "slice_spacing": 1.25
+    }
+  ]
+}

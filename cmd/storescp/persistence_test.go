@@ -62,7 +62,9 @@ func TestStorescpPersistenceUIDBoundaryAndPrivateLogs(t *testing.T) {
 	for i, test := range cases {
 		ds := object.FromElements([]core.Element{
 			{Header: core.ElementHeader{Tag: dicomtags.SOPClassUID, VR: core.VRUI}, Value: core.StringValue{dicomtest.TestSOPClassUID}},
-			{Header: core.ElementHeader{Tag: dicomtags.SOPInstanceUID, VR: core.VRUI}, Value: core.StringValue{test.dataset}},
+			// Raw bytes, as a non-conformant peer sends them; the writer would
+			// refuse to author these identities.
+			core.NewRawElement(dicomtags.SOPInstanceUID, core.VRUI, paddedUID(test.dataset)),
 		}, std.Dictionary)
 		if err := dimse.SendCStoreRequest(assoc, pc.ID, dimse.CStoreRequest{AffectedSOPClassUID: dicomtest.TestSOPClassUID, AffectedSOPInstanceUID: test.command, MessageID: uint16(i + 1)}); err != nil {
 			t.Fatal(err)
@@ -93,4 +95,12 @@ func TestStorescpPersistenceUIDBoundaryAndPrivateLogs(t *testing.T) {
 			t.Fatalf("private value in default logs: %q", log.String())
 		}
 	}
+}
+
+func paddedUID(uid string) []byte {
+	raw := []byte(uid)
+	if len(raw)%2 != 0 {
+		raw = append(raw, 0)
+	}
+	return raw
 }

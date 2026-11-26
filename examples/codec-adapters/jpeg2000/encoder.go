@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,12 @@ type OpenJPEGEncoderOptions struct {
 	Timeout                       time.Duration
 	MaxFrameBytes, MaxOutputBytes int64
 	MaxConcurrent                 int
+	// Lossless .90 coding only: paired tile dimensions 1..65535 and
+	// resolution levels 1..33. Zero preserves the existing single-tile,
+	// geometry-derived default (at most six levels). Every edge tile must
+	// hold 2^(levels-1) samples per side; this is conservative admission.
+	// .91 constructors reject these fields; use OpenJPEGLossyOptions there.
+	TileWidth, TileHeight, Resolutions int
 }
 
 // OpenJPEGLosslessEncoder owns no persistent native resource. Each bounded
@@ -38,6 +45,9 @@ type OpenJPEGLosslessEncoder struct {
 }
 
 func NewOpenJPEGLosslessEncoder(ctx context.Context, opts OpenJPEGEncoderOptions) (*OpenJPEGLosslessEncoder, error) {
+	if err := validateLosslessCoding(opts); err != nil {
+		return nil, err
+	}
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second
 	}
@@ -96,6 +106,9 @@ func (e *OpenJPEGLosslessEncoder) EncodeFrame(ctx context.Context, frame []byte,
 		return pixeldata.EncodedFrame{}, err
 	}
 	if err := validateOpenJPEGEncodeFrame(frame, m, e.opts.MaxFrameBytes); err != nil {
+		return pixeldata.EncodedFrame{}, err
+	}
+	if _, err := losslessCodingArguments(e.opts, m); err != nil {
 		return pixeldata.EncodedFrame{}, err
 	}
 	select {
@@ -183,4 +196,47 @@ func openJPEGPNMInput(ctx context.Context, frame []byte, m pixeldata.Metadata) (
 		}
 	}
 	return out, nil
+}
+
+func validateLosslessCoding(o OpenJPEGEncoderOptions) error {
+	if o.TileWidth < 0 || o.TileHeight < 0 || o.TileWidth > 65535 || o.TileHeight > 65535 || (o.TileWidth == 0) != (o.TileHeight == 0) || o.Resolutions < 0 || o.Resolutions > 33 {
+		return ErrOpenJPEGEncoderOptions
+	}
+	return nil
+}
+
+func losslessCodingArguments(o OpenJPEGEncoderOptions, m pixeldata.Metadata) ([]string, error) {
+	if err := validateLosslessCoding(o); err != nil {
+		return nil, err
+	}
+	width, height := int(m.Columns), int(m.Rows)
+	if width < 1 || height < 1 {
+		return nil, ErrOpenJPEGEncoderOptions
+	}
+	args := []string{"-r", "1"}
+	smallest := func(side, tile int) int {
+		if tile == 0 || tile >= side {
+			return side
+		}
+		if edge := side % tile; edge != 0 {
+			return min(edge, tile)
+		}
+		return tile
+	}
+	side := min(smallest(width, o.TileWidth), smallest(height, o.TileHeight))
+	if o.TileWidth > 0 {
+		args = append(args, "-t", fmt.Sprintf("%d,%d", o.TileWidth, o.TileHeight))
+	}
+	levels := o.Resolutions
+	if levels == 0 {
+		levels = 1
+		for n := side; n >= 2 && levels < 6; n /= 2 {
+			levels++
+		}
+	}
+	if uint64(side) < uint64(1)<<uint(levels-1) {
+		return nil, fmt.Errorf("%w: resolution levels exceed the smallest edge tile", ErrOpenJPEGEncoderOptions)
+	}
+	// Reversible 5/3 DWT (absence of -I), rate 1, no component transform.
+	return append(args, "-n", strconv.Itoa(levels), "-mct", "0", "-threads", "1"), nil
 }

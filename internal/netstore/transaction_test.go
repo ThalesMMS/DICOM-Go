@@ -1,6 +1,7 @@
 package netstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -253,5 +254,42 @@ func TestInstanceUIDMultiplicityClassAndPaddingPolicy(t *testing.T) {
 	ds.Put(newUIElement(dicomtags.SOPInstanceUID, uid))
 	if _, err := SavePart10(t.TempDir(), ds, transfer.ExplicitVRLittleEndian); err != nil {
 		t.Fatalf("64-byte UID rejected: %v", err)
+	}
+}
+
+// TestSavePart10RecordsAETitles: a received instance carries the AE titles
+// of its network origin in File Meta Information (#1049), and invalid titles
+// are refused before anything is written.
+func TestSavePart10RecordsAETitles(t *testing.T) {
+	dir := t.TempDir()
+	titles := ReceivedAETitles(" ARCHIVE ", "CT01")
+	path, err := SavePart10WithOptions(context.Background(), dir, validDataSet(), transfer.ExplicitVRLittleEndian, SaveOptions{AETitles: titles})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := object.ReadFile(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for tag, want := range map[core.Tag]string{
+		core.NewTag(0x0002, 0x0016): "ARCHIVE",
+		core.NewTag(0x0002, 0x0017): "CT01",
+		core.NewTag(0x0002, 0x0018): "ARCHIVE",
+		core.NewTag(0x0002, 0x0012): object.ImplementationClassUID,
+		core.NewTag(0x0002, 0x0013): object.ImplementationVersionName,
+	} {
+		if got, _ := file.Meta.GetString(tag); strings.TrimSpace(got) != want {
+			t.Errorf("%s = %q, want %q", tag, got, want)
+		}
+	}
+	if _, err := SavePart10WithOptions(context.Background(), dir, validDataSet(), transfer.ExplicitVRLittleEndian, SaveOptions{AETitles: object.FileMetaAETitles{Sending: `BAD\AE`}}); !errors.Is(err, object.ErrInvalidFileMetaOptions) {
+		t.Fatalf("invalid AE title: %v", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("%d entries after a refused save, want 1", len(entries))
 	}
 }

@@ -14,7 +14,7 @@ import (
 )
 
 func TestGenerateSourceContainsExpectedRegistryScaffolding(t *testing.T) {
-	source, err := generateSource("internal/standard/dicom.dic", []parsedEntry{
+	source, err := generateSource("internal/standard/dicom.dic", "", []parsedEntry{
 		{
 			Tag:     core.NewTag(0x0010, 0x0010),
 			VRExpr:  "core.VRPN",
@@ -30,7 +30,7 @@ func TestGenerateSourceContainsExpectedRegistryScaffolding(t *testing.T) {
 			Name:             "Smallest Image Pixel Value",
 			VM:               "1",
 		},
-	}, time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC))
+	}, testHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,8 @@ func TestGenerateSourceContainsExpectedRegistryScaffolding(t *testing.T) {
 		"Generated at: 2026-04-22T12:00:00Z",
 		"package std",
 		"var Dictionary dictionary.DataDictionary = table{",
-		"func init() {",
+		"var keywordIndex = [...]struct {",
+		"func (t table) ByTag(tag core.Tag) (dictionary.Entry, bool)",
 		"func (t table) VRSpecByTag(tag core.Tag) (dictionary.VRSpec, bool)",
 		"dictionary.NewContextualVRSpec(dictionary.ContextualVRXS)",
 		"{Tag: core.NewTag(0x0010, 0x0010), VR: core.VRPN, Keyword: \"PatientName\", Name: \"Patient Name\", VM: \"1\"}",
@@ -55,10 +56,10 @@ func TestGenerateSourceContainsExpectedRegistryScaffolding(t *testing.T) {
 }
 
 func TestGenerateSourceSortsEntriesByTag(t *testing.T) {
-	source, err := generateSource("internal/standard/dicom.dic", []parsedEntry{
+	source, err := generateSource("internal/standard/dicom.dic", "", []parsedEntry{
 		{Tag: core.NewTag(0x0010, 0x0020), VRExpr: "core.VRLO", Keyword: "PatientID", Name: "Patient ID", VM: "1"},
 		{Tag: core.NewTag(0x0008, 0x0018), VRExpr: "core.VRUI", Keyword: "SOPInstanceUID", Name: "SOP Instance UID", VM: "1"},
-	}, time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC))
+	}, testHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,11 +76,11 @@ func TestGenerateSourceSortsEntriesByTag(t *testing.T) {
 }
 
 func TestGenerateSourceCompiles(t *testing.T) {
-	source, err := generateSource("internal/standard/dicom.dic", []parsedEntry{
+	source, err := generateSource("internal/standard/dicom.dic", "", []parsedEntry{
 		{Tag: core.NewTag(0x0010, 0x0010), VRExpr: "core.VRPN", Keyword: "PatientName", Name: "Patient Name", VM: "1"},
 		{Tag: core.NewTag(0x0028, 0x3006), VRExpr: "core.VROW", Keyword: "LUTData", Name: "LUT Data", VM: "1-n"},
 		{Tag: core.NewTag(0x0004, 0x1504), VRExpr: "core.VRUL", Keyword: "MRDRDirectoryRecordOffset", Name: "MRDR Directory Record Offset", VM: "1", Retired: true},
-	}, time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC))
+	}, testHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +108,36 @@ func TestGenerateSourceCompiles(t *testing.T) {
 			t.Fatalf("generated source compile check timed out after %s\n%s", 30*time.Second, output)
 		}
 		t.Fatalf("generated source did not compile: %v\n%s", err, output)
+	}
+}
+
+var testHeader = sourceHeader{Edition: "2026d", CreatedAt: time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC)}
+
+func TestGenerateSourceRecordsEditionAndPinnedCommit(t *testing.T) {
+	const commit = "8d68392db66cd69e13dc878dc9889681062ad479"
+	source, err := generateSource("internal/standard/dicom.dic", commit, []parsedEntry{
+		{Tag: core.NewTag(0x0010, 0x0010), VRExpr: "core.VRPN", Keyword: "PatientName", Name: "Patient Name", VM: "1"},
+	}, testHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"Source URL: https://raw.githubusercontent.com/DCMTK/dcmtk/" + commit + "/dcmdata/data/dicom.dic",
+		`const Edition = "2026d"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated source is missing %q\n%s", want, text)
+		}
+	}
+}
+
+func TestGenerateSourceRequiresEdition(t *testing.T) {
+	_, err := generateSource("internal/standard/dicom.dic", "", []parsedEntry{
+		{Tag: core.NewTag(0x0010, 0x0010), VRExpr: "core.VRPN", Keyword: "PatientName", Name: "Patient Name", VM: "1"},
+	}, sourceHeader{})
+	if err == nil || !strings.Contains(err.Error(), "no DICOM edition") {
+		t.Fatalf("generateSource without edition error = %v", err)
 	}
 }
 

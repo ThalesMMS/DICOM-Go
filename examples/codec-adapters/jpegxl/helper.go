@@ -309,7 +309,9 @@ func (s *Session) decodeHelper(ctx context.Context, fragment []byte, metadata pi
 		return nil, fmt.Errorf("%w: helper size=%dx%d samples=%d", ErrImageSizeMismatch, reply.Columns, reply.Rows, reply.Samples)
 	}
 	s.mu.Unlock()
-	return append([]byte(nil), reply.Pixels...), nil
+	pixels := append([]byte(nil), reply.Pixels...)
+	unshiftSigned(pixels, metadata)
+	return pixels, nil
 }
 
 func (s *Session) acquireWorker(ctx context.Context) error {

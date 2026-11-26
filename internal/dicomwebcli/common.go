@@ -1,16 +1,20 @@
 package dicomwebcli
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/internal/sourceport"
 	"github.com/ThalesMMS/dicom-go/net/dicomweb"
 )
 
@@ -27,6 +31,10 @@ type commonOptions struct {
 	basicPasswordEnv string
 	bearerTokenEnv   string
 	allowHTTPAuth    bool
+	caFiles          stringList
+	tlsServerName    string
+	certFile         string
+	keyFile          string
 }
 
 func defaultCommonOptions() commonOptions {
@@ -50,6 +58,10 @@ func addCommonFlags(fs *flag.FlagSet, opts *commonOptions) {
 	fs.StringVar(&opts.basicPasswordEnv, "basic-password-env", "", "environment variable containing the Basic password")
 	fs.StringVar(&opts.bearerTokenEnv, "bearer-token-env", "", "environment variable containing a bearer token")
 	fs.BoolVar(&opts.allowHTTPAuth, "allow-insecure-auth", false, "allow bearer tokens over plain HTTP; Basic always requires HTTPS")
+	fs.Var(&opts.caFiles, "ca", "PEM file of CA certificates trusted to verify the HTTPS server, instead of the system roots (repeatable)")
+	fs.StringVar(&opts.tlsServerName, "tls-server-name", "", "require the HTTPS server certificate to match this name, sent as SNI")
+	fs.StringVar(&opts.certFile, "cert", "", "PEM client certificate presented to the HTTPS server")
+	fs.StringVar(&opts.keyFile, "key", "", "PEM private key matching -cert")
 }
 
 func (opts commonOptions) validate() error {
@@ -96,14 +108,63 @@ func (opts commonOptions) validate() error {
 	default:
 		return invalidInput("-metadata must be json, xml, or both")
 	}
+	if (strings.TrimSpace(opts.certFile) == "") != (strings.TrimSpace(opts.keyFile) == "") {
+		return invalidInput("-cert and -key must be given together")
+	}
+	if u.Scheme != "https" && opts.usesTLSFlags() {
+		return invalidInput("-ca, -tls-server-name, -cert and -key require an HTTPS -base-url")
+	}
 	return nil
+}
+
+func (opts commonOptions) usesTLSFlags() bool {
+	return len(opts.caFiles) > 0 || strings.TrimSpace(opts.tlsServerName) != "" ||
+		strings.TrimSpace(opts.certFile) != "" || strings.TrimSpace(opts.keyFile) != ""
+}
+
+// httpClient returns nil, which selects the default client, unless a TLS flag
+// asks for private roots, a pinned server name or a client certificate.
+// Its errors name the flag and never a path or file content.
+func (opts commonOptions) httpClient() (*http.Client, error) {
+	if !opts.usesTLSFlags() {
+		return nil, nil
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: strings.TrimSpace(opts.tlsServerName)}
+	if len(opts.caFiles) > 0 {
+		pool := x509.NewCertPool()
+		for _, path := range opts.caFiles {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, invalidInput("a -ca file cannot be read")
+			}
+			if !pool.AppendCertsFromPEM(data) {
+				return nil, invalidInput("a -ca file holds no PEM certificate")
+			}
+		}
+		config.RootCAs = pool
+	}
+	if certFile := strings.TrimSpace(opts.certFile); certFile != "" {
+		certificate, err := tls.LoadX509KeyPair(certFile, strings.TrimSpace(opts.keyFile))
+		if err != nil {
+			return nil, invalidInput("-cert and -key cannot be loaded as a matching PEM certificate and unencrypted private key")
+		}
+		config.Certificates = []tls.Certificate{certificate}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = sourceport.DialContext(nil)
+	transport.TLSClientConfig = config
+	return &http.Client{Transport: transport}, nil
 }
 
 func (opts commonOptions) client() (dicomweb.Client, error) {
 	if err := opts.validate(); err != nil {
 		return dicomweb.Client{}, err
 	}
-	clientOptions := dicomweb.Options{Timeout: opts.timeout, MaxBodyBytes: opts.maxBodyBytes}
+	httpClient, err := opts.httpClient()
+	if err != nil {
+		return dicomweb.Client{}, err
+	}
+	clientOptions := dicomweb.Options{HTTPClient: httpClient, Timeout: opts.timeout, MaxBodyBytes: opts.maxBodyBytes}
 	switch opts.metadata {
 	case "xml":
 		clientOptions.MetadataMediaTypes = []dicomweb.MetadataMediaType{dicomweb.MetadataMediaTypeDICOMXML}

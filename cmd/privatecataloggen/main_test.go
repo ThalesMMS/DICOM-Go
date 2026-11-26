@@ -13,9 +13,9 @@ import (
 	"testing"
 )
 
-func sourceFixture(t testing.TB) source {
+func readSource(t testing.TB, path string) source {
 	t.Helper()
-	data, err := os.ReadFile("../../dictionary/curated/catalog.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +23,24 @@ func sourceFixture(t testing.TB) source {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return s
+}
+
+// sourceFixture merges the committed DCMTK and GDCM reviewed sources.
+func sourceFixture(t testing.TB) source {
+	t.Helper()
+	s := readSource(t, "../../dictionary/curated/catalog.json")
+	gdcm := readSource(t, "../../dictionary/curated/catalog_gdcm.json")
+	s.Records = append(s.Records, gdcm.Records...)
+	s.Exclusions = append(s.Exclusions, gdcm.Exclusions...)
+	// The mutations below assume the GEMS_ACQU_01 SL definition first.
+	for i, r := range s.Records {
+		if r.Creator == "GEMS_ACQU_01" && r.Group == "0019" && r.Offset == "02" {
+			s.Records[0], s.Records[i] = s.Records[i], s.Records[0]
+			return s
+		}
+	}
+	t.Fatal("GEMS_ACQU_01 (0019,xx02) is missing from the catalog")
 	return s
 }
 
@@ -50,8 +68,11 @@ func TestPrivateCatalogGenerationReproducible(t *testing.T) {
 		t.Fatal("source order changes output")
 	}
 	var stderr bytes.Buffer
-	if code := run([]string{"-source", "../../dictionary/curated/catalog.json", "-out", "../../dictionary/curated/catalog_gen.go", "-check"}, &stderr); code != 0 {
+	if code := run([]string{"-source", "../../dictionary/curated/catalog.json", "-source", "../../dictionary/curated/catalog_gdcm.json", "-out", "../../dictionary/curated/catalog_gen.go", "-check"}, &stderr); code != 0 {
 		t.Fatal(stderr.String())
+	}
+	if code := run([]string{"-source", "../../dictionary/curated/catalog.json", "-out", "../../dictionary/curated/catalog_gen.go", "-check"}, &bytes.Buffer{}); code != 1 {
+		t.Fatal("the catalog without its GDCM source was accepted as current")
 	}
 }
 

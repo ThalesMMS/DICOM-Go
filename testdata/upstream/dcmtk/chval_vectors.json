@@ -1,0 +1,1575 @@
+{
+ "description": "Verdicts of DCMTK's checkStringValue() for single VR values (tchval.cc). 'vm' is the value multiplicity checked (DCMTK's default is '1-n' when absent), 'charset' the Specific Character Set the value is checked under, 'old_format' whether the ACR-NEMA date/time formats are accepted. 'generated' describes a value built at run time: 'length' copies of 'fill' with 'set' characters replaced.",
+ "entries": [
+  {
+   "line": 44,
+   "id": "AE-01",
+   "vr": "AE",
+   "expect": "bad",
+   "value": " ",
+   "vm": "1"
+  },
+  {
+   "line": 45,
+   "id": "AE-02",
+   "vr": "AE",
+   "expect": "good",
+   "value": "A\\"
+  },
+  {
+   "line": 46,
+   "id": "AE-03",
+   "vr": "AE",
+   "expect": "good",
+   "value": " AETITLE",
+   "vm": "1"
+  },
+  {
+   "line": 47,
+   "id": "AE-04",
+   "vr": "AE",
+   "expect": "good",
+   "value": "AE-Title  ",
+   "vm": "1"
+  },
+  {
+   "line": 48,
+   "id": "AE-05",
+   "vr": "AE",
+   "expect": "good",
+   "value": " AE Title ",
+   "vm": "1"
+  },
+  {
+   "line": 49,
+   "id": "AE-06",
+   "vr": "AE",
+   "expect": "good",
+   "value": "A \\ B",
+   "vm": "2"
+  },
+  {
+   "line": 50,
+   "id": "AE-07",
+   "vr": "AE",
+   "expect": "bad",
+   "value": "Jörg",
+   "vm": "1"
+  },
+  {
+   "line": 51,
+   "id": "AE-08",
+   "vr": "AE",
+   "expect": "bad",
+   "value": "1234567890-ABCDE "
+  },
+  {
+   "line": 52,
+   "id": "AE-09",
+   "vr": "AE",
+   "expect": "good",
+   "value": "\\ AE \\",
+   "vm": "3-3n"
+  },
+  {
+   "line": 55,
+   "id": "AS-01",
+   "vr": "AS",
+   "expect": "good",
+   "value": "001Y",
+   "vm": "1"
+  },
+  {
+   "line": 56,
+   "id": "AS-02",
+   "vr": "AS",
+   "expect": "good",
+   "value": "099Y",
+   "vm": "1"
+  },
+  {
+   "line": 57,
+   "id": "AS-03",
+   "vr": "AS",
+   "expect": "bad",
+   "value": "099Z",
+   "vm": "1"
+  },
+  {
+   "line": 58,
+   "id": "AS-04",
+   "vr": "AS",
+   "expect": "good",
+   "value": "199D\\000W\\500M",
+   "vm": "2-n"
+  },
+  {
+   "line": 59,
+   "id": "AS-05",
+   "vr": "AS",
+   "expect": "bad",
+   "value": "Y010",
+   "vm": "1"
+  },
+  {
+   "line": 60,
+   "id": "AS-06",
+   "vr": "AS",
+   "expect": "bad",
+   "value": "10Y",
+   "vm": "1"
+  },
+  {
+   "line": 61,
+   "id": "AS-07",
+   "vr": "AS",
+   "expect": "bad",
+   "value": "010 Y",
+   "vm": "1"
+  },
+  {
+   "line": 62,
+   "id": "AS-08",
+   "vr": "AS",
+   "expect": "bad",
+   "value": " 010Y",
+   "vm": "1"
+  },
+  {
+   "line": 63,
+   "id": "AS-09",
+   "vr": "AS",
+   "expect": "bad",
+   "value": "010Y ",
+   "vm": "1"
+  },
+  {
+   "line": 64,
+   "id": "AS-10",
+   "vr": "AS",
+   "expect": "bad",
+   "value": "0109Y",
+   "vm": "1"
+  },
+  {
+   "line": 67,
+   "id": "CS-01",
+   "vr": "CS",
+   "expect": "good",
+   "value": "TEST 1234567890\\TEST",
+   "vm": "2-2n"
+  },
+  {
+   "line": 68,
+   "id": "CS-02",
+   "vr": "CS",
+   "expect": "bad",
+   "value": "TEST 1234567890\\TEST\\",
+   "vm": "2-2n"
+  },
+  {
+   "line": 69,
+   "id": "CS-03",
+   "vr": "CS",
+   "expect": "good",
+   "value": "",
+   "vm": "2-2n"
+  },
+  {
+   "line": 70,
+   "id": "CS-04",
+   "vr": "CS",
+   "expect": "good",
+   "value": "\\TEST 1234567890",
+   "vm": "2"
+  },
+  {
+   "line": 71,
+   "id": "CS-05",
+   "vr": "CS",
+   "expect": "good",
+   "value": "\\ ",
+   "vm": "2"
+  },
+  {
+   "line": 72,
+   "id": "CS-06",
+   "vr": "CS",
+   "expect": "bad",
+   "value": "\\TEST 1234567890 A",
+   "vm": "2"
+  },
+  {
+   "line": 73,
+   "id": "CS-07",
+   "vr": "CS",
+   "expect": "bad",
+   "value": "Jörg",
+   "vm": "1-2"
+  },
+  {
+   "line": 74,
+   "id": "CS-08",
+   "vr": "CS",
+   "expect": "bad",
+   "value": "Joerg",
+   "vm": "1-2"
+  },
+  {
+   "line": 75,
+   "id": "CS-09",
+   "vr": "CS",
+   "expect": "good",
+   "value": "MARCO \\ JOERG",
+   "vm": "1-2"
+  },
+  {
+   "line": 76,
+   "id": "CS-10",
+   "vr": "CS",
+   "expect": "good",
+   "value": "MARCO\\ MICHAEL \\JOERG\\"
+  },
+  {
+   "line": 77,
+   "id": "CS-11",
+   "vr": "CS",
+   "expect": "bad",
+   "value": "    1234567890    "
+  },
+  {
+   "line": 78,
+   "id": "CS-12",
+   "vr": "CS",
+   "expect": "bad",
+   "value": "1234567890-ABCDE"
+  },
+  {
+   "line": 79,
+   "id": "CS-13",
+   "vr": "CS",
+   "expect": "good",
+   "value": "                "
+  },
+  {
+   "line": 80,
+   "id": "CS-14",
+   "vr": "CS",
+   "expect": "bad",
+   "value": "                 "
+  },
+  {
+   "line": 83,
+   "id": "DA-01",
+   "vr": "DA",
+   "expect": "good",
+   "value": "20090731",
+   "vm": "1"
+  },
+  {
+   "line": 84,
+   "id": "DA-02",
+   "vr": "DA",
+   "expect": "good",
+   "value": "18200101",
+   "vm": "1"
+  },
+  {
+   "line": 85,
+   "id": "DA-03",
+   "vr": "DA",
+   "expect": "good",
+   "value": "21001231",
+   "vm": "1"
+  },
+  {
+   "line": 86,
+   "id": "DA-04",
+   "vr": "DA",
+   "expect": "bad",
+   "value": "1820.01.01",
+   "vm": "1",
+   "old_format": false
+  },
+  {
+   "line": 87,
+   "id": "DA-05",
+   "vr": "DA",
+   "expect": "good",
+   "value": "1820.01.01",
+   "vm": "1",
+   "old_format": true
+  },
+  {
+   "line": 88,
+   "id": "DA-06",
+   "vr": "DA",
+   "expect": "good",
+   "value": "20090731\\18200101"
+  },
+  {
+   "line": 89,
+   "id": "DA-07",
+   "vr": "DA",
+   "expect": "good",
+   "value": "20090731\\18200101",
+   "vm": "2-2n"
+  },
+  {
+   "line": 90,
+   "id": "DA-08",
+   "vr": "DA",
+   "expect": "good",
+   "value": "20090731\\18200101\\20000101\\21001231",
+   "vm": "2-2n"
+  },
+  {
+   "line": 91,
+   "id": "DA-09",
+   "vr": "DA",
+   "expect": "bad",
+   "value": "20090731",
+   "vm": "6"
+  },
+  {
+   "line": 92,
+   "id": "DA-10",
+   "vr": "DA",
+   "expect": "bad",
+   "value": "20000001",
+   "vm": "1"
+  },
+  {
+   "line": 93,
+   "id": "DA-11",
+   "vr": "DA",
+   "expect": "bad",
+   "value": "00001232",
+   "vm": "1"
+  },
+  {
+   "line": 94,
+   "id": "DA-12",
+   "vr": "DA",
+   "expect": "bad",
+   "value": "20000000",
+   "vm": "1"
+  },
+  {
+   "line": 97,
+   "id": "DT-01",
+   "vr": "DT",
+   "expect": "good",
+   "value": "200907311230",
+   "vm": "1"
+  },
+  {
+   "line": 98,
+   "id": "DT-02",
+   "vr": "DT",
+   "expect": "good",
+   "value": "18200101000000",
+   "vm": "1"
+  },
+  {
+   "line": 99,
+   "id": "DT-03",
+   "vr": "DT",
+   "expect": "good",
+   "value": "21001231235959.000001",
+   "vm": "1"
+  },
+  {
+   "line": 100,
+   "id": "DT-04",
+   "vr": "DT",
+   "expect": "good",
+   "value": "20090731",
+   "vm": "1"
+  },
+  {
+   "line": 101,
+   "id": "DT-05",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "200907312400",
+   "vm": "1"
+  },
+  {
+   "line": 102,
+   "id": "DT-06",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "20090731 1200"
+  },
+  {
+   "line": 103,
+   "id": "DT-07",
+   "vr": "DT",
+   "expect": "good",
+   "value": "2009073100\\1820010112",
+   "vm": "2-2n"
+  },
+  {
+   "line": 104,
+   "id": "DT-08",
+   "vr": "DT",
+   "expect": "good",
+   "value": "2009073100\\1820010112\\200001010030\\21001231171540.123",
+   "vm": "2-2n"
+  },
+  {
+   "line": 105,
+   "id": "DT-09",
+   "vr": "DT",
+   "expect": "good",
+   "value": "200907311230+0100",
+   "vm": "1"
+  },
+  {
+   "line": 106,
+   "id": "DT-10",
+   "vr": "DT",
+   "expect": "good",
+   "value": "20090731123000+1000",
+   "vm": "1"
+  },
+  {
+   "line": 107,
+   "id": "DT-11",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "200907311230+1900",
+   "vm": "1"
+  },
+  {
+   "line": 108,
+   "id": "DT-12",
+   "vr": "DT",
+   "expect": "good",
+   "value": "20090731123000.123456+0100",
+   "vm": "1"
+  },
+  {
+   "line": 109,
+   "id": "DT-13",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "20090731123000.123456+0100 ",
+   "vm": "1"
+  },
+  {
+   "line": 110,
+   "id": "DT-14",
+   "vr": "DT",
+   "expect": "good",
+   "value": "200907311230",
+   "vm": "1"
+  },
+  {
+   "line": 111,
+   "id": "DT-15",
+   "vr": "DT",
+   "expect": "good",
+   "value": "200907",
+   "vm": "1"
+  },
+  {
+   "line": 112,
+   "id": "DT-16",
+   "vr": "DT",
+   "expect": "good",
+   "value": "2009",
+   "vm": "1"
+  },
+  {
+   "line": 113,
+   "id": "DT-17",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "20091",
+   "vm": "1"
+  },
+  {
+   "line": 115,
+   "id": "DT-18",
+   "vr": "DT",
+   "expect": "good",
+   "value": "202501011200+0000"
+  },
+  {
+   "line": 116,
+   "id": "DT-19",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "202501011200-0000"
+  },
+  {
+   "line": 117,
+   "id": "DT-20",
+   "vr": "DT",
+   "expect": "good",
+   "value": "202501011200+0100"
+  },
+  {
+   "line": 118,
+   "id": "DT-21",
+   "vr": "DT",
+   "expect": "good",
+   "value": "202412311200-1130"
+  },
+  {
+   "line": 119,
+   "id": "DT-22",
+   "vr": "DT",
+   "expect": "good",
+   "value": "202412311200-1200"
+  },
+  {
+   "line": 120,
+   "id": "DT-23",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "202412311200-1230"
+  },
+  {
+   "line": 121,
+   "id": "DT-24",
+   "vr": "DT",
+   "expect": "good",
+   "value": "202412311200+1200"
+  },
+  {
+   "line": 122,
+   "id": "DT-25",
+   "vr": "DT",
+   "expect": "good",
+   "value": "202412311200+1330"
+  },
+  {
+   "line": 123,
+   "id": "DT-26",
+   "vr": "DT",
+   "expect": "good",
+   "value": "202412311200+1400"
+  },
+  {
+   "line": 124,
+   "id": "DT-27",
+   "vr": "DT",
+   "expect": "bad",
+   "value": "202412311200+1430"
+  },
+  {
+   "line": 127,
+   "id": "DS-01",
+   "vr": "DS",
+   "expect": "good",
+   "value": " 0",
+   "vm": "1"
+  },
+  {
+   "line": 128,
+   "id": "DS-02",
+   "vr": "DS",
+   "expect": "good",
+   "value": "0.0 ",
+   "vm": "1"
+  },
+  {
+   "line": 129,
+   "id": "DS-03",
+   "vr": "DS",
+   "expect": "good",
+   "value": "-1",
+   "vm": "1"
+  },
+  {
+   "line": 130,
+   "id": "DS-04",
+   "vr": "DS",
+   "expect": "good",
+   "value": "+12345.67890",
+   "vm": "1"
+  },
+  {
+   "line": 131,
+   "id": "DS-05",
+   "vr": "DS",
+   "expect": "bad",
+   "value": "   -12345.6789   ",
+   "vm": "1"
+  },
+  {
+   "line": 132,
+   "id": "DS-06",
+   "vr": "DS",
+   "expect": "good",
+   "value": "01.01",
+   "vm": "1"
+  },
+  {
+   "line": 133,
+   "id": "DS-06",
+   "vr": "DS",
+   "expect": "bad",
+   "value": "0.1.01",
+   "vm": "1"
+  },
+  {
+   "line": 134,
+   "id": "DS-07",
+   "vr": "DS",
+   "expect": "bad",
+   "value": "0 1",
+   "vm": "1"
+  },
+  {
+   "line": 135,
+   "id": "DS-08",
+   "vr": "DS",
+   "expect": "bad",
+   "value": "0-1",
+   "vm": "1"
+  },
+  {
+   "line": 136,
+   "id": "DS-09",
+   "vr": "DS",
+   "expect": "good",
+   "value": "1.0E99",
+   "vm": "1"
+  },
+  {
+   "line": 137,
+   "id": "DS-10",
+   "vr": "DS",
+   "expect": "bad",
+   "value": "1.099E",
+   "vm": "1"
+  },
+  {
+   "line": 138,
+   "id": "DS-11",
+   "vr": "DS",
+   "expect": "good",
+   "value": "-10e+99",
+   "vm": "1"
+  },
+  {
+   "line": 139,
+   "id": "DS-12",
+   "vr": "DS",
+   "expect": "good",
+   "value": "-10e+99\\+1E-1",
+   "vm": "2"
+  },
+  {
+   "line": 142,
+   "id": "IS-01",
+   "vr": "IS",
+   "expect": "good",
+   "value": "0",
+   "vm": "1"
+  },
+  {
+   "line": 143,
+   "id": "IS-02",
+   "vr": "IS",
+   "expect": "good",
+   "value": "+0",
+   "vm": "1"
+  },
+  {
+   "line": 144,
+   "id": "IS-03",
+   "vr": "IS",
+   "expect": "good",
+   "value": "-0",
+   "vm": "1"
+  },
+  {
+   "line": 145,
+   "id": "IS-04",
+   "vr": "IS",
+   "expect": "good",
+   "value": "00",
+   "vm": "1"
+  },
+  {
+   "line": 146,
+   "id": "IS-05",
+   "vr": "IS",
+   "expect": "good",
+   "value": "000000000001",
+   "vm": "1"
+  },
+  {
+   "line": 147,
+   "id": "IS-06",
+   "vr": "IS",
+   "expect": "bad",
+   "value": "1000000000001",
+   "vm": "1"
+  },
+  {
+   "line": 148,
+   "id": "IS-07",
+   "vr": "IS",
+   "expect": "bad",
+   "value": "-000000000001",
+   "vm": "1"
+  },
+  {
+   "line": 149,
+   "id": "IS-08",
+   "vr": "IS",
+   "expect": "bad",
+   "value": "3000000000",
+   "vm": "1"
+  },
+  {
+   "line": 150,
+   "id": "IS-08",
+   "vr": "IS",
+   "expect": "good",
+   "value": "+2000000000",
+   "vm": "1"
+  },
+  {
+   "line": 151,
+   "id": "IS-09",
+   "vr": "IS",
+   "expect": "good",
+   "value": "+2147483647",
+   "vm": "1"
+  },
+  {
+   "line": 152,
+   "id": "IS-10",
+   "vr": "IS",
+   "expect": "bad",
+   "value": "2147483648",
+   "vm": "1"
+  },
+  {
+   "line": 153,
+   "id": "IS-11",
+   "vr": "IS",
+   "expect": "good",
+   "value": "-2147483648",
+   "vm": "1"
+  },
+  {
+   "line": 154,
+   "id": "IS-12",
+   "vr": "IS",
+   "expect": "bad",
+   "value": "-2147483649",
+   "vm": "1"
+  },
+  {
+   "line": 155,
+   "id": "IS-13",
+   "vr": "IS",
+   "expect": "good",
+   "value": " -2147483648\\+2147483647 ",
+   "vm": "2"
+  },
+  {
+   "line": 156,
+   "id": "IS-14",
+   "vr": "IS",
+   "expect": "bad",
+   "value": " -2147483648 \\+2147483647",
+   "vm": "2"
+  },
+  {
+   "line": 159,
+   "id": "LO-01",
+   "vr": "LO",
+   "expect": "good",
+   "value": " ",
+   "vm": "1"
+  },
+  {
+   "line": 160,
+   "id": "LO-02",
+   "vr": "LO",
+   "expect": "good",
+   "value": " . ",
+   "vm": "1"
+  },
+  {
+   "line": 161,
+   "id": "LO-03",
+   "vr": "LO",
+   "expect": "good",
+   "value": "ABC 123 abc _+-/",
+   "vm": "1"
+  },
+  {
+   "line": 162,
+   "id": "LO-04",
+   "vr": "LO",
+   "expect": "good",
+   "value": "  ",
+   "vm": "1"
+  },
+  {
+   "line": 163,
+   "id": "LO-05",
+   "vr": "LO",
+   "expect": "good",
+   "value": "ABC\\123",
+   "vm": "2"
+  },
+  {
+   "line": 164,
+   "id": "LO-06",
+   "vr": "LO",
+   "expect": "good",
+   "value": " Jörg Riesmeier ",
+   "vm": "1",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 167,
+   "id": "LO-08",
+   "vr": "LO",
+   "expect": "good",
+   "value": "\\ _2_ \\ _3_ \\ _4_ \\ _5_ \\",
+   "vm": "6"
+  },
+  {
+   "line": 169,
+   "id": "LO-09",
+   "vr": "LO",
+   "expect": "good",
+   "value": "ESC only allowed for ISO 2022 character set control sequences: \u001b",
+   "vm": "1",
+   "upstream_comment": "actually, the following test should fail"
+  },
+  {
+   "line": 170,
+   "id": "LO-10",
+   "vr": "LO",
+   "expect": "bad",
+   "value": "also not allowed: \r\f",
+   "vm": "1"
+  },
+  {
+   "line": 173,
+   "id": "LT-01",
+   "vr": "LT",
+   "expect": "good",
+   "value": " Hello \\ 12345 \\ äöüß ",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 174,
+   "id": "LT-02",
+   "vr": "LT",
+   "expect": "good",
+   "value": " permitted control characters: \t \n \f \r "
+  },
+  {
+   "line": 175,
+   "id": "LT-03",
+   "vr": "LT",
+   "expect": "good",
+   "value": " "
+  },
+  {
+   "line": 178,
+   "id": "PN-01",
+   "vr": "PN",
+   "expect": "good",
+   "value": "A^Riesmeier^^=R^Jörg",
+   "vm": "1",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 179,
+   "id": "PN-02",
+   "vr": "PN",
+   "expect": "good",
+   "value": "A^Riesmeier^^=R^Jörg\\",
+   "vm": "1-n",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 180,
+   "id": "PN-03",
+   "vr": "PN",
+   "expect": "bad",
+   "value": "A^Riesmeier^^=R^Jörg\\",
+   "vm": "1"
+  },
+  {
+   "line": 181,
+   "id": "PN-04",
+   "vr": "PN",
+   "expect": "good",
+   "value": "Eichelberg^Marco^^Dr.=Onken^Michael^=Riesmeier^Jörg^^Dr.^",
+   "vm": "1",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 182,
+   "id": "PN-05",
+   "vr": "PN",
+   "expect": "good",
+   "value": "Eichelberg\\Onken\\Riesmeier",
+   "vm": "3"
+  },
+  {
+   "line": 183,
+   "id": "PN-06",
+   "vr": "PN",
+   "expect": "good",
+   "value": " "
+  },
+  {
+   "line": 184,
+   "id": "PN-07",
+   "vr": "PN",
+   "expect": "good",
+   "value": " A"
+  },
+  {
+   "line": 185,
+   "id": "PN-08",
+   "vr": "PN",
+   "expect": "good",
+   "value": "^^^^"
+  },
+  {
+   "line": 186,
+   "id": "PN-09",
+   "vr": "PN",
+   "expect": "bad",
+   "value": "^ Jörg ^"
+  },
+  {
+   "line": 187,
+   "id": "PN-10",
+   "vr": "PN",
+   "expect": "good",
+   "value": "^^^^MD "
+  },
+  {
+   "line": 188,
+   "id": "PN-11",
+   "vr": "PN",
+   "expect": "bad",
+   "value": "^^^^^"
+  },
+  {
+   "line": 189,
+   "id": "PN-12",
+   "vr": "PN",
+   "expect": "good",
+   "value": "A^B^C^D^E=F^G^H^I^J=K^L^M^N^O"
+  },
+  {
+   "line": 194,
+   "id": "PN-13",
+   "vr": "PN",
+   "expect": "good",
+   "value": "==Test"
+  },
+  {
+   "line": 195,
+   "id": "PN-14",
+   "vr": "PN",
+   "expect": "good",
+   "value": "Test=="
+  },
+  {
+   "line": 196,
+   "id": "PN-15",
+   "vr": "PN",
+   "expect": "good",
+   "value": "=="
+  },
+  {
+   "line": 197,
+   "id": "PN-16",
+   "vr": "PN",
+   "expect": "bad",
+   "value": "==="
+  },
+  {
+   "line": 198,
+   "id": "PN-17",
+   "vr": "PN",
+   "expect": "bad",
+   "value": "^=^=^=^"
+  },
+  {
+   "line": 199,
+   "id": "PN-18",
+   "vr": "PN",
+   "expect": "good",
+   "value": "^^^^=^^^^=^^^^"
+  },
+  {
+   "line": 200,
+   "id": "PN-19",
+   "vr": "PN",
+   "expect": "good",
+   "value": ""
+  },
+  {
+   "line": 202,
+   "id": "PN-20",
+   "vr": "PN",
+   "expect": "good",
+   "value": "Unspecified^^^^=^^^^=^^^^"
+  },
+  {
+   "line": 203,
+   "id": "PN-21",
+   "vr": "PN",
+   "expect": "good",
+   "value": "^^^^=^^Unspecified^^=^^^^"
+  },
+  {
+   "line": 204,
+   "id": "PN-22",
+   "vr": "PN",
+   "expect": "good",
+   "value": "^^^^=^^^^=^^^^Unspecified"
+  },
+  {
+   "line": 207,
+   "id": "SH-01",
+   "vr": "SH",
+   "expect": "good",
+   "value": " ",
+   "vm": "1"
+  },
+  {
+   "line": 208,
+   "id": "SH-02",
+   "vr": "SH",
+   "expect": "good",
+   "value": " . ",
+   "vm": "1"
+  },
+  {
+   "line": 209,
+   "id": "SH-03",
+   "vr": "SH",
+   "expect": "good",
+   "value": "ABC 123 abc _+-/",
+   "vm": "1"
+  },
+  {
+   "line": 210,
+   "id": "SH-04",
+   "vr": "SH",
+   "expect": "good",
+   "value": "  ",
+   "vm": "1"
+  },
+  {
+   "line": 211,
+   "id": "SH-05",
+   "vr": "SH",
+   "expect": "good",
+   "value": "ABC\\123",
+   "vm": "2"
+  },
+  {
+   "line": 212,
+   "id": "SH-06",
+   "vr": "SH",
+   "expect": "good",
+   "value": " Jörg Riesmeier ",
+   "vm": "1",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 215,
+   "id": "SH-08",
+   "vr": "SH",
+   "expect": "good",
+   "value": "\\ _2_ \\ _3_ \\ _4_ \\ _5_ \\",
+   "vm": "6"
+  },
+  {
+   "line": 216,
+   "id": "SH-09",
+   "vr": "SH",
+   "expect": "bad",
+   "value": " ",
+   "vm": "2"
+  },
+  {
+   "line": 217,
+   "id": "SH-10",
+   "vr": "SH",
+   "expect": "good",
+   "value": "",
+   "vm": "2"
+  },
+  {
+   "line": 219,
+   "id": "SH-11",
+   "vr": "SH",
+   "expect": "good",
+   "value": "not allowed: \u001b",
+   "vm": "1",
+   "upstream_comment": "actually, the following test should fail"
+  },
+  {
+   "line": 220,
+   "id": "SH-12",
+   "vr": "SH",
+   "expect": "bad",
+   "value": "not allowed: \n\r",
+   "vm": "1"
+  },
+  {
+   "line": 221,
+   "id": "SH-13",
+   "vr": "SH",
+   "expect": "bad",
+   "value": "not allowed: \b\f",
+   "vm": "1"
+  },
+  {
+   "line": 224,
+   "id": "ST-01",
+   "vr": "ST",
+   "expect": "good",
+   "value": " umlaut characters are allowed: ÄÖÜäöü\naccented characters also: áàéèíìâêô\rand control characters, of course, including \u001b=ESC ",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 225,
+   "id": "ST-02",
+   "vr": "ST",
+   "expect": "bad",
+   "value": " other control characters are not allowed: \u000b \b  "
+  },
+  {
+   "line": 226,
+   "id": "ST-03",
+   "vr": "ST",
+   "expect": "good",
+   "value": "  .  "
+  },
+  {
+   "line": 227,
+   "id": "ST-04",
+   "vr": "ST",
+   "expect": "good",
+   "value": "     "
+  },
+  {
+   "line": 230,
+   "id": "TM-01",
+   "vr": "TM",
+   "expect": "good",
+   "value": "0000",
+   "vm": "1"
+  },
+  {
+   "line": 231,
+   "id": "TM-02",
+   "vr": "TM",
+   "expect": "bad",
+   "value": "2400",
+   "vm": "1"
+  },
+  {
+   "line": 232,
+   "id": "TM-03",
+   "vr": "TM",
+   "expect": "good",
+   "value": "123045",
+   "vm": "1"
+  },
+  {
+   "line": 233,
+   "id": "TM-04",
+   "vr": "TM",
+   "expect": "good",
+   "value": "235959.123",
+   "vm": "1"
+  },
+  {
+   "line": 234,
+   "id": "TM-05",
+   "vr": "TM",
+   "expect": "good",
+   "value": "235959.987654",
+   "vm": "1"
+  },
+  {
+   "line": 235,
+   "id": "TM-06",
+   "vr": "TM",
+   "expect": "bad",
+   "value": "000000.0000000",
+   "vm": "1"
+  },
+  {
+   "line": 236,
+   "id": "TM-07",
+   "vr": "TM",
+   "expect": "good",
+   "value": "1215 ",
+   "vm": "1"
+  },
+  {
+   "line": 237,
+   "id": "TM-08",
+   "vr": "TM",
+   "expect": "bad",
+   "value": " 1215",
+   "vm": "1"
+  },
+  {
+   "line": 238,
+   "id": "TM-09",
+   "vr": "TM",
+   "expect": "bad",
+   "value": "12 15",
+   "vm": "1"
+  },
+  {
+   "line": 239,
+   "id": "TM-10",
+   "vr": "TM",
+   "expect": "bad",
+   "value": "235959.987654    ",
+   "vm": "1"
+  },
+  {
+   "line": 240,
+   "id": "TM-11",
+   "vr": "TM",
+   "expect": "good",
+   "value": "0000   \\010101  \\020202.02 \\030303.0303",
+   "vm": "4"
+  },
+  {
+   "line": 241,
+   "id": "TM-12",
+   "vr": "TM",
+   "expect": "bad",
+   "value": "12:30:00.123456",
+   "vm": "1",
+   "old_format": false
+  },
+  {
+   "line": 242,
+   "id": "TM-13",
+   "vr": "TM",
+   "expect": "good",
+   "value": "12:30:00.123456",
+   "vm": "1",
+   "old_format": true
+  },
+  {
+   "line": 243,
+   "id": "TM-14",
+   "vr": "TM",
+   "expect": "bad",
+   "value": "12:30",
+   "vm": "1",
+   "old_format": true
+  },
+  {
+   "line": 244,
+   "id": "TM-15",
+   "vr": "TM",
+   "expect": "good",
+   "value": "12 ",
+   "vm": "1"
+  },
+  {
+   "line": 245,
+   "id": "TM-16",
+   "vr": "TM",
+   "expect": "bad",
+   "value": " ",
+   "vm": "1"
+  },
+  {
+   "line": 248,
+   "id": "UC-01",
+   "vr": "UC",
+   "expect": "good",
+   "value": "ABC",
+   "vm": "1"
+  },
+  {
+   "line": 249,
+   "id": "UC-02",
+   "vr": "UC",
+   "expect": "good",
+   "value": "ABC\\123",
+   "vm": "2"
+  },
+  {
+   "line": 250,
+   "id": "UC-03",
+   "vr": "UC",
+   "expect": "good",
+   "value": " Jörg Riesmeier ",
+   "vm": "1",
+   "charset": "ISO_IR 100"
+  },
+  {
+   "line": 251,
+   "id": "UC-04",
+   "vr": "UC",
+   "expect": "good",
+   "value": "ESC\u001baping",
+   "vm": "1"
+  },
+  {
+   "line": 252,
+   "id": "UC-05",
+   "vr": "UC",
+   "expect": "bad",
+   "value": "not allowed: \n\b\r\f",
+   "vm": "1"
+  },
+  {
+   "line": 253,
+   "id": "UC-06",
+   "vr": "UC",
+   "expect": "good",
+   "value": " ",
+   "vm": "1"
+  },
+  {
+   "line": 254,
+   "id": "UC-07",
+   "vr": "UC",
+   "expect": "good",
+   "value": "A\\B",
+   "vm": "2"
+  },
+  {
+   "line": 257,
+   "id": "UI-01",
+   "vr": "UI",
+   "expect": "good",
+   "value": "0",
+   "vm": "1"
+  },
+  {
+   "line": 258,
+   "id": "UI-02",
+   "vr": "UI",
+   "expect": "good",
+   "value": "0.1",
+   "vm": "1"
+  },
+  {
+   "line": 259,
+   "id": "UI-03",
+   "vr": "UI",
+   "expect": "good",
+   "value": "1.2.3.4.5.6.7.8.9.0.123.4321",
+   "vm": "1"
+  },
+  {
+   "line": 260,
+   "id": "UI-04",
+   "vr": "UI",
+   "expect": "bad",
+   "value": "1.02",
+   "vm": "1"
+  },
+  {
+   "line": 261,
+   "id": "UI-05",
+   "vr": "UI",
+   "expect": "bad",
+   "value": ".2",
+   "vm": "1"
+  },
+  {
+   "line": 262,
+   "id": "UI-06",
+   "vr": "UI",
+   "expect": "bad",
+   "value": "1.",
+   "vm": "1"
+  },
+  {
+   "line": 263,
+   "id": "UI-07",
+   "vr": "UI",
+   "expect": "bad",
+   "value": "1.2.3.4.5.6.7.8.9.0 ",
+   "vm": "1"
+  },
+  {
+   "line": 264,
+   "id": "UI-08",
+   "vr": "UI",
+   "expect": "bad",
+   "value": " 1.2.3.4.5.6.7.8.9.0",
+   "vm": "1"
+  },
+  {
+   "line": 265,
+   "id": "UI-09",
+   "vr": "UI",
+   "expect": "bad",
+   "value": "1.2.3.4.5. 6.7.8.9.0",
+   "vm": "1"
+  },
+  {
+   "line": 266,
+   "id": "UI-10",
+   "vr": "UI",
+   "expect": "good",
+   "value": "1.2.3.4.5.6.7.8.9.0\\99",
+   "vm": "2"
+  },
+  {
+   "line": 267,
+   "id": "UI-11",
+   "vr": "UI",
+   "expect": "good",
+   "value": "1.2.3.4.5.6.7.8.9.0.123.456.789.0.111222333444555666777888999000",
+   "vm": "1"
+  },
+  {
+   "line": 268,
+   "id": "UI-12",
+   "vr": "UI",
+   "expect": "bad",
+   "value": "1.2.3.4.5.6.7.8.9.0.123.456.789.10.111222333444555666777888999000",
+   "vm": "1"
+  },
+  {
+   "line": 269,
+   "id": "UI-13",
+   "vr": "UI",
+   "expect": "bad",
+   "value": "007",
+   "vm": "1"
+  },
+  {
+   "line": 272,
+   "id": "UR-01",
+   "vr": "UR",
+   "expect": "good",
+   "value": "http://www.dcmtk.org/ "
+  },
+  {
+   "line": 273,
+   "id": "UR-02",
+   "vr": "UR",
+   "expect": "bad",
+   "value": " http://www.dcmtk.org/"
+  },
+  {
+   "line": 274,
+   "id": "UR-03",
+   "vr": "UR",
+   "expect": "bad",
+   "value": "http:\\\\www.dcmtk.org"
+  },
+  {
+   "line": 275,
+   "id": "UR-04",
+   "vr": "UR",
+   "expect": "bad",
+   "value": "http://localhost/some space"
+  },
+  {
+   "line": 276,
+   "id": "UR-05",
+   "vr": "UR",
+   "expect": "good",
+   "value": "http://localhost/some%20space"
+  },
+  {
+   "line": 277,
+   "id": "UR-06",
+   "vr": "UR",
+   "expect": "good",
+   "value": "foo://example.com:8042/over/there?name=ferret#nose"
+  },
+  {
+   "line": 278,
+   "id": "UR-07",
+   "vr": "UR",
+   "expect": "good",
+   "value": "urn:example:animal:ferret:nose"
+  },
+  {
+   "line": 279,
+   "id": "UR-08",
+   "vr": "UR",
+   "expect": "good",
+   "value": "http://joe:passwd@www.example.net:8080/index.html?action=something&session=A54C6FE2#info"
+  },
+  {
+   "line": 284,
+   "id": "UT-01",
+   "vr": "UT",
+   "expect": "good",
+   "value": " This text can be pretty long ... "
+  },
+  {
+   "line": 285,
+   "id": "UT-02",
+   "vr": "UT",
+   "expect": "good",
+   "generated": {
+    "fill": "n",
+    "length": 524288,
+    "set": []
+   }
+  },
+  {
+   "line": 288,
+   "id": "UT-03",
+   "vr": "UT",
+   "expect": "good",
+   "generated": {
+    "fill": "n",
+    "length": 524288,
+    "set": [
+     {
+      "index": 262144,
+      "char": "\t"
+     }
+    ]
+   }
+  },
+  {
+   "line": 291,
+   "id": "UT-04",
+   "vr": "UT",
+   "expect": "bad",
+   "generated": {
+    "fill": "n",
+    "length": 524288,
+    "set": [
+     {
+      "index": 262144,
+      "char": "\t"
+     },
+     {
+      "index": 524287,
+      "char": "\u000b"
+     }
+    ]
+   }
+  }
+ ]
+}

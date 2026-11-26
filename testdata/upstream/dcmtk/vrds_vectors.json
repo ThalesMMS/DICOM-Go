@@ -1,0 +1,203 @@
+{
+ "description": "DCMTK DcmDecimalString vectors (tvrds.cc). 'parse': a value string, the resulting VM and the Float64 values (getFloat64Vector), or float64_ok false with the count of values read before the invalid one. 'format': putFloat64 / putFloat64Prec steps on one element; 'string' is the whole value string after the step ('precision' defaults to 6 significant digits; 'clear' empties the element).",
+ "parse": [
+  {
+   "line": 35,
+   "input": "1\\2.0\\3.5\\-4.99\\+500.005\\6.66E-01",
+   "float64_ok": true,
+   "float64_count": 6,
+   "float64": [
+    "1",
+    "2",
+    "3.5",
+    "-4.99",
+    "500.005",
+    "0.666"
+   ]
+  },
+  {
+   "line": 51,
+   "input": "1\\2.0\\3.5\\-4.99\u0000\\+500.005\\6.66E-01",
+   "float64_ok": true,
+   "float64_count": 6,
+   "float64": [
+    "1",
+    "2",
+    "3.5",
+    "-4.99",
+    "500.005",
+    "0.666"
+   ]
+  },
+  {
+   "line": 67,
+   "input": "1\\2.0\\3.5\\-4.99\u0000\\+500.005\\6.66E-01",
+   "float64_ok": true,
+   "float64_count": 6,
+   "float64": [
+    "1",
+    "2",
+    "3.5",
+    "-4.99",
+    "500.005",
+    "0.666"
+   ]
+  },
+  {
+   "line": 82,
+   "input": "1\\2.0\\3.5\\-4.99\\+500.005\\6.66E-01\\",
+   "vm": 7
+  },
+  {
+   "line": 84,
+   "input": "\\1\\2.0\\3.5\\-4.99\\+500.005\\6.66E-01",
+   "vm": 7
+  },
+  {
+   "line": 86,
+   "input": "1\\2.0\\3.5\\-4.99\\ \\+500.005\\6.66E-01",
+   "vm": 7
+  },
+  {
+   "line": 89,
+   "input": "1\\2.0\\3.5\\-4.99\\ - \\+500.005\\6.66E-01",
+   "float64_ok": false,
+   "float64_count": 4
+  }
+ ],
+ "format": [
+  {
+   "line": 100,
+   "op": "put",
+   "value": "0",
+   "position": 0,
+   "ok": true,
+   "string": "0"
+  },
+  {
+   "line": 105,
+   "op": "put",
+   "value": "0.1",
+   "position": 1,
+   "ok": true,
+   "string": "0\\0.1"
+  },
+  {
+   "line": 110,
+   "op": "put",
+   "value": "0.5",
+   "position": 5,
+   "ok": true,
+   "string": "0\\0.1\\\\\\\\0.5"
+  },
+  {
+   "line": 115,
+   "op": "put",
+   "value": "0.3",
+   "position": 3,
+   "ok": true,
+   "string": "0\\0.1\\\\0.3\\\\0.5"
+  },
+  {
+   "line": 120,
+   "op": "put",
+   "value": "0.12345678901234",
+   "position": 0,
+   "ok": true,
+   "string": "0.123457\\0.1\\\\0.3\\\\0.5"
+  },
+  {
+   "line": 125,
+   "op": "clear"
+  },
+  {
+   "line": 126,
+   "op": "put",
+   "value": "1234567890123456.0",
+   "position": 0,
+   "ok": true,
+   "string": "1234567890123456"
+  },
+  {
+   "line": 131,
+   "op": "clear"
+  },
+  {
+   "line": 132,
+   "op": "put",
+   "value": "-123456789012345.0",
+   "position": 0,
+   "ok": true,
+   "string": "-123456789012345"
+  },
+  {
+   "line": 138,
+   "op": "clear"
+  },
+  {
+   "line": 139,
+   "op": "put",
+   "value": "12345678901234567.0",
+   "position": 0,
+   "ok": false
+  },
+  {
+   "line": 142,
+   "op": "clear"
+  },
+  {
+   "line": 143,
+   "op": "put",
+   "value": "-1234567890123456.0",
+   "position": 0,
+   "ok": false
+  },
+  {
+   "line": 146,
+   "op": "clear"
+  },
+  {
+   "line": 147,
+   "op": "put",
+   "value": "0.12345678901234",
+   "position": 0,
+   "ok": true,
+   "precision": 14,
+   "string": "0.12345678901234"
+  },
+  {
+   "line": 153,
+   "op": "clear"
+  },
+  {
+   "line": 154,
+   "op": "put",
+   "value": "0.123456789012345",
+   "position": 0,
+   "ok": false,
+   "precision": 15
+  },
+  {
+   "line": 158,
+   "op": "clear"
+  },
+  {
+   "line": 159,
+   "op": "put",
+   "value": "0.123400",
+   "position": 0,
+   "ok": true,
+   "precision": 6,
+   "remove_trailing_zeros": false,
+   "string": "0.123400"
+  },
+  {
+   "line": 165,
+   "op": "put_new_element",
+   "value": "0.1",
+   "position": 0,
+   "ok": true,
+   "string": "0.1"
+  }
+ ]
+}

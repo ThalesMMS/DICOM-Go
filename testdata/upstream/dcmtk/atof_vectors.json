@@ -1,0 +1,198 @@
+{
+ "description": "DCMTK OFStandard::atof vectors (tatof.cc): the input, whether conversion succeeds and the expected double (inf, -inf, nan or a decimal literal; 'float_literal' marks a C float constant, i.e. the value rounded to binary32). Converted values must agree to 9 significant digits. 'implementation' marks the row of one of DCMTK's alternative atof implementations (old, iostream, cstdio). 'locale_independent' conversions must not depend on the C locale.",
+ "entries": [
+  {
+   "line": 55,
+   "input": "0",
+   "ok": true,
+   "value": "0.0"
+  },
+  {
+   "line": 56,
+   "input": "1",
+   "ok": true,
+   "value": "1.0"
+  },
+  {
+   "line": 57,
+   "input": "     1",
+   "ok": true,
+   "value": "1.0"
+  },
+  {
+   "line": 58,
+   "input": "\t\t1",
+   "ok": true,
+   "value": "1.0"
+  },
+  {
+   "line": 59,
+   "input": "\n\n1",
+   "ok": true,
+   "value": "1.0"
+  },
+  {
+   "line": 60,
+   "input": " \t\n1",
+   "ok": true,
+   "value": "1.0"
+  },
+  {
+   "line": 61,
+   "input": "2.5",
+   "ok": true,
+   "value": "2.5"
+  },
+  {
+   "line": 62,
+   "input": "  +2.5",
+   "ok": true,
+   "value": "2.5"
+  },
+  {
+   "line": 63,
+   "input": "  -2.5",
+   "ok": true,
+   "value": "-2.5"
+  },
+  {
+   "line": 64,
+   "input": "20",
+   "ok": true,
+   "value": "20.0"
+  },
+  {
+   "line": 65,
+   "input": "1E3",
+   "ok": true,
+   "value": "1000.0"
+  },
+  {
+   "line": 66,
+   "input": "1.e3",
+   "ok": true,
+   "value": "1000.0"
+  },
+  {
+   "line": 67,
+   "input": "1.0E+003",
+   "ok": true,
+   "value": "1000.0"
+  },
+  {
+   "line": 68,
+   "input": "10000.0E-001",
+   "ok": true,
+   "value": "1000.0"
+  },
+  {
+   "line": 69,
+   "input": "1.23456E-0",
+   "ok": true,
+   "value": "1.23456"
+  },
+  {
+   "line": 70,
+   "input": "9.87654321e-10",
+   "ok": true,
+   "value": "9.87654321e-10"
+  },
+  {
+   "line": 73,
+   "input": "1.797693134862315E+308",
+   "ok": true,
+   "value": "1.797693134862315e+308"
+  },
+  {
+   "line": 76,
+   "input": "2.2250738585072014E-292",
+   "ok": true,
+   "value": "2.2250738585072014E-292"
+  },
+  {
+   "line": 77,
+   "input": "3.402823466E+38",
+   "ok": true,
+   "value": "3.402823466E+38",
+   "float_literal": true
+  },
+  {
+   "line": 78,
+   "input": "1.175494351E-38",
+   "ok": true,
+   "value": "1.175494351E-38",
+   "float_literal": true
+  },
+  {
+   "line": 84,
+   "input": "1.7976931348623157E+1000",
+   "ok": true,
+   "value": "inf",
+   "implementation": "old"
+  },
+  {
+   "line": 87,
+   "input": "1.7976931348623157E+1000",
+   "ok": false,
+   "value": "0.0",
+   "implementation": "iostream"
+  },
+  {
+   "line": 90,
+   "input": "1.7976931348623157E+1000",
+   "ok": true,
+   "value": "inf",
+   "implementation": "cstdio"
+  },
+  {
+   "line": 97,
+   "input": "NaN",
+   "ok": true,
+   "value": "nan"
+  },
+  {
+   "line": 98,
+   "input": "INF",
+   "ok": true,
+   "value": "inf"
+  },
+  {
+   "line": 99,
+   "input": "-INF",
+   "ok": true,
+   "value": "-inf"
+  },
+  {
+   "line": 101,
+   "input": "BIGNUM",
+   "ok": false,
+   "value": "0.0"
+  },
+  {
+   "line": 102,
+   "input": "_1.0",
+   "ok": false,
+   "value": "0.0"
+  },
+  {
+   "line": 103,
+   "input": "",
+   "ok": false,
+   "value": "0.0"
+  }
+ ],
+ "locale_independent": [
+  {
+   "line": 146,
+   "locale": "de_DE",
+   "input": "1.5",
+   "value": "1.5"
+  },
+  {
+   "line": 152,
+   "locale": "ps_AF",
+   "input": "1.5",
+   "value": "1.5"
+  }
+ ]
+}

@@ -1,0 +1,118 @@
+{
+ "generator": "dicom-go-validation/scripts/vtk_fixtures.py",
+ "license": "VTK is BSD-3-Clause; see LICENSE.VTK beside this file",
+ "phantoms": [
+  {
+   "analytic": {
+    "area": 1256.6370614359173,
+    "volume": 4188.790204786391
+   },
+   "dims": [
+    32,
+    32,
+    32
+   ],
+   "flying_edges": {
+    "area": 1251.4117141323347,
+    "iso": 0.0,
+    "triangles": 3788,
+    "volume": 4157.462715084275
+   },
+   "name": "sphere",
+   "radius": 10,
+   "surface_nets": {
+    "area": 1895.9999999999998,
+    "triangles": 3792,
+    "volume": 4223.999999999999
+   }
+  },
+  {
+   "analytic": {
+    "volume": 4691.445029360758
+   },
+   "dims": [
+    36,
+    30,
+    26
+   ],
+   "flying_edges": {
+    "area": 1405.4811053871817,
+    "iso": 0.0,
+    "triangles": 4172,
+    "volume": 4655.509176662195
+   },
+   "name": "ellipsoid",
+   "semi_axes": [
+    14,
+    10,
+    8
+   ],
+   "surface_nets": {
+    "area": 2087.9999999999995,
+    "triangles": 4176,
+    "volume": 4704.0
+   }
+  },
+  {
+   "analytic": {
+    "volume": 4096
+   },
+   "dims": [
+    32,
+    32,
+    32
+   ],
+   "half": 8,
+   "name": "rotated-cube",
+   "surface_nets": {
+    "area": 1935.9999999999998,
+    "triangles": 3872,
+    "volume": 4224.0
+   }
+  },
+  {
+   "dims": [
+    40,
+    40,
+    40
+   ],
+   "label": 1,
+   "name": "labelmap-1",
+   "surface_nets": {
+    "area": 893.9999999999999,
+    "triangles": 1788,
+    "volume": 1418.9999999999998
+   }
+  },
+  {
+   "dims": [
+    40,
+    40,
+    40
+   ],
+   "label": 2,
+   "name": "labelmap-2",
+   "surface_nets": {
+    "area": 1359.9999999999998,
+    "triangles": 2720,
+    "volume": 3199.999999999999
+   }
+  },
+  {
+   "dims": [
+    40,
+    40,
+    40
+   ],
+   "label": 3,
+   "name": "labelmap-3",
+   "surface_nets": {
+    "area": 293.99999999999994,
+    "triangles": 588,
+    "volume": 257.0
+   }
+  }
+ ],
+ "vtk_commit": "f49a1dbafa60b58ef22f6292ec58370453162192",
+ "vtk_version": "9.6.2"
+}

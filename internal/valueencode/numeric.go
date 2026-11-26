@@ -33,14 +33,14 @@ func ValidateNumeric(vr core.VR, value core.Value) error {
 	case core.TagValue:
 		allowed = []core.VR{core.VRAT}
 	default:
-		return fmt.Errorf("dicom: unsupported numeric value type %T", value)
+		return fmt.Errorf("%w: unsupported numeric value type %T", core.ErrValueNotRepresentable, value)
 	}
 	for _, candidate := range allowed {
 		if vr == candidate {
 			return nil
 		}
 	}
-	return fmt.Errorf("dicom: numeric value type %T is incompatible with VR %s", value, vr)
+	return fmt.Errorf("%w: numeric value type %T is incompatible with VR %s", core.ErrValueNotRepresentable, value, vr)
 }
 
 func Numeric(value core.Value, order binary.ByteOrder) ([]byte, core.Length, error) {
@@ -72,13 +72,51 @@ func Numeric(value core.Value, order binary.ByteOrder) ([]byte, core.Length, err
 }
 
 func fixed[T any](values []T, width int, encode func([]byte, T)) ([]byte, core.Length, error) {
-	total := uint64(len(values)) * uint64(width)
-	if total >= uint64(core.UndefinedLength) || total > uint64(^uint(0)>>1) {
-		return nil, 0, fmt.Errorf("dicom: numeric value length %d exceeds defined/platform length: %w", total, dicomenc.ErrLengthOverflow)
+	length, err := fixedLength(len(values), width)
+	if err != nil {
+		return nil, 0, err
 	}
-	encoded := make([]byte, int(total))
+	encoded := make([]byte, int(length))
 	for i, v := range values {
 		encode(encoded[i*width:(i+1)*width], v)
 	}
-	return encoded, core.Length(total), nil
+	return encoded, length, nil
+}
+
+// NumericLength shares the allocation guard with Numeric without encoding or
+// cloning the caller's typed values.
+func NumericLength(value core.Value) (core.Length, error) {
+	switch v := value.(type) {
+	case core.Uint16Value:
+		return fixedLength(len(v), 2)
+	case core.Int16Value:
+		return fixedLength(len(v), 2)
+	case core.Uint32Value:
+		return fixedLength(len(v), 4)
+	case core.Int32Value:
+		return fixedLength(len(v), 4)
+	case core.Uint64Value:
+		return fixedLength(len(v), 8)
+	case core.Int64Value:
+		return fixedLength(len(v), 8)
+	case core.Float32Value:
+		return fixedLength(len(v), 4)
+	case core.Float64Value:
+		return fixedLength(len(v), 8)
+	case core.TagValue:
+		return fixedLength(len(v), 4)
+	default:
+		return 0, fmt.Errorf("dicom: unsupported numeric value type %T", value)
+	}
+}
+
+func fixedLength(count, width int) (core.Length, error) {
+	if count < 0 || width <= 0 || uint64(count) > uint64(^uint64(0))/uint64(width) {
+		return 0, dicomenc.ErrLengthOverflow
+	}
+	total := uint64(count) * uint64(width)
+	if total >= uint64(core.UndefinedLength) || total > uint64(^uint(0)>>1) {
+		return 0, fmt.Errorf("dicom: numeric value length %d exceeds defined/platform length: %w", total, dicomenc.ErrLengthOverflow)
+	}
+	return core.Length(total), nil
 }

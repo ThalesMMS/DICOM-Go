@@ -6,7 +6,7 @@ require github.com/ThalesMMS/dicom-go v0.0.0
 
 require (
 	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.3.8 // indirect
+	golang.org/x/text v0.21.0 // indirect
 )
 
 replace github.com/ThalesMMS/dicom-go => ../../..
