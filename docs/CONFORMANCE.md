@@ -142,10 +142,7 @@ The following transfer syntax families are not decoded or transcoded in
 The registry may recognize these UIDs, but recognition does not imply decode
 support.
 
-See [CAPABILITIES.md](CAPABILITIES.md) for the current repository inventory and
-the [outcome dependency model](ROADMAP.md#outcome-dependency-model) for stable
-sequencing rules. Executable work remains in the
-[live GitHub queue](https://github.com/ThalesMMS/go-dev/issues?q=is%3Aissue%20state%3Aopen).
+See [CAPABILITIES.md](CAPABILITIES.md) for the current repository inventory.
 
 ## Headless Render and ROI Scope
 

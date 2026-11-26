@@ -4,9 +4,7 @@
 to keep package boundaries visible and dependencies narrow.
 
 The current capability and limitation surface is maintained in
-[CAPABILITIES.md](./CAPABILITIES.md). Stable outcome ordering across the library,
-application services, and both UI shells is maintained in
-[ROADMAP.md](./ROADMAP.md).
+[CAPABILITIES.md](./CAPABILITIES.md).
 
 ## Dependency direction
 
