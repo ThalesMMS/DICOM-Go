@@ -1,6 +1,6 @@
 # ITK HDF5 transform fixtures
 
-Synthetic transform files for `ReadITKHDF5` and `internal/hdf5` (#1252). No
+Synthetic transform files for `ReadITKHDF5` and `internal/hdf5`. No
 patient data; no file is copied from ITK or another project.
 
 They were written by the HDF5 C library (1.14, the copy bundled with ITK at

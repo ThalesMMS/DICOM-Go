@@ -119,7 +119,7 @@ is implied. Every source row, including conflicting/quarantined definitions,
 retains line/hash provenance through the opt-in provider. No reference
 implementation code or dcm4che DATA is copied. The existing curated catalog and
 global defaults are unchanged. See [source/profile/coverage documentation](docs/PRIVATE_CATALOG.md)
-and the root reuse inventory for #1317.
+for details.
 
 ### ITK — histogram matching
 

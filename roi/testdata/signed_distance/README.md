@@ -1,7 +1,7 @@
 # ITK signed distance numerical oracle
 
 `itk-5.4.json` contains independently generated numerical outputs for masks
-created by `generate.py`. It is synthetic data authored for #1348; no upstream
+created by `generate.py`. It is synthetic data; no upstream
 corpus or implementation source was imported.
 
 Generation used the macOS arm64 SimpleITK 2.5.3 wheel, reporting ITK 5.4,

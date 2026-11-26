@@ -64,33 +64,3 @@ go test ./roi -run '^TestPCAShapeITKRepresentationAndPose$' -count=1 -v
 Optionally set `DICOM_GO_PCA_SHAPE_ITK_RECEIPT` to a separate `.json.gz` output
 path to record the actual SDK run. Review that receipt before replacing the
 frozen fixture. Default tests never discover, build, execute or download ITK.
-
-## Validation and measured cost
-
-Commands executed on Windows 11 amd64, Intel Core i7-14700K, Go 1.26.4:
-
-- `go test -race ./roi -run '^TestPCAShape' -count=1 -v`: passed analytic,
-  independent NumPy, ownership/concurrency, malformed model/geometry/basis,
-  limits, precancel and in-flight train/fit/evaluate/evolve checks. The native
-  test skips unless its executable is configured; frozen results run offline.
-- `go test -race ./roi -run '^(TestPCAShape|TestEdgeLevelSet|TestShape|TestLevelSet)' -count=1`:
-  passed affected base-solver and new-contract regressions (73.739 s).
-- Explicit native ITK representation/pose gate: passed all 15 comparisons.
-- `make -k check`: formatting, vet, build, documentation, codec policy,
-  optional-adapter, conformance and manifest gates passed. The module test
-  baseline still fails with the same 33 pre-existing test failure identities
-  recorded before this issue; no new failure identity appeared. Documentation
-  validation covered 226 Markdown files, 681 local links and 301 anchors.
-- `go test ./roi -run '^$' -bench '^BenchmarkPCAShape' -benchmem -benchtime=200ms -count=3 -cpu=1`:
-  measured without concurrent heavy builds; individual rows are stored in
-  [benchmark.txt](benchmark.txt).
-
-| CPU workload | Range ns/op | Go B/op | Allocs/op |
-|---|---:|---:|---:|
-| Train 8 spheres / 693 voxels / 6 components | 146056–147156 | 88184 | 31 |
-| Fit held-out sphere on that model | 5415–5534 | 112 | 2 |
-| Prior-only 41×41 circle evolution / 150 steps | 1874528–1919037 | 278768 | 949 |
-
-These are local CPU research workloads. Go allocated bytes are not measured RSS
-or native memory; the ITK helper was used for correctness, not a timing contest.
-No GPU, native macOS, application UI or patient/PACS qualification is claimed.
