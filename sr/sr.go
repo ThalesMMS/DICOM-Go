@@ -7,10 +7,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ThalesMMS/dicom-go/codes/dcm"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/internal/derivedio"
@@ -91,6 +94,12 @@ type ImageReference struct {
 	// Frames are optional referenced frame numbers (1-based) for multi-frame
 	// images.
 	Frames []int
+	// RetrieveURL is the Retrieve URL (0008,1190) of the referenced series in
+	// the evidence (Hierarchical Series Reference Macro, PS3.3 Table
+	// C.17-3a): where its instances can be retrieved, such as the DICOMweb
+	// series URL of an IHE MADO manifest (CP-2595). It belongs to the series:
+	// the references of one series must not give different URLs.
+	RetrieveURL string
 }
 
 // Measurement is a numeric value with coded units (a NUM content item).
@@ -181,20 +190,30 @@ type ContentItemEncoding struct {
 
 // Document is a KOS or Basic Text SR document.
 type Document struct {
-	SOPClassUID         string
-	SOPInstanceUID      string
-	StudyInstanceUID    string
-	SeriesInstanceUID   string
-	Modality            string // "KO" for KOS, "SR" otherwise
-	Title               CodedEntry
-	ContentDate         string
-	ContentTime         string
-	SeriesNumber        string
-	InstanceNumber      string
-	CompletionFlag      string
-	VerificationFlag    string
-	ContinuityOfContent string
-	Content             []ContentItem // children of the root CONTAINER
+	SOPClassUID       string
+	SOPInstanceUID    string
+	StudyInstanceUID  string
+	SeriesInstanceUID string
+	Modality          string // "KO" for KOS, "SR" otherwise
+	Title             CodedEntry
+	ContentDate       string
+	ContentTime       string
+	SeriesNumber      string
+	InstanceNumber    string
+	CompletionFlag    string
+	VerificationFlag  string
+	// CompletionFlagDescription explains the Completion Flag (Complete).
+	CompletionFlagDescription string
+	// VerifyingObservers verified the document; VERIFIED requires one
+	// (Verify).
+	VerifyingObservers []VerifyingObserver
+	// PredecessorDocuments are the documents this one revises (Revise).
+	PredecessorDocuments []DocumentReference
+	ContinuityOfContent  string
+	Content              []ContentItem // children of the root CONTAINER
+	// Common fills the Patient, Study and equipment modules from a source
+	// instance of the same patient (object.InheritCommonModules).
+	Common object.DerivedCommon
 }
 
 var (
@@ -205,6 +224,7 @@ var (
 	tagContentTime                       = core.NewTag(0x0008, 0x0033)
 	tagStudyInstanceUID                  = core.NewTag(0x0020, 0x000D)
 	tagSeriesInstanceUID                 = core.NewTag(0x0020, 0x000E)
+	tagRetrieveURL                       = core.NewTag(0x0008, 0x1190)
 	tagSeriesNumber                      = core.NewTag(0x0020, 0x0011)
 	tagInstanceNumber                    = core.NewTag(0x0020, 0x0013)
 	tagReferencedSeriesSequence          = core.NewTag(0x0008, 0x1115)
@@ -245,6 +265,8 @@ var (
 	tagContinuityOfContent               = core.NewTag(0x0040, 0xA050)
 	tagCurrentRequestedProcedureEvidence = core.NewTag(0x0040, 0xA375)
 	tagCompletionFlag                    = core.NewTag(0x0040, 0xA491)
+	tagReferencedPerformedProcedureStep  = core.NewTag(0x0008, 0x1111)
+	tagPerformedProcedureCodeSequence    = core.NewTag(0x0040, 0xA372)
 	tagVerificationFlag                  = core.NewTag(0x0040, 0xA493)
 	tagDateTimeValue                     = core.NewTag(0x0040, 0xA120)
 	tagDateValue                         = core.NewTag(0x0040, 0xA121)
@@ -266,6 +288,8 @@ var (
 // Elements builds the dataset elements that represent the document: the SR
 // header (SOP Class/Instance, Modality, content date/time, document title), the
 // root CONTAINER value type, and the content-item tree as a Content Sequence.
+// The references and, for SOP Classes with a PS3.3 A.35 table, the
+// relationship content constraints are checked strictly first.
 func (d *Document) Elements() ([]core.Element, error) {
 	if d == nil {
 		return nil, fmt.Errorf("%w: document is nil", ErrInvalidDocument)
@@ -273,19 +297,27 @@ func (d *Document) Elements() ([]core.Element, error) {
 	if _, _, err := ResolveReferences(d, DefaultReferenceOptions()); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidDocument, err)
 	}
+	if _, err := ValidateRelationships(d, DefaultRelationshipOptions()); err != nil && !errors.Is(err, ErrUnconstrainedSOPClass) {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidDocument, err)
+	}
+	return d.encodeElements()
+}
+
+// encodeElements encodes the document without the reference and relationship
+// checks of Elements.
+func (d *Document) encodeElements() ([]core.Element, error) {
 	completion, verification := "", ""
 	if d.SOPClassUID != KeyObjectSelectionDocumentStorage {
 		var err error
-		completion, verification, err = validateDocumentState(d.CompletionFlag, d.VerificationFlag)
+		completion, verification, err = validateDocumentState(d.CompletionFlag, d.VerificationFlag, len(d.VerifyingObservers))
 		if err != nil {
 			return nil, err
 		}
 	}
 	refs := contentImageReferences(d.Content)
-	if d.SOPClassUID == KeyObjectSelectionDocumentStorage {
-		if err := validateEvidenceReferences(refs); err != nil {
-			return nil, err
-		}
+	evidence, err := evidenceReferences(refs, d.Common.Source)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidDocument, err)
 	}
 	elems := []core.Element{
 		strElem(tagSOPClassUID, core.VRUI, d.SOPClassUID),
@@ -296,18 +328,26 @@ func (d *Document) Elements() ([]core.Element, error) {
 		strElem(tagValueType, core.VRCS, string(ValueContainer)),
 		strElem(tagContinuityOfContent, core.VRCS, defaultString(d.ContinuityOfContent, "SEPARATE")),
 	}
+	// Referenced Performed Procedure Step Sequence is Type 2 in the SR and
+	// Key Object Document Series modules, Performed Procedure Code Sequence
+	// in the SR Document General module.
+	elems = append(elems, derivedio.Seq(tagReferencedPerformedProcedureStep))
 	if d.SOPClassUID != KeyObjectSelectionDocumentStorage {
 		elems = append(elems,
 			strElem(tagCompletionFlag, core.VRCS, completion),
 			strElem(tagVerificationFlag, core.VRCS, verification),
+			derivedio.Seq(tagPerformedProcedureCodeSequence),
 		)
+		lifecycle, err := lifecycleElements(d.CompletionFlagDescription, d.VerifyingObservers, d.PredecessorDocuments)
+		if err != nil {
+			return nil, err
+		}
+		elems = append(elems, lifecycle...)
 	}
 	if d.StudyInstanceUID != "" {
 		elems = append(elems, strElem(tagStudyInstanceUID, core.VRUI, d.StudyInstanceUID))
 	}
-	if d.SeriesInstanceUID != "" {
-		elems = append(elems, strElem(tagSeriesInstanceUID, core.VRUI, d.SeriesInstanceUID))
-	}
+	elems = append(elems, strElem(tagSeriesInstanceUID, core.VRUI, documentSeriesUID(d.SOPClassUID, d.SOPInstanceUID, d.SeriesInstanceUID)))
 	contentDate, contentTime := d.ContentDate, d.ContentTime
 	if contentDate == "" || contentTime == "" {
 		currentDate, currentTime := currentContentDateTime()
@@ -332,8 +372,10 @@ func (d *Document) Elements() ([]core.Element, error) {
 		}
 		elems = append(elems, sequence)
 	}
-	if d.SOPClassUID == KeyObjectSelectionDocumentStorage {
-		elems = append(elems, currentRequestedProcedureEvidenceSequence(refs))
+	// The Key Object Selection Document Module requires the evidence even
+	// when the document references nothing.
+	if d.SOPClassUID == KeyObjectSelectionDocumentStorage || len(evidence) > 0 {
+		elems = append(elems, currentRequestedProcedureEvidenceSequence(evidence))
 	}
 	return elems, nil
 }
@@ -344,10 +386,14 @@ func (d *Document) Dataset() (*object.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	return object.FromElements(elements, nil), nil
+	dataset := object.FromElements(elements, nil)
+	if err := d.Common.Apply(dataset, object.InheritWithoutFrameOfReference); err != nil {
+		return nil, err
+	}
+	return dataset, nil
 }
 
-func validateDocumentState(completion, verification string) (string, string, error) {
+func validateDocumentState(completion, verification string, verifyingObservers int) (string, string, error) {
 	completion = defaultString(strings.TrimSpace(completion), completionPartial)
 	verification = defaultString(strings.TrimSpace(verification), verificationUnverified)
 	if completion != completionPartial && completion != completionComplete {
@@ -359,8 +405,8 @@ func validateDocumentState(completion, verification string) (string, string, err
 	if verification == verificationVerified && completion != completionComplete {
 		return "", "", fmt.Errorf("%w: VERIFIED requires COMPLETE", ErrInvalidDocument)
 	}
-	if verification == verificationVerified {
-		return "", "", fmt.Errorf("%w: VERIFIED requires Verifying Observer Sequence, which is not modeled", ErrInvalidDocument)
+	if verification == verificationVerified && verifyingObservers == 0 {
+		return "", "", fmt.Errorf("%w: VERIFIED requires a verifying observer", ErrInvalidDocument)
 	}
 	return completion, verification, nil
 }
@@ -420,7 +466,7 @@ func contentItemDataSet(item ContentItem) (core.DataSet, error) {
 		}
 		qualifier := item.NumericValueQualifier
 		if item.Measurement == nil && qualifier.Empty() {
-			qualifier = CodedEntry{CodeValue: "114010", CodingSchemeDesignator: "DCM", CodeMeaning: "Value unknown"}
+			qualifier = FromCode(dcm.ValueUnknown)
 		}
 		if !qualifier.Empty() {
 			elems = append(elems, codeSequence(tagNumericValueQualifierCodeSeq, qualifier))
@@ -619,10 +665,17 @@ func contentImageReferences(items []ContentItem) []ImageReference {
 }
 
 func currentRequestedProcedureEvidenceSequence(refs []ImageReference) core.Element {
+	return hierarchicalReferenceSequence(tagCurrentRequestedProcedureEvidence, refs)
+}
+
+// hierarchicalReferenceSequence groups refs by study and series
+// (Hierarchical SOP Instance Reference Macro).
+func hierarchicalReferenceSequence(tag core.Tag, refs []ImageReference) core.Element {
 	type seriesEvidence struct {
-		uid  string
-		refs []ImageReference
-		seen map[string]struct{}
+		uid         string
+		retrieveURL string
+		refs        []ImageReference
+		seen        map[string]struct{}
 	}
 	type studyEvidence struct {
 		uid         string
@@ -649,6 +702,9 @@ func currentRequestedProcedureEvidenceSequence(refs []ImageReference) core.Eleme
 			study.seriesIndex[seriesUID] = series
 			study.series = append(study.series, series)
 		}
+		if series.retrieveURL == "" {
+			series.retrieveURL = clean(ref.RetrieveURL)
+		}
 		if _, duplicate := series.seen[sopInstanceUID]; duplicate {
 			continue
 		}
@@ -664,34 +720,121 @@ func currentRequestedProcedureEvidenceSequence(refs []ImageReference) core.Eleme
 			for _, ref := range series.refs {
 				sopItems = append(sopItems, core.DataSet{Elements: referencedSOPElements(ref.SOPClassUID, ref.SOPInstanceUID)})
 			}
-			seriesItems = append(seriesItems, core.DataSet{Elements: []core.Element{
+			elements := []core.Element{
 				strElem(tagSeriesInstanceUID, core.VRUI, series.uid),
 				seqElement(tagRefSOPSequence, sopItems...),
-			}})
+			}
+			if series.retrieveURL != "" {
+				elements = append(elements, strElem(tagRetrieveURL, core.VRUR, series.retrieveURL))
+			}
+			seriesItems = append(seriesItems, core.DataSet{Elements: elements})
 		}
 		studyItems = append(studyItems, core.DataSet{Elements: []core.Element{
 			strElem(tagStudyInstanceUID, core.VRUI, study.uid),
 			seqElement(tagReferencedSeriesSequence, seriesItems...),
 		}})
 	}
-	return seqElement(tagCurrentRequestedProcedureEvidence, studyItems...)
+	return seqElement(tag, studyItems...)
 }
 
-func validateEvidenceReferences(refs []ImageReference) error {
+// evidenceReferences returns refs for the Current Requested Procedure
+// Evidence Sequence, which lists every instance the document references
+// (PS3.3 C.17.2.3). A reference without its Study or Series Instance UID
+// takes it from source when source is the referenced instance (the image a
+// document is derived from); a reference still without them cannot be
+// listed and is an error.
+func evidenceReferences(refs []ImageReference, source *object.Object) ([]ImageReference, error) {
+	var sourceInstance, sourceStudy, sourceSeries string
+	if source != nil {
+		sourceInstance, _ = source.GetUID(tagSOPInstanceUID)
+		sourceStudy, _ = source.GetUID(tagStudyInstanceUID)
+		sourceSeries, _ = source.GetUID(tagSeriesInstanceUID)
+	}
+	out := make([]ImageReference, 0, len(refs))
 	for i, ref := range refs {
+		if instance := clean(ref.SOPInstanceUID); instance != "" && instance == clean(sourceInstance) {
+			if clean(ref.StudyInstanceUID) == "" {
+				ref.StudyInstanceUID = clean(sourceStudy)
+			}
+			if clean(ref.SeriesInstanceUID) == "" {
+				ref.SeriesInstanceUID = clean(sourceSeries)
+			}
+		}
 		if clean(ref.StudyInstanceUID) == "" || clean(ref.SeriesInstanceUID) == "" ||
 			clean(ref.SOPClassUID) == "" || clean(ref.SOPInstanceUID) == "" {
-			return fmt.Errorf("%w: evidence reference %d requires study, series, SOP class, and SOP instance UIDs", ErrInvalidDocument, i)
+			return nil, fmt.Errorf("evidence reference %d (%s) requires study, series, SOP class, and SOP instance UIDs", i, clean(ref.SOPInstanceUID))
 		}
+		out = append(out, ref)
+	}
+	if err := validateSeriesRetrieveURLs(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// validateSeriesRetrieveURLs checks the Retrieve URL (0008,1190, VR UR) of
+// each referenced series: a URI without spaces or control characters, and
+// one per series.
+func validateSeriesRetrieveURLs(refs []ImageReference) error {
+	type seriesKey struct{ study, series string }
+	urls := map[seriesKey]string{}
+	for i, ref := range refs {
+		url := clean(ref.RetrieveURL)
+		if url == "" {
+			continue
+		}
+		if !validRetrieveURL(url) {
+			return fmt.Errorf("evidence reference %d (%s) has an invalid Retrieve URL", i, clean(ref.SOPInstanceUID))
+		}
+		key := seriesKey{clean(ref.StudyInstanceUID), clean(ref.SeriesInstanceUID)}
+		if previous, ok := urls[key]; ok && previous != url {
+			return fmt.Errorf("series %s has conflicting Retrieve URLs %q and %q", key.series, previous, url)
+		}
+		urls[key] = url
 	}
 	return nil
+}
+
+// validRetrieveURL reports whether url can be a UR value: valid UTF-8 with
+// no space or control character, which a URI never contains (RFC 3986).
+func validRetrieveURL(url string) bool {
+	if url == "" || !utf8.ValidString(url) {
+		return false
+	}
+	for _, r := range url {
+		if r <= ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// documentSeriesUID returns the Series Instance UID of a document, Type 1
+// in the SR Document and Key Object Document Series Modules: uid, or one
+// derived from the SOP Instance UID when uid is empty.
+func documentSeriesUID(sopClassUID, sopInstanceUID, uid string) string {
+	if uid = clean(uid); uid != "" {
+		return uid
+	}
+	if sopClassUID == KeyObjectSelectionDocumentStorage {
+		return derivedio.DerivedUID(sopInstanceUID, "key-object-selection-series")
+	}
+	return derivedio.DerivedUID(sopInstanceUID, "sr-document-series")
 }
 
 func strElem(tag core.Tag, vr core.VR, value string) core.Element {
 	return core.Element{Header: core.ElementHeader{Tag: tag, VR: vr}, Value: core.StringValue{value}}
 }
 
+// seqElement builds a sequence whose items keep their elements in ascending
+// tag order, as PS3.5 7.1 requires of every data set (readers such as
+// dicom3tools reject items out of order).
 func seqElement(tag core.Tag, items ...core.DataSet) core.Element {
+	for i := range items {
+		elements := append([]core.Element(nil), items[i].Elements...)
+		sort.SliceStable(elements, func(a, b int) bool { return elements[a].Tag().Less(elements[b].Tag()) })
+		items[i].Elements = elements
+	}
 	return core.Element{
 		Header: core.ElementHeader{Tag: tag, VR: core.VRSQ, Length: core.UndefinedLength, LengthSet: true},
 		Value:  core.SequenceValue{Items: items},

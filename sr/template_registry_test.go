@@ -289,7 +289,11 @@ func TestTemplateIncludeCombinesConditionalRequirements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows := registry.compiledTemplates[includingKey].Rows
+	steps := 0
+	rows, _, err := registry.resolveTemplateLevel(context.Background(), registry.compiledTemplates[includingKey].Rows, "", &steps, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rows) != 1 {
 		t.Fatalf("compiled rows = %d, want 1", len(rows))
 	}

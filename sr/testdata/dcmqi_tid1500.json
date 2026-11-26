@@ -1,0 +1,154 @@
+{
+  "@schema": "https://raw.githubusercontent.com/qiicr/dcmqi/master/doc/schemas/sr-tid1500-schema.json#",
+
+  "SeriesDescription": "Synthetic measurements",
+  "SeriesNumber": "1001",
+  "InstanceNumber": "1",
+
+  "compositeContext": [
+    "seg.dcm"
+  ],
+
+  "imageLibrary": [
+    "ct1.dcm",
+    "ct2.dcm",
+    "ct3.dcm"
+  ],
+
+  "observerContext": {
+    "ObserverType": "PERSON",
+    "PersonObserverName": "Reader^Synthetic"
+  },
+
+  "procedureReported": {
+    "CodeValue": "77477000",
+    "CodingSchemeDesignator": "SCT",
+    "CodeMeaning": "CT of chest"
+  },
+
+  "VerificationFlag": "UNVERIFIED",
+  "CompletionFlag": "COMPLETE",
+
+  "activitySession": "1",
+  "timePoint": "1",
+
+  "Measurements": [
+    {
+      "TrackingIdentifier": "Lesion 1",
+      "TrackingUniqueIdentifier": "1.2.826.0.1.3680043.8.498.20260926.26",
+      "ReferencedSegment": 1,
+      "SourceSeriesForImageSegmentation": "1.2.826.0.1.3680043.8.498.20260926.21",
+      "segmentationSOPInstanceUID": "1.2.826.0.1.3680043.8.498.20260926.23",
+      "Finding": {
+        "CodeValue": "108369006",
+        "CodingSchemeDesignator": "SCT",
+        "CodeMeaning": "Neoplasm"
+      },
+      "FindingSite": {
+        "CodeValue": "39607008",
+        "CodingSchemeDesignator": "SCT",
+        "CodeMeaning": "Lung"
+      },
+      "Laterality": {
+        "CodeValue": "7771000",
+        "CodingSchemeDesignator": "SCT",
+        "CodeMeaning": "Left"
+      },
+      "measurementAlgorithmIdentification": {
+        "AlgorithmName": "Synthetic",
+        "AlgorithmVersion": "1"
+      },
+      "measurementItems": [
+        {
+          "value": "24",
+          "quantity": {
+            "CodeValue": "118565006",
+            "CodingSchemeDesignator": "SCT",
+            "CodeMeaning": "Volume"
+          },
+          "units": {
+            "CodeValue": "mm3",
+            "CodingSchemeDesignator": "UCUM",
+            "CodeMeaning": "cubic millimeter"
+          }
+        },
+        {
+          "value": "15.5",
+          "quantity": {
+            "CodeValue": "112031",
+            "CodingSchemeDesignator": "DCM",
+            "CodeMeaning": "Attenuation Coefficient"
+          },
+          "units": {
+            "CodeValue": "[hnsf'U]",
+            "CodingSchemeDesignator": "UCUM",
+            "CodeMeaning": "Hounsfield unit"
+          },
+          "derivationModifier": {
+            "CodeValue": "373098007",
+            "CodingSchemeDesignator": "SCT",
+            "CodeMeaning": "Mean"
+          }
+        },
+        {
+          "value": "30",
+          "quantity": {
+            "CodeValue": "112031",
+            "CodingSchemeDesignator": "DCM",
+            "CodeMeaning": "Attenuation Coefficient"
+          },
+          "units": {
+            "CodeValue": "[hnsf'U]",
+            "CodingSchemeDesignator": "UCUM",
+            "CodeMeaning": "Hounsfield unit"
+          },
+          "derivationModifier": {
+            "CodeValue": "56851009",
+            "CodingSchemeDesignator": "SCT",
+            "CodeMeaning": "Maximum"
+          }
+        }
+      ],
+      "qualitativeEvaluations": [
+        {
+          "conceptCode": {
+            "CodeValue": "C25378",
+            "CodingSchemeDesignator": "NCIt",
+            "CodeMeaning": "Margin"
+          },
+          "conceptValue": {
+            "CodeValue": "C25391",
+            "CodingSchemeDesignator": "NCIt",
+            "CodeMeaning": "Smooth"
+          }
+        }
+      ]
+    },
+    {
+      "TrackingIdentifier": "Lesion 1 core",
+      "ReferencedSegment": 1,
+      "SourceSeriesForImageSegmentation": "1.2.826.0.1.3680043.8.498.20260926.21",
+      "segmentationSOPInstanceUID": "1.2.826.0.1.3680043.8.498.20260926.23",
+      "Finding": {
+        "CodeValue": "108369006",
+        "CodingSchemeDesignator": "SCT",
+        "CodeMeaning": "Neoplasm"
+      },
+      "measurementItems": [
+        {
+          "value": "8",
+          "quantity": {
+            "CodeValue": "118565006",
+            "CodingSchemeDesignator": "SCT",
+            "CodeMeaning": "Volume"
+          },
+          "units": {
+            "CodeValue": "mm3",
+            "CodingSchemeDesignator": "UCUM",
+            "CodeMeaning": "cubic millimeter"
+          }
+        }
+      ]
+    }
+  ]
+}

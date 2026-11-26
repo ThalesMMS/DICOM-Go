@@ -26,8 +26,6 @@ var (
 	tagRescaleIntercept          = core.NewTag(0x0028, 0x1052)
 	tagRescaleSlope              = core.NewTag(0x0028, 0x1053)
 	tagModalityLUTSequence       = core.NewTag(0x0028, 0x3000)
-	tagSharedFunctionalGroups    = core.NewTag(0x5200, 0x9229)
-	tagPerFrameFunctionalGroups  = core.NewTag(0x5200, 0x9230)
 	tagPixelValueTransformation  = core.NewTag(0x0028, 0x9145)
 )
 
@@ -49,6 +47,20 @@ type framePlan struct {
 	parametric  bool
 	spoolOffset int64
 	spoolLength int64
+
+	// sliceSpacing is object.ResolveSliceSpacing of the frame, the
+	// through-plane pixdim of a single-slice export; grid describes an
+	// image-grid frame without patient geometry.
+	sliceSpacing object.SliceSpacing
+	grid         imageGridInfo
+}
+
+// imageGridInfo describes a frame placed on the NIfTI method-1 grid because
+// it has no patient geometry (SingleSliceImageGrid).
+type imageGridInfo struct {
+	used           bool
+	semantic       object.PixelSpacingSemantic
+	defaultSpacing bool
 }
 
 type timePointPlan struct {
@@ -82,7 +94,12 @@ type exportPlan struct {
 	quantityScheme      string
 	reordered           bool
 	resampled           bool
+	singleSlice         bool
+	sliceSpacingSource  object.SliceSpacingSource
+	imageGrid           imageGridInfo
 	warnings            []string
+	// unmeasured is filled by the write pass of a Parametric Map export.
+	unmeasured UnmeasuredVoxels
 }
 
 func buildPlan(ctx context.Context, source Source, options Options) (*exportPlan, error) {
@@ -123,7 +140,10 @@ func buildPlan(ctx context.Context, source Source, options Options) (*exportPlan
 		plan.sourceEncapsulated[sourceIndex] = file.TransferSyntax.Encapsulated
 		currentSeries, _ := file.GetUID(tagSeriesInstanceUID)
 		currentFOR, _ := file.GetUID(tagFrameOfReferenceUID)
-		if strings.TrimSpace(currentSeries) == "" || strings.TrimSpace(currentFOR) == "" {
+		// Only an image-grid single slice, which claims no patient space, may
+		// lack a Frame of Reference; planSingleSlice rejects any other.
+		gridMayLackFOR := options.SingleSlice == SingleSliceImageGrid && source.Len() == 1
+		if strings.TrimSpace(currentSeries) == "" || (strings.TrimSpace(currentFOR) == "" && !gridMayLackFOR) {
 			_ = opened.Close()
 			return nil, exportError(CodeIdentity, sourceIndex, -1, ErrMixedIdentity, nil)
 		}
@@ -194,8 +214,10 @@ func planImageSource(plan *exportPlan, file *object.File, sourceIndex int, optio
 	if err != nil || len(temporal) != metadata.NumberOfFrames {
 		return exportError(CodeTemporal, sourceIndex, -1, ErrUnsupportedTemporal, err)
 	}
+	allowImageGrid := options.SingleSlice == SingleSliceImageGrid && plan.sources == 1 && metadata.NumberOfFrames == 1
 	for frameIndex := 0; frameIndex < metadata.NumberOfFrames; frameIndex++ {
-		geometry, err := strictSliceGeometry(file.FrameGeometryAt(frameIndex), int(metadata.Rows), int(metadata.Columns))
+		frameGeometry := file.FrameGeometryAt(frameIndex)
+		geometry, grid, err := planFrameGeometry(file, frameGeometry, frameIndex, int(metadata.Rows), int(metadata.Columns), allowImageGrid)
 		if err != nil {
 			return exportError(CodeGeometry, sourceIndex, frameIndex, ErrInvalidGeometry, err)
 		}
@@ -213,9 +235,40 @@ func planImageSource(plan *exportPlan, file *object.File, sourceIndex int, optio
 			temporal:    frameTemporal,
 			metadata:    metadata,
 			rescale:     rescale,
+
+			sliceSpacing: frameGeometry.SliceSpacing(),
+			grid:         grid,
 		})
 	}
 	return nil
+}
+
+// planFrameGeometry is the frame's strict patient geometry. When
+// allowImageGrid is set and the frame has no Image Position or Orientation
+// (Patient) at all, it is instead the NIfTI method-1 image grid: identity
+// directions at the origin, with the in-plane spacing object.PixelSpacingAt
+// resolves (1 mm when none does). Present but invalid geometry always
+// fails.
+func planFrameGeometry(file *object.File, input object.FrameGeometry, frameIndex, rows, columns int, allowImageGrid bool) (render.SliceGeometry, imageGridInfo, error) {
+	if !allowImageGrid || len(input.ImagePositionPatient) > 0 || len(input.ImageOrientationPatient) > 0 {
+		geometry, err := strictSliceGeometry(input, rows, columns)
+		return geometry, imageGridInfo{}, err
+	}
+	if rows <= 0 || columns <= 0 {
+		return render.SliceGeometry{}, imageGridInfo{}, ErrInvalidGeometry
+	}
+	grid := imageGridInfo{used: true}
+	rowSpacing, columnSpacing := 1.0, 1.0
+	if resolution := file.PixelSpacingAt(frameIndex); resolution.Valid() &&
+		finitePositive(resolution.RowSpacing) && finitePositive(resolution.ColumnSpacing) {
+		rowSpacing, columnSpacing, grid.semantic = resolution.RowSpacing, resolution.ColumnSpacing, resolution.Semantic
+	} else {
+		grid.defaultSpacing = true
+	}
+	return render.SliceGeometry{
+		RowDir: render.Vec3{X: 1}, ColDir: render.Vec3{Y: 1}, Normal: render.Vec3{Z: 1},
+		RowSpacing: rowSpacing, ColSpacing: columnSpacing, Rows: rows, Columns: columns,
+	}, grid, nil
 }
 
 func planParametricSource(plan *exportPlan, file *object.File, sourceIndex int, options Options) error {
@@ -321,9 +374,9 @@ func strictSliceGeometry(input object.FrameGeometry, rows, columns int) (render.
 	row := render.Vec3{X: input.ImageOrientationPatient[0], Y: input.ImageOrientationPatient[1], Z: input.ImageOrientationPatient[2]}
 	column := render.Vec3{X: input.ImageOrientationPatient[3], Y: input.ImageOrientationPatient[4], Z: input.ImageOrientationPatient[5]}
 	origin := render.Vec3{X: input.ImagePositionPatient[0], Y: input.ImagePositionPatient[1], Z: input.ImagePositionPatient[2]}
-	if !finiteVec(row) || !finiteVec(column) || !finiteVec(origin) ||
-		math.Abs(row.Length()-1) > 1e-4 || math.Abs(column.Length()-1) > 1e-4 ||
-		math.Abs(row.Dot(column)) > 1e-4 || !finitePositive(input.PixelSpacing[0]) || !finitePositive(input.PixelSpacing[1]) {
+	deviation, orientationOK := object.ImageOrientationDeviation(input.ImageOrientationPatient)
+	if !finiteVec(origin) || !orientationOK || deviation > object.ImageOrientationTolerance ||
+		!finitePositive(input.PixelSpacing[0]) || !finitePositive(input.PixelSpacing[1]) {
 		return render.SliceGeometry{}, ErrInvalidGeometry
 	}
 	row = row.Normalize()
@@ -345,13 +398,8 @@ func frameLinearTransform(obj *object.Object, frameIndex int) (linearTransform, 
 	if transform, err = overlayLinearTransform(transform, obj); err != nil {
 		return linearTransform{}, err
 	}
-	if items, ok := obj.GetSequence(tagSharedFunctionalGroups); ok && len(items) > 0 {
-		if transform, err = overlayPixelValueTransform(transform, items[0]); err != nil {
-			return linearTransform{}, err
-		}
-	}
-	if items, ok := obj.GetSequence(tagPerFrameFunctionalGroups); ok && frameIndex >= 0 && frameIndex < len(items) {
-		if transform, err = overlayPixelValueTransform(transform, items[frameIndex]); err != nil {
+	if item, _, _ := obj.FunctionalGroupItem(frameIndex, tagPixelValueTransformation); item != nil {
+		if transform, err = overlayLinearTransform(transform, item); err != nil {
 			return linearTransform{}, err
 		}
 	}
@@ -359,17 +407,6 @@ func frameLinearTransform(obj *object.Object, frameIndex int) (linearTransform, 
 		return linearTransform{}, ErrUnsupportedScaling
 	}
 	return transform, nil
-}
-
-func overlayPixelValueTransform(base linearTransform, container *object.Object) (linearTransform, error) {
-	if container == nil {
-		return base, nil
-	}
-	items, ok := container.GetSequence(tagPixelValueTransformation)
-	if !ok || len(items) == 0 {
-		return base, nil
-	}
-	return overlayLinearTransform(base, items[0])
 }
 
 func overlayLinearTransform(base linearTransform, obj *object.Object) (linearTransform, error) {
@@ -424,6 +461,14 @@ func planTimeAndGeometry(plan *exportPlan, options Options) error {
 			}
 		}
 	}
+	if options.SingleSlice != SingleSliceReject && len(plan.frames) == 1 && len(timeline.Points) == 1 &&
+		len(timeline.Points[0].Stacks) == 1 && len(timeline.Points[0].Stacks[0].FrameIndices) == 1 {
+		return planSingleSlice(plan, timeline.Points[0], options)
+	}
+	if strings.TrimSpace(plan.frameOfReferenceUID) == "" {
+		return exportError(CodeIdentity, -1, -1, ErrMixedIdentity, nil)
+	}
+	plan.sliceSpacingSource = object.SliceSpacingFromPositions
 	outputOrdinal := 0
 	for _, point := range timeline.Points {
 		if len(point.Stacks) != 1 || len(point.Stacks[0].FrameIndices) < 2 {
@@ -458,7 +503,7 @@ func planTimeAndGeometry(plan *exportPlan, options Options) error {
 		if geometry.Disposition == render.GeometryUnsupported {
 			return geometryExportError(frames[0], geometry.PrimaryIssue)
 		}
-		if geometry.RequiresResampling && options.Geometry != GeometryResampleLinear {
+		if geometry.RequiresResampling && !options.Geometry.resamples() {
 			return geometryExportError(frames[0], geometry.PrimaryIssue)
 		}
 		if geometry.RequiresResampling {
@@ -504,6 +549,58 @@ func planTimeAndGeometry(plan *exportPlan, options Options) error {
 	}
 	plan.spacing[3] = spacing
 	return validatePlanDimensions(plan, options)
+}
+
+// planSingleSlice lays one frame on a (columns, rows, 1) grid whose third
+// axis is the slice normal scaled by the frame's resolved slice spacing:
+// Spacing Between Slices (magnitude), then Slice Thickness, then 1 mm, the
+// precedence ITK's readers apply (commits 9467d94115 and 296bed66ff) and
+// object.ResolveSliceSpacing implements. The source is reported.
+func planSingleSlice(plan *exportPlan, point dynamic.TimePoint, options Options) error {
+	index := point.Stacks[0].FrameIndices[0]
+	if index < 0 || index >= len(plan.frames) {
+		return exportError(CodeTemporal, -1, -1, ErrUnsupportedTemporal, nil)
+	}
+	frame := plan.frames[index]
+	geometry, spacing := frame.geometry, frame.sliceSpacing
+	if !finitePositive(spacing.Value) || !fitsFloat32Spacing(spacing.Value) {
+		return exportError(CodeGeometry, frame.sourceIndex, frame.frameIndex, ErrInvalidGeometry, nil)
+	}
+	switch spacing.Source {
+	case object.SliceSpacingFromSliceThickness:
+		plan.warnings = append(plan.warnings, WarningSliceSpacingFromThickness)
+	case object.SliceSpacingDefault:
+		plan.warnings = append(plan.warnings, WarningSliceSpacingDefault)
+	}
+	if frame.grid.used {
+		plan.imageGrid = frame.grid
+		plan.warnings = append(plan.warnings, WarningNoPatientGeometry)
+		if frame.grid.defaultSpacing {
+			plan.warnings = append(plan.warnings, WarningPixelSpacingDefault)
+		}
+	}
+	x := geometry.RowDir.Scale(geometry.ColSpacing)
+	y := geometry.ColDir.Scale(geometry.RowSpacing)
+	z := geometry.Normal.Scale(spacing.Value)
+	plan.affineLPS = render.GeometryAffine{
+		x.X, y.X, z.X, geometry.Origin.X,
+		x.Y, y.Y, z.Y, geometry.Origin.Y,
+		x.Z, y.Z, z.Z, geometry.Origin.Z,
+		0, 0, 0, 1,
+	}
+	plan.dimensions = [4]int{geometry.Columns, geometry.Rows, 1, 1}
+	plan.spacing = [4]float64{geometry.ColSpacing, geometry.RowSpacing, spacing.Value, 1}
+	plan.timePoints = []timePointPlan{{frames: []*framePlan{frame}, timing: point}}
+	plan.singleSlice, plan.sliceSpacingSource = true, spacing.Source
+	if !frame.grid.used && strings.TrimSpace(plan.frameOfReferenceUID) == "" {
+		return exportError(CodeIdentity, frame.sourceIndex, -1, ErrMixedIdentity, nil)
+	}
+	return validatePlanDimensions(plan, options)
+}
+
+func fitsFloat32Spacing(value float64) bool {
+	converted := float32(value)
+	return converted > 0 && !math.IsInf(float64(converted), 0)
 }
 
 func temporalSpacing(points []timePointPlan, override float64) (float64, error) {

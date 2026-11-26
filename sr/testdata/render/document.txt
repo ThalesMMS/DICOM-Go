@@ -1,0 +1,26 @@
+Imaging Measurement Report
+Patient: Doe^Jane <Synthetic>
+Document type: Comprehensive 3D SR Storage
+Completion: COMPLETE
+Verification: UNVERIFIED
+Content date/time: 2026-09-26 12:00:00
+SOP Instance UID: 1.2.826.0.1.3680043.8.498.20260926.30
+
+1.1 has obs context PNAME Person Observer Name (121008, DCM): Doe Jane
+1.2 contains CONTAINER Measurement Group (125007, DCM)
+  1.2.1 contains TEXT Comment (121106, DCM): <script>alert(1)</script> & "quoted"
+      second line \x1b[31mred\x202e
+  1.2.2 contains CODE Finding (121071, DCM): Lesion <b> (52988006, SCT)
+  1.2.3 contains NUM Diameter (81827009, SCT): 12.5 mm
+    1.2.3.1 inferred from IMAGE Source of Measurement (121112, DCM): CT Image Storage 1.2.3.4, frames 2,3
+    1.2.3.2 inferred from SCOORD: POLYLINE (1,2) (3.5,4)
+  1.2.4 contains NUM Volume (118565006, SCT): Measurement failure (114006, DCM)
+  1.2.5 contains SCOORD3D Image Region (111030, DCM): POINT (1,2,3) in 1.2.3.5
+  1.2.6 contains DATETIME DateTime Started (111526, DCM): 2026-09-26 12:30:45
+  1.2.7 contains DATE Study Date (111060, DCM): 2026-09-26
+  1.2.8 contains TIME Study Time (111061, DCM): 09:30
+  1.2.9 contains UIDREF Tracking Unique Identifier (112040, DCM): 1.2.3.6
+  1.2.10 contains COMPOSITE Referenced Segment (121191, DCM): Segmentation Storage 1.2.3.7
+  1.2.11 contains WAVEFORM ECG (109070, DCM): 12-lead ECG Waveform Storage 1.2.3.8, 2 channels
+  1.2.12 contains TCOORD Waveform Region (121213, DCM): SEGMENT 0.5 s 1.25 s
+  1.2.13 inferred from -> 1.2.1

@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ThalesMMS/dicom-go/internal/commontest"
 	"math"
+	"reflect"
 	"testing"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -35,8 +37,8 @@ func TestBinarySegmentationRoundTripsRoiMasks(t *testing.T) {
 			AlgorithmType: AlgorithmManual,
 		},
 		ReferencedImages: []ReferencedImage{
-			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.image.0"},
-			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.image.1"},
+			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.9117.0"},
+			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.9117.1"},
 		},
 		Segmentation: source,
 	})
@@ -120,7 +122,11 @@ func TestBinarySegmentationRoundTripsRoiMasks(t *testing.T) {
 
 func TestPerFrameSequenceOmitsEmptyReferencedSOPInstanceUID(t *testing.T) {
 	doc := &Document{Frames: []Frame{{SegmentNumber: 1}}}
-	obj := object.FromElements([]core.Element{perFrameSequence(doc, make([]ReferencedImage, len(doc.Frames)))}, nil)
+	perFrame, err := perFrameSequence(doc, SegmentationStorage, make([]ReferencedImage, len(doc.Frames)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := object.FromElements([]core.Element{perFrame}, nil)
 	items, ok := obj.GetSequence(tagPerFrameFunctionalGroups)
 	if !ok || len(items) != 1 {
 		t.Fatalf("PerFrameFunctionalGroupsSequence = len %d, ok %v; want one item", len(items), ok)
@@ -167,7 +173,7 @@ func TestFromROIMasksRoundTripsMultipleMasksWithReferencesAndCodes(t *testing.T)
 				SourceImage: ReferencedImage{
 					SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.40.1",
 					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID:    "1.2.3.source.4",
+					SOPInstanceUID:    "1.2.3.9118.4",
 					Frames:            []int{3},
 				},
 				Mask: first,
@@ -184,7 +190,7 @@ func TestFromROIMasksRoundTripsMultipleMasksWithReferencesAndCodes(t *testing.T)
 				SourceImage: ReferencedImage{
 					SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.40.2",
 					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID:    "1.2.3.source.7",
+					SOPInstanceUID:    "1.2.3.9118.7",
 					Frames:            []int{2},
 				},
 				Mask: second,
@@ -222,10 +228,10 @@ func TestFromROIMasksRoundTripsMultipleMasksWithReferencesAndCodes(t *testing.T)
 	if len(roundTrip.ReferencedImages) != 2 {
 		t.Fatalf("referenced images = %d, want 2", len(roundTrip.ReferencedImages))
 	}
-	if roundTrip.Frames[0].SliceIndex != 4 || roundTrip.Frames[0].ReferencedSOPInstanceUID != "1.2.3.source.4" || roundTrip.Frames[0].ReferencedFrameNumber != 3 {
+	if roundTrip.Frames[0].SliceIndex != 4 || roundTrip.Frames[0].ReferencedSOPInstanceUID != "1.2.3.9118.4" || roundTrip.Frames[0].ReferencedFrameNumber != 3 {
 		t.Fatalf("first frame reference = %+v, want slice 4 source frame 3", roundTrip.Frames[0])
 	}
-	if roundTrip.Frames[1].SliceIndex != 7 || roundTrip.Frames[1].ReferencedSOPInstanceUID != "1.2.3.source.7" || roundTrip.Frames[1].ReferencedFrameNumber != 2 {
+	if roundTrip.Frames[1].SliceIndex != 7 || roundTrip.Frames[1].ReferencedSOPInstanceUID != "1.2.3.9118.7" || roundTrip.Frames[1].ReferencedFrameNumber != 2 {
 		t.Fatalf("second frame reference = %+v, want slice 7 source frame 2", roundTrip.Frames[1])
 	}
 	liver, err := ToROI(roundTrip, 5)
@@ -261,9 +267,9 @@ func TestFromROIMasksRoundTripsMultipleSegmentsOnSliceZero(t *testing.T) {
 				Segment:    Segment{Number: 1, Label: "First"},
 				SliceIndex: 0,
 				SourceImage: ReferencedImage{
-					SeriesInstanceUID: "1.2.3.series",
+					SeriesInstanceUID: "1.2.3.9103",
 					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID:    "1.2.3.source.1",
+					SOPInstanceUID:    "1.2.3.9118.1",
 				},
 				Geometry: testGeometry().Slices[0],
 				Mask:     first,
@@ -272,9 +278,9 @@ func TestFromROIMasksRoundTripsMultipleSegmentsOnSliceZero(t *testing.T) {
 				Segment:    Segment{Number: 2, Label: "Second"},
 				SliceIndex: 0,
 				SourceImage: ReferencedImage{
-					SeriesInstanceUID: "1.2.3.series",
+					SeriesInstanceUID: "1.2.3.9103",
 					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID:    "1.2.3.source.1",
+					SOPInstanceUID:    "1.2.3.9118.1",
 				},
 				Geometry: testGeometry().Slices[0],
 				Mask:     second,
@@ -386,7 +392,7 @@ func TestReadFrameItemInterpretsDimensionIndexValuesAsOneBased(t *testing.T) {
 		ulValuesForTest(tagDimensionIndexValues, 2),
 	}, nil)
 
-	frame := readFrameItem(item, 0, 0, render.VolumeGeometry{})
+	frame := readFrameItem(object.New(nil), item, 0, 0, render.VolumeGeometry{})
 
 	if frame.SliceIndex != 1 {
 		t.Fatalf("SliceIndex = %d, want 1 from one-based DimensionIndexValues", frame.SliceIndex)
@@ -420,7 +426,7 @@ func TestReadFramesUsesDeclaredSpatialDimensionIndex(t *testing.T) {
 	}, nil)
 	doc := &Document{Rows: 2, Columns: 2}
 
-	frames := readFrames(obj, doc)
+	frames, _ := readFrames(obj, doc)
 
 	if len(frames) != 2 {
 		t.Fatalf("readFrames returned %d frames, want 2", len(frames))
@@ -441,7 +447,7 @@ func TestReadFramesIgnoresDimensionValuesWithoutDimensionIndexSequence(t *testin
 	}, nil)
 	doc := &Document{Rows: 1, Columns: 1}
 
-	frames := readFrames(obj, doc)
+	frames, _ := readFrames(obj, doc)
 
 	if len(frames) != 2 {
 		t.Fatalf("readFrames returned %d frames, want 2", len(frames))
@@ -463,7 +469,7 @@ func TestReadBinaryFramesUsesOnlySegmentWhenIdentificationIsAbsent(t *testing.T)
 		Segments:    []Segment{{Number: 7}},
 	}
 
-	doc.Frames = readFrames(obj, doc)
+	doc.Frames, _ = readFrames(obj, doc)
 
 	if len(doc.Frames) != 1 || doc.Frames[0].SegmentNumber != 7 {
 		t.Fatalf("decoded frames = %+v, want one frame assigned to segment 7", doc.Frames)
@@ -499,7 +505,7 @@ func TestReadFramesUsesSpatialPointerOverPlanePositionGroup(t *testing.T) {
 	}, nil)
 	doc := &Document{Rows: 2, Columns: 2}
 
-	frames := readFrames(obj, doc)
+	frames, _ := readFrames(obj, doc)
 
 	if len(frames) != 2 {
 		t.Fatalf("readFrames returned %d frames, want 2", len(frames))
@@ -510,14 +516,16 @@ func TestReadFramesUsesSpatialPointerOverPlanePositionGroup(t *testing.T) {
 }
 
 func TestReadFrameItemPrefersPlanePositionWhenVolumeGeometryMatches(t *testing.T) {
-	item := object.FromElements([]core.Element{
+	perFrame := derivedio.DataSet(
 		ulValuesForTest(tagDimensionIndexValues, 1),
 		derivedio.Seq(tagPlanePositionSequence, derivedio.DataSet(
 			derivedio.DS(tagImagePositionPatient, 0, 0, 2.5),
 		)),
-	}, nil)
+	)
+	obj := object.FromElements([]core.Element{derivedio.Seq(tagPerFrameFunctionalGroups, perFrame)}, nil)
+	items, _ := obj.GetSequence(tagPerFrameFunctionalGroups)
 
-	frame := readFrameItem(item, 0, 0, testGeometry())
+	frame := readFrameItem(obj, items[0], 0, 0, testGeometry())
 
 	if frame.SliceIndex != 1 {
 		t.Fatalf("SliceIndex = %d, want plane position to resolve to slice 1", frame.SliceIndex)
@@ -555,7 +563,7 @@ func TestFromROIMasksRejectsMismatchedMaskDimensions(t *testing.T) {
 		Columns:             4,
 		Masks: []ROIMask{{
 			Segment:     Segment{Label: "Wrong size"},
-			SourceImage: ReferencedImage{SeriesInstanceUID: "1.2.3.series", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.source"},
+			SourceImage: ReferencedImage{SeriesInstanceUID: "1.2.3.9103", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.9118"},
 			Mask:        roi.NewRasterMask(5, 4),
 		}},
 	})
@@ -581,9 +589,9 @@ func TestSEGWriteIncludesGeometryFunctionalGroups(t *testing.T) {
 				Segment:    Segment{Label: "First"},
 				SliceIndex: 4,
 				SourceImage: ReferencedImage{
-					SeriesInstanceUID: "1.2.3.series",
+					SeriesInstanceUID: "1.2.3.9103",
 					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID:    "1.2.3.source.1",
+					SOPInstanceUID:    "1.2.3.9118.1",
 				},
 				Geometry: geometry.Slices[0],
 				Mask:     first,
@@ -592,9 +600,9 @@ func TestSEGWriteIncludesGeometryFunctionalGroups(t *testing.T) {
 				Segment:    Segment{Label: "Second"},
 				SliceIndex: 7,
 				SourceImage: ReferencedImage{
-					SeriesInstanceUID: "1.2.3.series",
+					SeriesInstanceUID: "1.2.3.9103",
 					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID:    "1.2.3.source.2",
+					SOPInstanceUID:    "1.2.3.9118.2",
 					Frames:            []int{4},
 				},
 				Geometry: geometry.Slices[1],
@@ -611,6 +619,13 @@ func TestSEGWriteIncludesGeometryFunctionalGroups(t *testing.T) {
 	}
 
 	shared, ok := file.Dataset.GetSequence(tagSharedFunctionalGroups)
+	withCommon := *doc
+	withCommon.Common = object.DerivedCommon{Source: commontest.Source()}
+	if common, err := Write(&withCommon); err != nil {
+		t.Fatalf("Write with common modules: %v", err)
+	} else {
+		commontest.Check(t, common.Dataset, true)
+	}
 	if !ok || len(shared) != 1 {
 		t.Fatalf("SharedFunctionalGroups = len %d ok=%v, want one item", len(shared), ok)
 	}
@@ -635,16 +650,44 @@ func TestSEGWriteIncludesGeometryFunctionalGroups(t *testing.T) {
 	if !ok || len(perFrame) != 2 {
 		t.Fatalf("PerFrameFunctionalGroups = len %d ok=%v, want two items", len(perFrame), ok)
 	}
-	if perFrame[0].Has(derivedio.TagRefFrameNumber) {
+	sourceImage := func(item *object.Object) *object.Object {
+		t.Helper()
+		derivation, _ := item.GetSequence(tagDerivationImageSequence)
+		if len(derivation) != 1 {
+			t.Fatal("per-frame item has no Derivation Image Sequence")
+		}
+		sources, _ := derivation[0].GetSequence(tagSourceImageSequence)
+		if len(sources) != 1 {
+			t.Fatal("Derivation Image item has no Source Image Sequence")
+		}
+		return sources[0]
+	}
+	if perFrame[0].Has(derivedio.TagRefSOPInstanceUID) || perFrame[0].Has(derivedio.TagRefFrameNumber) {
+		t.Fatal("per-frame item carries source references outside the Derivation Image macro")
+	}
+	if sourceImage(perFrame[0]).Has(derivedio.TagRefFrameNumber) {
 		t.Fatal("single-frame source emitted invalid Referenced Frame Number 0")
 	}
-	if got := derivedio.Int(perFrame[1], derivedio.TagRefFrameNumber); got != 4 {
+	if got := derivedio.Int(sourceImage(perFrame[1]), derivedio.TagRefFrameNumber); got != 4 {
 		t.Fatalf("second Referenced Frame Number = %d, want 4", got)
 	}
-	firstDimensions := ulValuesFromObjectForTest(t, perFrame[0], tagDimensionIndexValues)
-	secondDimensions := ulValuesFromObjectForTest(t, perFrame[1], tagDimensionIndexValues)
-	if len(firstDimensions) != 1 || firstDimensions[0] != 5 || len(secondDimensions) != 1 || secondDimensions[0] != 8 {
-		t.Fatalf("DimensionIndexValues = %v/%v, want one-based slice positions 5/8", firstDimensions, secondDimensions)
+	frameContent := func(item *object.Object) *object.Object {
+		t.Helper()
+		items, ok := item.GetSequence(tagFrameContentSequence)
+		if !ok || len(items) != 1 {
+			t.Fatal("per-frame item has no Frame Content Sequence")
+		}
+		return items[0]
+	}
+	firstDimensions := ulValuesFromObjectForTest(t, frameContent(perFrame[0]), tagDimensionIndexValues)
+	secondDimensions := ulValuesFromObjectForTest(t, frameContent(perFrame[1]), tagDimensionIndexValues)
+	if !reflect.DeepEqual(firstDimensions, []uint32{1, 5}) || !reflect.DeepEqual(secondDimensions, []uint32{2, 8}) {
+		t.Fatalf("DimensionIndexValues = %v/%v, want segments 1 and 2 at one-based slice positions 5/8", firstDimensions, secondDimensions)
+	}
+	dimensions, _ := file.Dataset.GetSequence(tagDimensionIndexSequence)
+	if len(dimensions) != 2 || !tagValueEquals(dimensions[0], tagDimensionIndexPointer, tagReferencedSegmentNumber()) ||
+		!tagValueEquals(dimensions[1], tagDimensionIndexPointer, tagImagePositionPatient) {
+		t.Fatal("Dimension Index Sequence is not segment then Image Position (Patient)")
 	}
 	positions, ok := perFrame[1].GetSequence(tagPlanePositionSequence)
 	if !ok || len(positions) != 1 {
@@ -662,8 +705,22 @@ func TestSEGWriteIncludesGeometryFunctionalGroups(t *testing.T) {
 	if !ok || len(source) != 1 {
 		t.Fatalf("second SourceImageSequence = len %d ok=%v, want one item", len(source), ok)
 	}
-	if got := uidForTest(t, source[0], derivedio.TagRefSOPInstanceUID); got != "1.2.3.source.2" {
+	if got := uidForTest(t, source[0], derivedio.TagRefSOPInstanceUID); got != "1.2.3.9118.2" {
 		t.Fatalf("source image ref = %q, want second source", got)
+	}
+	// Type 1 in the Derivation Image Macro: Derivation Code (113076,
+	// Segmentation) and the source's Purpose of Reference (121322).
+	codeValue := func(items []*object.Object) string {
+		if len(items) != 1 {
+			return ""
+		}
+		v, _ := items[0].GetString(core.NewTag(0x0008, 0x0100))
+		return v
+	}
+	codes, _ := derivation[0].GetSequence(core.NewTag(0x0008, 0x9215))
+	purpose, _ := source[0].GetSequence(core.NewTag(0x0040, 0xa170))
+	if codeValue(codes) != "113076" || codeValue(purpose) != "121322" {
+		t.Fatalf("derivation code %q, purpose %q", codeValue(codes), codeValue(purpose))
 	}
 }
 
@@ -752,7 +809,7 @@ func TestLabelMapSegmentationRoundTripsLabelValues(t *testing.T) {
 		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.3.3",
 		Rows:                3,
 		Columns:             4,
-		Segments:            []Segment{{Number: 2, Label: "Tumor", AlgorithmType: AlgorithmManual}},
+		Segments:            []Segment{{Number: 0, Label: "Background", AlgorithmType: AlgorithmManual}, {Number: 2, Label: "Tumor", AlgorithmType: AlgorithmManual}},
 		Frames: []Frame{{
 			SegmentNumber: 2,
 			SliceIndex:    0,
@@ -832,7 +889,7 @@ func TestLabelMapSegmentationPreservesPerFrameMetadata(t *testing.T) {
 		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.3.13",
 		Rows:                2,
 		Columns:             2,
-		Segments:            []Segment{{Number: 7, Label: "Target", AlgorithmType: AlgorithmManual}},
+		Segments:            []Segment{{Number: 0, Label: "Background"}, {Number: 7, Label: "Target", AlgorithmType: AlgorithmManual}},
 		ReferencedImages: []ReferencedImage{{
 			SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.3.15",
 			SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2.1",
@@ -862,9 +919,15 @@ func TestLabelMapSegmentationPreservesPerFrameMetadata(t *testing.T) {
 	if len(roundTrip.Frames) != 1 {
 		t.Fatalf("frames = %d, want 1", len(roundTrip.Frames))
 	}
+	// A label map has no per-frame Segmentation Functional Group (PS3.3
+	// Table A.51-2): its frames hold every segment.
+	perFrame, _ := file.Dataset.GetSequence(tagPerFrameFunctionalGroups)
+	if len(perFrame) != 1 || perFrame[0].Has(tagSegmentIdentificationSequence) {
+		t.Fatal("label-map frame carries a Segment Identification Sequence")
+	}
 	frame := roundTrip.Frames[0]
-	if frame.SegmentNumber != 7 || frame.SliceIndex != 4 {
-		t.Fatalf("frame metadata = segment %d slice %d, want segment 7 slice 4", frame.SegmentNumber, frame.SliceIndex)
+	if frame.SegmentNumber != 0 || frame.SliceIndex != 4 {
+		t.Fatalf("frame metadata = segment %d slice %d, want no segment, slice 4", frame.SegmentNumber, frame.SliceIndex)
 	}
 	if frame.ReferencedSOPInstanceUID != "1.2.826.0.1.3680043.9.7433.3.14" || frame.ReferencedFrameNumber != 3 {
 		t.Fatalf("frame reference = %q/%d, want source reference", frame.ReferencedSOPInstanceUID, frame.ReferencedFrameNumber)
@@ -906,8 +969,8 @@ func TestSEGReferencedSeriesSequenceGroupsBySeries(t *testing.T) {
 		Columns:             2,
 		Segments:            []Segment{{Number: 1, Label: "Target", AlgorithmType: AlgorithmManual}},
 		ReferencedImages: []ReferencedImage{
-			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.image.1"},
-			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.2", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.image.2"},
+			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.9117.1"},
+			{SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.66.20.2", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.9117.2"},
 		},
 		Frames: []Frame{{SegmentNumber: 1, Mask: roi.NewRasterMask(2, 2)}},
 	}
@@ -945,7 +1008,7 @@ func TestSEGWriteRejectsReferencedImageWithoutSeriesUid(t *testing.T) {
 		Segments:          []Segment{{Number: 1, Label: "Target", AlgorithmType: AlgorithmManual}},
 		ReferencedImages: []ReferencedImage{{
 			SOPClassUID:    "1.2.840.10008.5.1.4.1.1.2",
-			SOPInstanceUID: "1.2.3.image.1",
+			SOPInstanceUID: "1.2.3.9117.1",
 		}},
 	})
 	if !errors.Is(err, ErrMissingReference) {
@@ -962,22 +1025,21 @@ func uidForTest(t *testing.T, obj *object.Object, tag core.Tag) string {
 	return value
 }
 
-func TestSEGWriteRejectsFractionalSegmentationBeforeSerializing(t *testing.T) {
-	// Given: a document labelled FRACTIONAL even though Frame has no field that
-	// can preserve 8-bit probability or occupancy samples.
+func TestSEGWriteRejectsFractionalSegmentationWithoutFractionalAttributes(t *testing.T) {
+	// Given: a document labelled FRACTIONAL without Segmentation Fractional
+	// Type or Maximum Fractional Value.
 	doc := &Document{
 		SOPClassUID:      SegmentationStorage,
 		SegmentationType: SegmentationTypeFractional,
 	}
 
-	// When / Then: Write fails explicitly instead of emitting FRACTIONAL with
-	// one-bit binary Pixel Data.
+	// When / Then: Write fails before serializing.
 	file, err := Write(doc)
-	if !errors.Is(err, ErrUnsupportedSegmentationType) {
-		t.Fatalf("Write error = %v, want ErrUnsupportedSegmentationType", err)
+	if !errors.Is(err, ErrInvalidObject) {
+		t.Fatalf("Write error = %v, want ErrInvalidObject", err)
 	}
 	if file != nil {
-		t.Fatal("Write returned a file for an unsupported fractional segmentation")
+		t.Fatal("Write returned a file for an incomplete fractional segmentation")
 	}
 }
 
@@ -1026,7 +1088,7 @@ func TestReadRejectsWrongSopClassWithTypedError(t *testing.T) {
 	// Given: a non-SEG dataset.
 	dataset := object.FromElements([]core.Element{
 		{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0016), VR: core.VRUI}, Value: core.StringValue{"1.2.840.10008.5.1.4.1.1.2"}},
-		{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0018), VR: core.VRUI}, Value: core.StringValue{"1.2.3.not.seg"}},
+		{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0018), VR: core.VRUI}, Value: core.StringValue{"1.2.3.9110.9119"}},
 	}, nil)
 
 	// When / Then: Read surfaces a branchable unsupported-SOP-class error.
@@ -1036,9 +1098,9 @@ func TestReadRejectsWrongSopClassWithTypedError(t *testing.T) {
 	}
 }
 
-func TestReadRejectsFractionalSegmentationBeforeDecodingPixels(t *testing.T) {
-	// Given: a valid SEG SOP class whose 8-bit samples represent fractional
-	// values, not a packed binary mask.
+func TestReadRejectsFractionalSegmentationWithoutFractionalAttributes(t *testing.T) {
+	// Given: FRACTIONAL 8-bit samples without Segmentation Fractional Type and
+	// Maximum Fractional Value.
 	dataset := derivedio.Object(
 		derivedio.UI(derivedio.TagSOPClassUID, SegmentationStorage),
 		derivedio.CS(tagSegmentationType, SegmentationTypeFractional),
@@ -1049,11 +1111,10 @@ func TestReadRejectsFractionalSegmentationBeforeDecodingPixels(t *testing.T) {
 		derivedio.Raw(derivedio.TagPixelData, core.VROB, []byte{64, 255}),
 	)
 
-	// When / Then: Read fails explicitly instead of interpreting the sample
-	// bytes as sixteen packed binary pixels.
+	// When / Then: Read fails before decoding the samples.
 	_, err := Read(dataset)
-	if !errors.Is(err, ErrUnsupportedSegmentationType) {
-		t.Fatalf("Read error = %v, want ErrUnsupportedSegmentationType", err)
+	if !errors.Is(err, ErrInvalidObject) {
+		t.Fatalf("Read error = %v, want ErrInvalidObject", err)
 	}
 }
 
@@ -1157,7 +1218,10 @@ func TestReadSegmentsSkipsUnrepresentableCIELabValues(t *testing.T) {
 	obj := derivedio.Object(derivedio.Seq(tagSegmentSequence, derivedio.DataSet(
 		derivedio.IS(tagRecommendedDisplayCIELabValue, 1, -1, 65_536),
 	)))
-	segments := readSegments(obj)
+	segments, err := readSegments(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(segments) != 1 {
 		t.Fatalf("readSegments() returned %d segments, want 1", len(segments))
 	}

@@ -948,3 +948,31 @@ func (w *cancelAfterFirstWrite) Write(payload []byte) (int, error) {
 }
 
 func float64Pointer(value float64) *float64 { return &value }
+
+// TestWriteSharesTheOrientationToleranceOfRender (#1111): the exporter
+// accepts cosines within object.ImageOrientationTolerance (5e-4 was refused
+// at the former 1e-4) and refuses those beyond it, as render does.
+func TestWriteSharesTheOrientationToleranceOfRender(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scale float64
+		ok    bool
+	}{{"within", 1.0005, true}, {"beyond", 1.002, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			orientation := [6]float64{tc.scale, 0, 0, 0, 1, 0}
+			files := []*object.File{
+				testSlice(t, imageSpec{position: [3]float64{0, 0, 0}, orientation: orientation, pixels: []byte{1, 2}}),
+				testSlice(t, imageSpec{position: [3]float64{0, 0, 2}, orientation: orientation, pixels: []byte{3, 4}}),
+			}
+			var output bytes.Buffer
+			_, err := nifti.WriteFiles(context.Background(), &output, files, nifti.DefaultOptions())
+			if tc.ok {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			requireExportError(t, err, nifti.CodeGeometry, nifti.ErrInvalidGeometry)
+		})
+	}
+}

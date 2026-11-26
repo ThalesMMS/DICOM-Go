@@ -8,14 +8,21 @@ import (
 	"testing"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/internal/commontest"
 	"github.com/ThalesMMS/dicom-go/object"
 )
 
 func TestNewPDFBuildsEncapsulatedPDFFile(t *testing.T) {
+	if common, err := NewPDF(PDFOptions{SOPInstanceUID: "1.2.3.9101", SeriesInstanceUID: "1.2.3.9103", DocumentTitle: "Report",
+		Data: []byte("%PDF-1.4 "), Common: object.DerivedCommon{Source: commontest.Source()}}); err != nil {
+		t.Fatalf("NewPDF with common modules: %v", err)
+	} else {
+		commontest.Check(t, common.Dataset, false)
+	}
 	file, err := NewPDF(PDFOptions{
-		SOPInstanceUID:      "1.2.3.sop",
-		StudyInstanceUID:    "1.2.3.study",
-		SeriesInstanceUID:   "1.2.3.series",
+		SOPInstanceUID:      "1.2.3.9101",
+		StudyInstanceUID:    "1.2.3.9102",
+		SeriesInstanceUID:   "1.2.3.9103",
 		PatientName:         "PDF^PATIENT",
 		PatientID:           "PID",
 		SeriesDescription:   "Report",
@@ -33,14 +40,14 @@ func TestNewPDFBuildsEncapsulatedPDFFile(t *testing.T) {
 	}
 	assertString(t, file.Dataset, core.NewTag(0x0008, 0x0016), EncapsulatedPDFStorage)
 	assertString(t, file.Dataset, core.NewTag(0x0008, 0x0005), "ISO_IR 192")
-	assertString(t, file.Dataset, core.NewTag(0x0008, 0x0018), "1.2.3.sop")
+	assertString(t, file.Dataset, core.NewTag(0x0008, 0x0018), "1.2.3.9101")
 	assertString(t, file.Dataset, core.NewTag(0x0008, 0x0060), "DOC")
 	assertString(t, file.Dataset, core.NewTag(0x0008, 0x0064), "WSD")
 	assertString(t, file.Dataset, core.NewTag(0x0008, 0x103E), "Report")
 	assertString(t, file.Dataset, core.NewTag(0x0010, 0x0010), "PDF^PATIENT")
 	assertString(t, file.Dataset, core.NewTag(0x0010, 0x0020), "PID")
-	assertString(t, file.Dataset, core.NewTag(0x0020, 0x000D), "1.2.3.study")
-	assertString(t, file.Dataset, core.NewTag(0x0020, 0x000E), "1.2.3.series")
+	assertString(t, file.Dataset, core.NewTag(0x0020, 0x000D), "1.2.3.9102")
+	assertString(t, file.Dataset, core.NewTag(0x0020, 0x000E), "1.2.3.9103")
 	assertString(t, file.Dataset, core.NewTag(0x0020, 0x0011), "7")
 	assertString(t, file.Dataset, core.NewTag(0x0020, 0x0013), "3")
 	assertString(t, file.Dataset, core.NewTag(0x0008, 0x0023), "20260709")
@@ -70,7 +77,7 @@ func TestNewPDFBuildsEncapsulatedPDFFile(t *testing.T) {
 }
 
 func TestNewPDFEmitsSafeDefaultsAndEmptyType2Attributes(t *testing.T) {
-	file, err := NewPDF(PDFOptions{SOPInstanceUID: "1.2.3.defaults", Data: []byte("%PDF-1.4\n")})
+	file, err := NewPDF(PDFOptions{SOPInstanceUID: "1.2.3.9104", Data: []byte("%PDF-1.4\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +96,7 @@ func TestNewPDFEmitsSafeDefaultsAndEmptyType2Attributes(t *testing.T) {
 
 func TestNewPDFRejectsInvalidBurnedInAnnotation(t *testing.T) {
 	_, err := NewPDF(PDFOptions{
-		SOPInstanceUID:     "1.2.3.invalid-burned-in",
+		SOPInstanceUID:     "1.2.3.9105",
 		BurnedInAnnotation: "UNKNOWN",
 		Data:               []byte("%PDF-1.4\n"),
 	})
@@ -100,7 +107,7 @@ func TestNewPDFRejectsInvalidBurnedInAnnotation(t *testing.T) {
 
 func TestNewPDFRoundTripsUnicodeMetadata(t *testing.T) {
 	file, err := NewPDF(PDFOptions{
-		SOPInstanceUID: "1.2.3.unicode", PatientName: "João^Silva",
+		SOPInstanceUID: "1.2.3.9106", PatientName: "João^Silva",
 		SeriesDescription: "Relatório clínico", Data: []byte("%PDF-1.4\n"),
 	})
 	if err != nil {

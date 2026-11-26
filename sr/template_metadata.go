@@ -52,10 +52,12 @@ func (d *Document) DatasetWithTemplateMetadata(metadata TemplateValidationMetada
 }
 
 type templateMetadataIndex struct {
-	code               map[string]ContentItemCodeContexts
-	identification     map[string]TemplateIdentification
-	usedCode           map[string]struct{}
-	usedIdentification map[string]struct{}
+	numeric               map[string]NumericRepresentation
+	measurementReferences map[string]MeasurementReferenceMetadataEntry
+	code                  map[string]ContentItemCodeContexts
+	identification        map[string]TemplateIdentification
+	usedCode              map[string]struct{}
+	usedIdentification    map[string]struct{}
 }
 
 func newTemplateMetadataIndex(metadata TemplateValidationMetadata) (*templateMetadataIndex, error) {

@@ -105,6 +105,13 @@ type DiagnosticFinding struct {
 	Code     string
 	Severity DiagnosticSeverity
 	Message  string
+	// SOPClassUID, SourceValueType, RelationshipType and TargetValueType
+	// describe relationship findings (the IOD and the value types and
+	// relationship involved); they are empty for other findings.
+	SOPClassUID      string
+	SourceValueType  ValueType
+	RelationshipType string
+	TargetValueType  ValueType
 }
 
 // ValidationReport is shared by reference and template validation.
@@ -408,16 +415,17 @@ func ResolveReferences(document *Document, options ReferenceOptions) (*Reference
 			addReferenceFinding(&report, options, ReferenceCodeAncestor, edge.Slot, edge.Target)
 			continue
 		}
-		if profileForbidsByReference(document.SOPClassUID) {
-			addReferenceFinding(&report, options, ReferenceCodeForbiddenProfile, edge.Slot, edge.Target)
-			continue
+		code := ""
+		switch {
+		case profileForbidsByReference(document.SOPClassUID):
+			code = ReferenceCodeForbiddenProfile
+		case referenceRelationshipForbidden(document.SOPClassUID, edge.RelationshipType):
+			code = ReferenceCodeForbiddenRelation
+		case !referenceRelationshipAllowed(document.SOPClassUID, source.valueType, edge.RelationshipType, target.valueType):
+			code = ReferenceCodeIncompatible
 		}
-		if referenceRelationshipForbidden(document.SOPClassUID, edge.RelationshipType) {
-			addReferenceFinding(&report, options, ReferenceCodeForbiddenRelation, edge.Slot, edge.Target)
-			continue
-		}
-		if !referenceRelationshipAllowed(document.SOPClassUID, source.valueType, edge.RelationshipType, target.valueType) {
-			addReferenceFinding(&report, options, ReferenceCodeIncompatible, edge.Slot, edge.Target)
+		if code != "" {
+			addReferenceRelationshipFinding(&report, options, code, edge, document.SOPClassUID, source.valueType, target.valueType)
 			continue
 		}
 		cycleEdges = append(cycleEdges, edge)
@@ -448,15 +456,33 @@ func ResolveReferences(document *Document, options ReferenceOptions) (*Reference
 	return index, report.clone(), nil
 }
 
+// referenceRelationshipForbidden reports a relationship the IOD does not let
+// be conveyed by-reference (PS3.3 A.35.x.3.1.2). CONTAINS is also refused for
+// Extensible SR, as for the Comprehensive SR family: a by-reference CONTAINS
+// would give an item two parents.
 func referenceRelationshipForbidden(sopClassUID, relationship string) bool {
-	switch clean(sopClassUID) {
-	case ComprehensiveSRStorage, Comprehensive3DSRStorage:
-		return relationship == RelationshipContains || relationship == RelationshipHasConceptMod
-	case ExtensibleSRStorage:
-		return relationship == RelationshipContains
-	default:
+	iod := lookupRelationshipIOD(sopClassUID)
+	if iod == nil {
 		return false
 	}
+	if iod.sopClassUID == ExtensibleSRStorage && relationship == RelationshipContains {
+		return true
+	}
+	return !iod.allowsByReference(relationship)
+}
+
+func addReferenceRelationshipFinding(report *ValidationReport, options ReferenceOptions, code string, edge ReferenceEdge, sopClassUID string, source, target ValueType) {
+	before := len(report.Findings)
+	addReferenceFinding(report, options, code, edge.Slot, edge.Target)
+	if len(report.Findings) == before {
+		return
+	}
+	finding := &report.Findings[len(report.Findings)-1]
+	if iod := lookupRelationshipIOD(sopClassUID); iod != nil {
+		finding.RuleID = iod.ruleID()
+		finding.SOPClassUID = iod.sopClassUID
+	}
+	finding.SourceValueType, finding.RelationshipType, finding.TargetValueType = source, edge.RelationshipType, target
 }
 
 func addPathFinding(report *ValidationReport, options ReferenceOptions, finding DiagnosticFinding) {
@@ -521,68 +547,25 @@ func appendPath(parent ContentItemIdentifier, child uint32) ContentItemIdentifie
 	return out
 }
 
+// profileForbidsByReference reports an IOD whose relationships are all
+// conveyed by-value.
 func profileForbidsByReference(sopClassUID string) bool {
-	switch clean(sopClassUID) {
-	case BasicTextSRStorage, EnhancedSRStorage, KeyObjectSelectionDocumentStorage:
-		return true
-	default:
-		return false
-	}
+	iod := lookupRelationshipIOD(sopClassUID)
+	return iod != nil && iod.byReference == "none"
 }
 
+// referenceRelationshipAllowed applies the IOD's relationship content
+// constraints (PS3.3 Tables A.35.x-2) to a by-reference relationship. SOP
+// Classes without a table are not constrained.
 func referenceRelationshipAllowed(sopClassUID string, source ValueType, relationship string, target ValueType) bool {
 	if relationship == "" {
 		return false
 	}
-	if clean(sopClassUID) != ComprehensiveSRStorage && clean(sopClassUID) != Comprehensive3DSRStorage {
+	iod := lookupRelationshipIOD(sopClassUID)
+	if iod == nil {
 		return true
 	}
-	contains := func(value ValueType, allowed ...ValueType) bool {
-		for _, candidate := range allowed {
-			if value == candidate {
-				return true
-			}
-		}
-		return false
-	}
-	commonObservationTargets := []ValueType{ValueText, ValueCode, ValueNum, ValueDateTime, ValueDate, ValueTime, ValueUIDRef, ValuePName, ValueComposite}
-	commonPropertyTargets := []ValueType{
-		ValueText, ValueCode, ValueNum, ValueDateTime, ValueDate, ValueTime, ValueUIDRef, ValuePName,
-		ValueImage, ValueWaveform, ValueComposite, ValueSCoord, ValueTCoord, ValueContainer,
-	}
-	if clean(sopClassUID) == Comprehensive3DSRStorage {
-		commonPropertyTargets = append(commonPropertyTargets, ValueSCoord3D)
-	}
-	switch relationship {
-	case RelationshipHasObsContext:
-		if source == ValueContainer {
-			return contains(target, append(commonObservationTargets, ValueContainer)...)
-		}
-		return contains(source, ValueText, ValueCode, ValueNum) && contains(target, commonObservationTargets...)
-	case RelationshipHasAcqContext:
-		return contains(source, ValueContainer, ValueImage, ValueWaveform, ValueComposite, ValueNum) &&
-			contains(target, ValueText, ValueCode, ValueNum, ValueDateTime, ValueDate, ValueTime, ValueUIDRef, ValuePName, ValueContainer)
-	case RelationshipHasProperties:
-		if source == ValuePName {
-			return contains(target, ValueText, ValueCode, ValueDateTime, ValueDate, ValueTime, ValueUIDRef, ValuePName)
-		}
-		return contains(source, ValueText, ValueCode, ValueNum) && contains(target, commonPropertyTargets...)
-	case RelationshipInferredFrom:
-		return contains(source, ValueText, ValueCode, ValueNum) && contains(target, commonPropertyTargets...)
-	case RelationshipSelectedFrom:
-		if source == ValueSCoord {
-			return target == ValueImage
-		}
-		if source != ValueTCoord {
-			return false
-		}
-		if clean(sopClassUID) == Comprehensive3DSRStorage {
-			return contains(target, ValueSCoord, ValueSCoord3D, ValueImage, ValueWaveform)
-		}
-		return contains(target, ValueSCoord, ValueImage, ValueWaveform)
-	default:
-		return false
-	}
+	return iod.allows(source, relationship, target)
 }
 
 func validateEncodedReferenceItem(item ContentItem, maxPathComponents int) error {

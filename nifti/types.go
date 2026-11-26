@@ -1,7 +1,14 @@
 // Package nifti exports scalar DICOM image series as geometry-aware NIfTI-1
-// volumes. It deliberately excludes presentation transforms: VOI, windowing,
-// MONOCHROME1 inversion, GSPS, and display state never alter quantitative
-// voxel values.
+// volumes and reads NIfTI-1/NIfTI-2 volumes back into DICOM LPS geometry. It
+// deliberately excludes presentation transforms: VOI, windowing, MONOCHROME1
+// inversion, GSPS, and display state never alter quantitative voxel values.
+//
+// The reader (Read, ReadPair, ReadFile) resolves the qform/sform precedence
+// documented in docs/NIFTI_IMPORT.md, applies scl_slope/scl_inter on access,
+// preserves float NaN, enforces ReadLimits before reading voxels, and can
+// convert an integer labelmap lying on a source series grid into a DICOM
+// Segmentation (Volume.SEGDocument). A decoded Volume is immutable and safe
+// for concurrent readers.
 package nifti
 
 import (
@@ -10,6 +17,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/render"
 )
 
@@ -142,6 +150,51 @@ const (
 	// GeometryResampleLinear permits only geometry classified as regularizable
 	// by render. Unsupported/mixed geometry still fails closed.
 	GeometryResampleLinear
+	// GeometryResampleCubicBSpline permits the same geometry as
+	// GeometryResampleLinear and resamples it with the cubic B-spline
+	// interpolant of the source voxels (#1190, render.RegularGridCubicBSpline):
+	// exact at the voxels and smoother between them than trilinear, at the
+	// cost of a coefficient prefilter of the whole source volume. Regular
+	// geometry is written unresampled under either policy.
+	GeometryResampleCubicBSpline
+)
+
+// resamples reports whether the policy permits resampling.
+func (p GeometryPolicy) resamples() bool {
+	return p == GeometryResampleLinear || p == GeometryResampleCubicBSpline
+}
+
+// interpolation is the render kernel and the Report.Interpolation name of
+// a resampling policy.
+func (p GeometryPolicy) interpolation() (render.RegularGridInterpolation, string) {
+	if p == GeometryResampleCubicBSpline {
+		return render.RegularGridCubicBSpline, "cubic-bspline"
+	}
+	return render.RegularGridLinear, "linear"
+}
+
+// SingleSlicePolicy selects whether one frame exports as a 2D (nz = 1)
+// NIfTI image. Its through-plane pixdim[3] is object.ResolveSliceSpacing of
+// the frame: Spacing Between Slices, then Slice Thickness, then 1 mm, with
+// the source reported in Report.SliceSpacingSource and the sidecar.
+type SingleSlicePolicy uint8
+
+const (
+	// SingleSliceReject keeps the fail-closed default: one frame is
+	// CodeSingleSlice.
+	SingleSliceReject SingleSlicePolicy = iota
+	// SingleSlicePatient exports one frame that has Image Position,
+	// Image Orientation (Patient) and Pixel Spacing; the third affine column
+	// is the slice normal scaled by the resolved spacing, with scanner
+	// qform/sform codes.
+	SingleSlicePatient
+	// SingleSliceImageGrid additionally accepts one frame without patient
+	// geometry (DX, CR, US, secondary capture): it writes qform_code =
+	// sform_code = 0 (NIfTI method 1), pixdim from object.PixelSpacingAt
+	// (1 mm when none resolves) and the resolved slice spacing. Such a grid
+	// claims no patient position or orientation; the reader needs
+	// ReadOptions.AllowMissingTransform.
+	SingleSliceImageGrid
 )
 
 type Limits struct {
@@ -192,9 +245,11 @@ type Options struct {
 	// temporal dimension whose DICOM metadata identifies order but not timing.
 	// It is ignored for 3D exports and must be finite and positive when used.
 	TemporalSpacingSeconds float64
-	Tolerances             render.GeometryTolerances
-	Limits                 Limits
-	TempDir                string
+	// SingleSlice opts in to exporting one frame (see SingleSlicePolicy).
+	SingleSlice SingleSlicePolicy
+	Tolerances  render.GeometryTolerances
+	Limits      Limits
+	TempDir     string
 }
 
 func DefaultOptions() Options {
@@ -202,6 +257,53 @@ func DefaultOptions() Options {
 		Tolerances: StrictGeometryTolerances(),
 		Limits:     DefaultLimits(),
 	}
+}
+
+// Stable, PHI-free warning codes reported in Report.Warnings and the sidecar
+// when a Parametric Map export carries voxels without a quantitative value.
+const (
+	// WarningParametricPaddingAsNaN: Pixel Padding voxels were written as
+	// NaN, because NIfTI has no padding attribute.
+	WarningParametricPaddingAsNaN = "parametric-map-padding-written-as-nan"
+	// WarningParametricNaNPreserved: stored NaN voxels were written as NaN.
+	WarningParametricNaNPreserved = "parametric-map-nan-preserved"
+	// WarningParametricInfinitePreserved: stored ±Inf voxels were written as
+	// their linearly mapped infinity.
+	WarningParametricInfinitePreserved = "parametric-map-infinite-preserved"
+	// WarningParametricOutsideMappingAsNaN: stored voxels outside the
+	// applicable Real World Value Mapping domains were written as NaN.
+	WarningParametricOutsideMappingAsNaN = "parametric-map-outside-mapping-written-as-nan"
+	// WarningParametricMappingOverflowAsNaN: voxels whose calibrated
+	// values overflowed were written as NaN.
+	WarningParametricMappingOverflowAsNaN = "parametric-map-mapping-overflow-written-as-nan"
+)
+
+// Stable, PHI-free warning codes of a single-slice export.
+const (
+	// WarningSliceSpacingFromThickness: no Spacing Between Slices; the
+	// through-plane pixdim is Slice Thickness.
+	WarningSliceSpacingFromThickness = "slice-spacing-from-slice-thickness"
+	// WarningSliceSpacingDefault: neither Spacing Between Slices nor Slice
+	// Thickness; the through-plane pixdim is 1 mm.
+	WarningSliceSpacingDefault = "slice-spacing-default-1mm"
+	// WarningNoPatientGeometry: SingleSliceImageGrid wrote a frame without
+	// Image Position/Orientation (Patient) with no spatial transform.
+	WarningNoPatientGeometry = "no-patient-geometry"
+	// WarningPixelSpacingDefault: the image-grid frame has no resolvable
+	// pixel spacing; the in-plane pixdim is 1 mm.
+	WarningPixelSpacingDefault = "pixel-spacing-default-1mm"
+)
+
+// UnmeasuredVoxels counts exported Parametric Map voxels that carry no
+// quantitative value. Padding, NaN, OutsideMapping and MappingOverflow voxels
+// are written as NaN. Infinite voxels are written as ±Inf. Read preserves both
+// floating-point representations.
+type UnmeasuredVoxels struct {
+	Padding         int64
+	NaN             int64
+	Infinite        int64
+	OutsideMapping  int64
+	MappingOverflow int64
 }
 
 type Report struct {
@@ -220,6 +322,20 @@ type Report struct {
 	Warnings         []string
 	BytesWritten     int64
 	Sidecar          Sidecar
+	// UnmeasuredVoxels is non-zero only for Parametric Map exports whose
+	// payload holds unmeasured voxels. Warnings names each kind.
+	UnmeasuredVoxels UnmeasuredVoxels
+	// SingleSlice reports a one-frame export (Options.SingleSlice), and
+	// SliceSpacingSource where its through-plane pixdim came from; a volume
+	// reports object.SliceSpacingFromPositions.
+	SingleSlice        bool
+	SliceSpacingSource object.SliceSpacingSource
+	// NoSpatialTransform reports an image-grid export: qform_code and
+	// sform_code are 0 and IndexToRAS is only diag(pixdim).
+	// PixelSpacingSemantic tells what its in-plane pixdim measures
+	// (object.PixelSpacingAt), empty when it defaulted to 1 mm.
+	NoSpatialTransform   bool
+	PixelSpacingSemantic object.PixelSpacingSemantic
 }
 
 func normalizedOptions(options Options) (Options, error) {
@@ -230,7 +346,7 @@ func normalizedOptions(options Options) (Options, error) {
 	if options.Scaling > ScalingApplyFloat64 {
 		return Options{}, &ExportError{Code: CodeScaling, SourceIndex: -1, FrameIndex: -1, Err: ErrUnsupportedScaling}
 	}
-	if options.Geometry > GeometryResampleLinear {
+	if options.Geometry > GeometryResampleCubicBSpline || options.SingleSlice > SingleSliceImageGrid {
 		return Options{}, &ExportError{Code: CodeGeometry, SourceIndex: -1, FrameIndex: -1, Err: ErrInvalidGeometry}
 	}
 	if options.Tolerances == (render.GeometryTolerances{}) {

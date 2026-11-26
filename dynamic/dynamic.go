@@ -64,13 +64,21 @@ type FrameMetadata struct {
 	HasOffset   bool
 	Duration    time.Duration
 	HasDuration bool
-	Trigger     time.Duration
-	HasTrigger  bool
-	Phase       float64
-	HasPhase    bool
+	// ActualDuration preserves only a valid declared ActualFrameDuration. Duration
+	// may instead describe playback cadence from FrameTime or FrameTimeVector.
+	// Consumers requiring acquisition weights must additionally require positivity.
+	ActualDuration    time.Duration
+	HasActualDuration bool
+	Trigger           time.Duration
+	HasTrigger        bool
+	Phase             float64
+	HasPhase          bool
 
 	AcquisitionTime    time.Time
 	HasAcquisitionTime bool
+	// AcquisitionStamp is an independently qualified timestamp of this frame.
+	// Legacy nominal and relative playback timing stays in the fields above.
+	AcquisitionStamp   AcquisitionTimestamp
 	SpatialPosition    float64
 	HasSpatialPosition bool
 }
@@ -200,6 +208,7 @@ func read(file *object.File, validateDeclaredPositions bool) (Timeline, error) {
 		}
 		if milliseconds, ok := firstFrameFloat(containers, obj, tagActualFrameDuration); ok {
 			frame.Duration, frame.HasDuration = millisecondsDuration(milliseconds)
+			frame.ActualDuration, frame.HasActualDuration = frame.Duration, frame.HasDuration
 		} else if len(vector) > 0 {
 			durationIndex := index + 1
 			if durationIndex >= len(vector) {
@@ -238,6 +247,7 @@ func read(file *object.File, validateDeclaredPositions bool) (Timeline, error) {
 		} else if value, ok := firstFrameString(containers, obj, tagAcquisitionDateTime); ok {
 			frame.AcquisitionTime, frame.HasAcquisitionTime = parseDateTime(value)
 		}
+		frame.AcquisitionStamp = readAcquisitionTimestamp(obj, containers, frameCount)
 		geometry := file.FrameGeometryAt(index)
 		if len(geometry.ImagePositionPatient) == 3 && len(geometry.ImageOrientationPatient) == 6 {
 			row := vector3(geometry.ImageOrientationPatient[:3])

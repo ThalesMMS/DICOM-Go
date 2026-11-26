@@ -27,12 +27,13 @@ func TestCurrentMeasurementReportTemplateValidatesTheStructureEmittedToday(t *te
 		Groups: []MeasurementGroup{{
 			Tracking: TrackingIdentifier{Identifier: "fixture", UID: "1.2.826.0.1.3680043.9.7433.628.2"},
 			ReferencedSegment: SegmentReference{
+				StudyInstanceUID: "1.2.826.0.1.3680043.9.7433.628.6", SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.628.7",
 				SOPClassUID: "1.2.840.10008.5.1.4.1.1.66.4", SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.628.3", SegmentNumber: 1,
 			},
 			Measurements: []ReportMeasurement{{
 				ConceptName: CodedEntry{CodeValue: "121206", CodingSchemeDesignator: "DCM", CodeMeaning: "Distance"},
 				Value:       12, Units: MillimeterUnit(),
-				Image:   ImageReference{SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.628.4"},
+				Image:   ImageReference{StudyInstanceUID: "1.2.826.0.1.3680043.9.7433.628.6", SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.628.8", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.628.4"},
 				Spatial: SpatialReference{FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.628.5", GraphicType: GraphicTypePoint3D, Coordinates: []Point3D{{X: 1, Y: 2, Z: 3}}},
 			}},
 		}},
@@ -50,8 +51,18 @@ func TestCurrentMeasurementReportTemplateValidatesTheStructureEmittedToday(t *te
 		t.Fatalf("Validate(emitted measurement report) = %+v, %v; want clean report", validation, err)
 	}
 
-	emptyValidation, err := validator.Validate(context.Background(), &Document{}, definition.Key)
-	if err != nil || len(emptyValidation.Findings) != 0 {
-		t.Fatalf("Validate(report with no optional groups) = %+v, %v; want clean report", emptyValidation, err)
+	// A report without groups is valid; one without its mandatory rows is not.
+	report.Groups = nil
+	if file, err = WriteMeasurementReport(report); err != nil {
+		t.Fatal(err)
+	}
+	if document, err = ReadDocument(file.Dataset); err != nil {
+		t.Fatal(err)
+	}
+	if validation, err := validator.Validate(context.Background(), document, definition.Key); err != nil || len(validation.Findings) != 0 {
+		t.Fatalf("Validate(report without groups) = %+v, %v; want clean report", validation, err)
+	}
+	if validation, _ := validator.Validate(context.Background(), &Document{}, definition.Key); len(validation.Findings) == 0 {
+		t.Fatal("an empty document satisfies the mandatory rows")
 	}
 }

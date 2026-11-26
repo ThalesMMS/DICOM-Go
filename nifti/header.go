@@ -9,19 +9,25 @@ import (
 )
 
 const (
-	headerSize        = 348
-	headerDescription = "dicom-go NIfTI-1 export"
+	headerSize         = 348
+	headerDescription  = "dicom-go NIfTI-1 export"
+	temporalUnitSecond = 8
 )
 
 type headerSpec struct {
-	Dimensions  [4]int
-	Datatype    int16
-	BitPix      int16
-	Spacing     [4]float64
-	VoxelOffset int64
-	Slope       float64
-	Intercept   float64
-	AffineRAS   render.GeometryAffine
+	Dimensions   [4]int
+	Datatype     int16
+	BitPix       int16
+	Spacing      [4]float64
+	VoxelOffset  int64
+	Slope        float64
+	Intercept    float64
+	TimeOffset   float64
+	TemporalUnit uint8 // zero uses seconds for a temporal volume
+	AffineRAS    render.GeometryAffine
+	// NoSpatialTransform writes qform_code = sform_code = 0 and no
+	// quaternion or srow: the grid claims no patient space (NIfTI method 1).
+	NoSpatialTransform bool
 }
 
 func buildHeader(spec headerSpec) ([]byte, error) {
@@ -54,6 +60,9 @@ func buildHeader(spec headerSpec) ([]byte, error) {
 	putInt16(70, spec.Datatype)
 	putInt16(72, spec.BitPix)
 	quaternion, qfac := affineQuaternion(spec.AffineRAS, spec.Spacing)
+	if spec.NoSpatialTransform {
+		quaternion, qfac = [3]float64{}, 1
+	}
 	putFloat32(76, qfac)
 	for index, spacing := range spec.Spacing {
 		putFloat32(80+4*index, spacing)
@@ -61,11 +70,20 @@ func buildHeader(spec headerSpec) ([]byte, error) {
 	putFloat32(108, float64(spec.VoxelOffset))
 	putFloat32(112, spec.Slope)
 	putFloat32(116, spec.Intercept)
-	header[123] = 2
+	header[123] = uint8(SpatialUnitMillimeter)
 	if spec.Dimensions[3] > 1 {
-		header[123] |= 8
+		unit := spec.TemporalUnit
+		if unit == 0 {
+			unit = temporalUnitSecond
+		}
+		header[123] |= unit
+		putFloat32(136, spec.TimeOffset)
 	}
 	copy(header[148:228], headerDescription)
+	copy(header[344:348], "n+1\x00")
+	if spec.NoSpatialTransform {
+		return header, nil
+	}
 	putInt16(252, 1)
 	putInt16(254, 1)
 	putFloat32(256, quaternion[0])
@@ -79,7 +97,6 @@ func buildHeader(spec headerSpec) ([]byte, error) {
 			putFloat32(offset+4*column, spec.AffineRAS[4*row+column])
 		}
 	}
-	copy(header[344:348], "n+1\x00")
 	return header, nil
 }
 
@@ -113,6 +130,9 @@ func validateHeaderSpec(spec headerSpec) error {
 	}
 	if !fitsFiniteFloat32(spec.Intercept) {
 		return unsupportedHeader("scaling intercept is non-finite or outside float32")
+	}
+	if !fitsFiniteFloat32(spec.TimeOffset) || (spec.TimeOffset != 0 && float32(spec.TimeOffset) == 0) {
+		return unsupportedHeader("time offset is non-finite or outside float32")
 	}
 	if !spec.AffineRAS.Finite() {
 		return unsupportedHeader("affine is non-finite or has an invalid homogeneous row")

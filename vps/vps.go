@@ -7,10 +7,15 @@ import (
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/internal/derivedio"
 	"github.com/ThalesMMS/dicom-go/object"
+	"github.com/ThalesMMS/dicom-go/pixeldata/display"
 	"github.com/ThalesMMS/dicom-go/render"
 )
 
 const (
+	// DefaultContentLabel is the Content Label Write uses for a standard
+	// state without one.
+	DefaultContentLabel = "VOLUMETRIC_PS"
+
 	GrayscalePlanarMPRVolumetricPresentationStateStorage       = "1.2.840.10008.5.1.4.1.1.11.6"
 	CompositingPlanarMPRVolumetricPresentationStateStorage     = "1.2.840.10008.5.1.4.1.1.11.7"
 	VolumeRenderingVolumetricPresentationStateStorage          = "1.2.840.10008.5.1.4.1.1.11.9"
@@ -62,13 +67,20 @@ type Input struct {
 type VOI struct {
 	WindowCenter float64
 	WindowWidth  float64
+	// Function is the standard VOI LUT Function. Its zero value is LINEAR.
+	Function display.VOIFunction
 }
 
 // CroppingSpecification is one standard Volume Cropping Sequence item. The
 // supported method is BOUNDING_BOX; other standard methods fail closed on read.
 type CroppingSpecification struct {
-	Number      int
-	Method      string
+	Number int
+	Method string
+	// BoundingBox holds opposite corners in VPS-RCS millimetres, arranged as
+	// x1, x2, y1, y2, z1, z2 for compatibility with existing callers. The
+	// cuboid axes follow the encoded source volume axes, including oblique
+	// orientations. Individual RCS components need not be increasing.
+	// The DICOM wire order is x1, y1, z1, x2, y2, z2 (PS3.3 C.11.24).
 	BoundingBox [6]float64
 }
 
@@ -104,8 +116,10 @@ type ClassificationComponent struct {
 	RedPalette        []uint16
 	GreenPalette      []uint16
 	BluePalette       []uint16
-	AlphaPalette      []uint16
-	Description       string
+	// AlphaPalette uses 16-bit normalized values in memory. Standard output
+	// quantizes to eight bits and read expands each byte by 257.
+	AlphaPalette []uint16
+	Description  string
 }
 
 // Display describes the standard presentation output pipeline.
@@ -139,6 +153,9 @@ type Camera struct {
 }
 
 type State struct {
+	// Common fills the Patient, Study and equipment modules from a source
+	// instance of the same patient (object.InheritCommonModules).
+	Common            object.DerivedCommon
 	SOPClassUID       string
 	SOPInstanceUID    string
 	StudyInstanceUID  string
@@ -156,6 +173,13 @@ type State struct {
 	Shading                        *Shading
 	RenderPresetName               string
 	Camera                         Camera
+	// Identification is the Series Number, Instance Number and Content
+	// Identification of a standard state (defaults 1, 1 and Content Label
+	// VOLUMETRIC_PS); CreationDate and CreationTime (Presentation Creation
+	// Date and Time) default to the time of Write.
+	Identification derivedio.Identification
+	CreationDate   string
+	CreationTime   string
 }
 
 type AppliedState struct {
@@ -207,6 +231,9 @@ func Write(state *State) (*object.File, error) {
 		derivedio.DS(tagCameraDistanceFov, state.Camera.Distance, state.Camera.FovY),
 	)
 	dataset := derivedio.Object(elements...)
+	if err := state.Common.Apply(dataset, object.InheritAll); err != nil {
+		return nil, err
+	}
 	return derivedio.File(state.SOPClassUID, state.SOPInstanceUID, dataset)
 }
 
@@ -214,6 +241,29 @@ func Write(state *State) (*object.File, error) {
 // private renderer extension used by this package. Unsupported standard
 // pipelines fail closed with ErrUnsupportedPayload.
 func Read(obj *object.Object) (*State, error) {
+	return ReadWithOptions(obj, ReadOptions{})
+}
+
+// ReadOptions provides explicit recovery for files written by older versions
+// of this package. Enable a recovery only when the source provenance confirms
+// the historical encoding. The default reader never guesses either layout.
+type ReadOptions struct {
+	// LegacyInterleavedBoundingBox accepts x1,x2,y1,y2,z1,z2 on the wire,
+	// as historical dicom-go writers emitted instead of two XYZ triplets.
+	LegacyInterleavedBoundingBox bool
+	// LegacyMissingAlphaDescriptor accepts the missing alpha descriptor of
+	// historical TABLE exports when its entries match the RGB descriptor.
+	// A descriptor that is present and incompatible is always rejected.
+	LegacyMissingAlphaDescriptor bool
+	// LegacySixteenBitAlpha accepts the sixteen-bit alpha table produced by
+	// older package versions. Standard writers always use eight bits.
+	LegacySixteenBitAlpha bool
+}
+
+// ReadWithOptions reads the standard or historical private VPS representation
+// with any explicitly requested legacy wire recoveries. Write always emits the
+// canonical standard encoding after such a read.
+func ReadWithOptions(obj *object.Object, options ReadOptions) (*State, error) {
 	if obj == nil {
 		return nil, fmt.Errorf("%w: dataset is nil", ErrInvalidObject)
 	}
@@ -228,7 +278,7 @@ func Read(obj *object.Object) (*State, error) {
 	}
 	legacyPrivatePayload := creator == "" && hasRendererPayload
 	if hasStandardGeometry(obj, sopClassUID) {
-		return readStandard(obj, sopClassUID)
+		return readStandard(obj, sopClassUID, options)
 	}
 	if creator != privateCreator && !legacyPrivatePayload {
 		return nil, fmt.Errorf("%w: SOP class %s requires standard VPS geometry, crop, VOI, and display modules", ErrUnsupportedPayload, sopClassUID)

@@ -37,8 +37,9 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 		FrameOfReferenceUID: datasetUID(dataset, tags.FrameOfReferenceUID),
 	}}
 
-	switch resolver.resolution.SOPClassUID {
-	case seg.SegmentationStorage, seg.LabelMapSegmentationStorage:
+	_, reader := resolverForSOPClass(resolver.resolution.SOPClassUID)
+	switch reader {
+	case resolveSEG:
 		resolver.resolution.Kind = ObjectKindSEG
 		resolver.resolution.Editable = true
 		document, err := seg.Read(dataset)
@@ -57,7 +58,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 				Frames:            reference.Frames,
 			}, referenceRequirements{series: true})
 		}
-	case gsps.GrayscaleSoftcopyPresentationStateStorage:
+	case resolveGSPS:
 		resolver.resolution.Kind = ObjectKindGSPS
 		resolver.resolution.Editable = true
 		state, err := gsps.Read(dataset)
@@ -75,7 +76,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 				Frames:            reference.Frames,
 			}, referenceRequirements{series: true})
 		}
-	case sr.KeyObjectSelectionDocumentStorage:
+	case resolveKOS:
 		resolver.resolution.Kind = ObjectKindKOS
 		resolver.resolution.Editable = true
 		document, err := sr.ReadDocument(dataset)
@@ -94,7 +95,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 				Frames:            reference.Frames,
 			}, referenceRequirements{study: true, series: true})
 		}
-	case rtstruct.RTStructureSetStorage:
+	case resolveRTSTRUCT:
 		resolver.resolution.Kind = ObjectKindRTSTRUCT
 		resolver.resolution.Editable = true
 		structureSet, err := rtstruct.Read(dataset)
@@ -117,7 +118,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 				}
 			}
 		}
-	case rtdose.RTDoseStorage:
+	case resolveRTDose:
 		resolver.resolution.Kind = ObjectKindRTDose
 		dose, err := rtdose.ReadDataset(dataset)
 		if err != nil {
@@ -137,7 +138,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 			core.NewTag(0x300C, 0x0002),
 			core.NewTag(0x300C, 0x0060),
 		)
-	case parametricmap.ParametricMapStorage:
+	case resolveParametricMap:
 		resolver.resolution.Kind = ObjectKindParametricMap
 		parametricMap, err := parametricmap.ReadDataset(dataset)
 		if err != nil {
@@ -154,7 +155,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 			}, referenceRequirements{})
 		}
 		resolver.addMissingNestedReferences(dataset, ReferenceRoleSourceImage)
-	case sr.EnhancedSRStorage, sr.ComprehensiveSRStorage, sr.Comprehensive3DSRStorage:
+	case resolveSRMeasurement:
 		resolver.resolution.Kind = ObjectKindSRMeasurement
 		resolver.resolution.Editable = true
 		report, err := sr.ReadMeasurementReport(dataset)
@@ -179,11 +180,21 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 				}, referenceRequirements{})
 			}
 		}
-	case vps.GrayscalePlanarMPRVolumetricPresentationStateStorage,
-		vps.CompositingPlanarMPRVolumetricPresentationStateStorage,
-		vps.VolumeRenderingVolumetricPresentationStateStorage,
-		vps.SegmentedVolumeRenderingVolumetricPresentationStateStorage,
-		vps.MultipleVolumeRenderingVolumetricPresentationStateStorage:
+		// The Image Library remains evidence even when a later SR revision has
+		// removed its last numeric group. Preserve distinct frame references.
+		seen := map[string]bool{}
+		for _, reference := range resolver.resolution.References {
+			seen[reference.SOPClassUID+"/"+reference.SOPInstanceUID+"/"+fmt.Sprint(reference.Frames)] = true
+		}
+		for _, image := range report.ImageLibrary {
+			key := image.SOPClassUID + "/" + image.SOPInstanceUID + "/" + fmt.Sprint(image.Frames)
+			if !seen[key] {
+				resolver.addReference(Reference{Role: ReferenceRoleMeasurementImage, StudyInstanceUID: image.StudyInstanceUID, SeriesInstanceUID: image.SeriesInstanceUID, SOPClassUID: image.SOPClassUID, SOPInstanceUID: image.SOPInstanceUID, Frames: image.Frames}, referenceRequirements{})
+				seen[key] = true
+			}
+		}
+
+	case resolveVPS:
 		resolver.resolution.Kind = ObjectKindVPS
 		resolver.resolution.Editable = true
 		state, err := vps.Read(dataset)
@@ -201,7 +212,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 				}, referenceRequirements{})
 			}
 		}
-	case spatialreg.SpatialRegistrationStorage:
+	case resolveAffineRegistration:
 		registration, err := spatialreg.ReadAffineDataset(dataset)
 		if err != nil {
 			return resolver.resolution, malformed(ObjectKindRegistration, err)
@@ -215,7 +226,7 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 				resolver.addReference(Reference{Role: ReferenceRoleRegistrationSource, SOPInstanceUID: sopInstanceUID}, referenceRequirements{})
 			}
 		}
-	case spatialreg.DeformableSpatialRegistrationStorage:
+	case resolveDeformableRegistration:
 		registration, err := spatialreg.ReadDataset(dataset)
 		if err != nil {
 			return resolver.resolution, malformed(ObjectKindRegistration, err)
@@ -236,6 +247,53 @@ func Resolve(dataset *object.Object, identity Identity) (Resolution, error) {
 	}
 
 	return resolver.resolution, nil
+}
+
+type relationReader uint8
+
+const (
+	resolveIdentity relationReader = iota
+	resolveSEG
+	resolveGSPS
+	resolveKOS
+	resolveRTSTRUCT
+	resolveRTDose
+	resolveParametricMap
+	resolveSRMeasurement
+	resolveVPS
+	resolveAffineRegistration
+	resolveDeformableRegistration
+)
+
+func resolverForSOPClass(sopClassUID string) (ReadRequirement, relationReader) {
+	switch sopClassUID {
+	case seg.SegmentationStorage, seg.LabelMapSegmentationStorage:
+		return ReadPixelData, resolveSEG
+	case gsps.GrayscaleSoftcopyPresentationStateStorage:
+		return ReadCompleteModules, resolveGSPS
+	case sr.KeyObjectSelectionDocumentStorage:
+		return ReadCompleteModules, resolveKOS
+	case rtstruct.RTStructureSetStorage:
+		return ReadCompleteModules, resolveRTSTRUCT
+	case rtdose.RTDoseStorage:
+		return ReadPixelData, resolveRTDose
+	case parametricmap.ParametricMapStorage:
+		return ReadPixelData, resolveParametricMap
+	case sr.EnhancedSRStorage, sr.ComprehensiveSRStorage, sr.Comprehensive3DSRStorage:
+		return ReadCompleteModules, resolveSRMeasurement
+	case vps.GrayscalePlanarMPRVolumetricPresentationStateStorage,
+		vps.CompositingPlanarMPRVolumetricPresentationStateStorage,
+		vps.VolumeRenderingVolumetricPresentationStateStorage,
+		vps.SegmentedVolumeRenderingVolumetricPresentationStateStorage,
+		vps.MultipleVolumeRenderingVolumetricPresentationStateStorage:
+		return ReadCompleteModules, resolveVPS
+	case spatialreg.SpatialRegistrationStorage:
+		return ReadCompleteModules, resolveAffineRegistration
+	case spatialreg.DeformableSpatialRegistrationStorage:
+		return ReadCompleteModules, resolveDeformableRegistration
+	default:
+		return ReadIdentity, resolveIdentity
+	}
 }
 
 func moreGeneralRegistrationType(current, candidate string) string {

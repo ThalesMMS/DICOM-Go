@@ -1,5 +1,6 @@
-// Package multiframe converts Enhanced CT and Enhanced MR multi-frame
-// instances into independent classic single-frame Part 10 instances.
+// Package multiframe converts between Enhanced (and Legacy Converted
+// Enhanced) CT, MR and PET multi-frame instances and classic single-frame
+// Part 10 instances.
 package multiframe
 
 import (
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/derivation"
+	"github.com/ThalesMMS/dicom-go/dictionary"
 	"github.com/ThalesMMS/dicom-go/dictionary/std"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
@@ -267,15 +270,21 @@ func buildFrameDataset(budget *conversionBudget, source, shared, perFrame *objec
 	dataset := object.FromElements(elements, std.Dictionary)
 	dataset.SetValueByteOrder(nil)
 
-	sharedState, err := flattenFunctionalGroupItem(budget, dataset, shared, nil)
+	sharedState, err := flattenFunctionalGroupItem(budget, dataset, shared, nil, false)
 	if err != nil {
 		return nil, err
 	}
-	perFrameState, err := flattenFunctionalGroupItem(budget, dataset, perFrame, &sharedState)
-	if err != nil {
+	if _, err := flattenFunctionalGroupItem(budget, dataset, perFrame, &sharedState, false); err != nil {
 		return nil, err
 	}
-	if err := validateRequiredFunctionalGroups(sharedState, perFrameState, targetClassUID); err != nil {
+	// The Unassigned Converted Attributes of a Legacy Converted source are
+	// the classic images' own values (Image Type among them), which win.
+	for _, item := range []*object.Object{shared, perFrame} {
+		if _, err := flattenFunctionalGroupItem(budget, dataset, item, nil, true); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateRequiredFunctionalGroups(source, frameIndex, targetClassUID); err != nil {
 		return nil, err
 	}
 	dataset.Put(ui(tagSOPClassUID, targetClassUID))
@@ -300,7 +309,7 @@ func buildFrameDataset(budget *conversionBudget, source, shared, perFrame *objec
 		str(tagReferencedFrameNumber, core.VRIS, strconv.Itoa(frameIndex+1)),
 	)
 	dataset.Put(seq(tagConversionSourceAttributesSequence, conversionSource))
-	if err := appendSourceReference(dataset, conversionSource); err != nil {
+	if err := appendSourceReference(dataset, derivation.Source{SOPClassUID: sourceClassUID, SOPInstanceUID: sourceSOPUID, Frames: []int{frameIndex + 1}}); err != nil {
 		return nil, err
 	}
 	if !dataset.Has(tagDerivationDescription) {
@@ -309,7 +318,11 @@ func buildFrameDataset(budget *conversionBudget, source, shared, perFrame *objec
 	if err := appendContributingEquipment(dataset, equipment, now); err != nil {
 		return nil, err
 	}
-	emitMissingType2Attributes(dataset, targetClassUID)
+	frames, _ := source.GetString(tagNumberOfFrames)
+	count, _ := strconv.Atoi(cleanText(frames))
+	if err := finishClassic(dataset, source, frameIndex, count, targetClassUID); err != nil {
+		return nil, err
+	}
 	if err := validateClassicDataset(dataset, targetClassUID, modality); err != nil {
 		return nil, err
 	}
@@ -325,53 +338,80 @@ func functionalGroups(dataset *object.Object, frames int) (*object.Object, []*ob
 	if !ok || len(perFrameItems) != frames {
 		return nil, nil, fmt.Errorf("%w: PerFrameFunctionalGroupsSequence item count must equal NumberOfFrames", ErrNonconformant)
 	}
+	if conflicts := dataset.FunctionalGroupConflicts(); len(conflicts) > 0 {
+		return nil, nil, fmt.Errorf("%w: functional group macro %s appears in Shared and PerFrame (frame %d)", ErrNonconformant, conflicts[0].Macro, conflicts[0].Frames[0]+1)
+	}
 	return sharedItems[0], perFrameItems, nil
 }
 
 type flattenedFunctionalGroups struct {
-	macros map[core.Tag]struct{}
 	leaves map[core.Tag]core.Element
 }
 
-func validateRequiredFunctionalGroups(shared, perFrame flattenedFunctionalGroups, targetClassUID string) error {
+// validateRequiredFunctionalGroups checks, through the functional group
+// resolver, that the frame has the macros the Classic IOD needs.
+func validateRequiredFunctionalGroups(source *object.Object, frameIndex int, targetClassUID string) error {
 	required := []core.Tag{tagPixelMeasuresSequence, tagPlanePositionSequence, tagPlaneOrientationSequence}
 	switch targetClassUID {
 	case CTImageStorageUID:
 		required = append(required, tagCTImageFrameTypeSequence, tagPixelValueTransformationSequence)
 	case MRImageStorageUID:
 		required = append(required, tagMRImageFrameTypeSequence)
+	case PETImageStorageUID:
+		required = append(required, tagPETFrameTypeSequence, tagPixelValueTransformationSequence)
 	}
 	for _, tag := range required {
-		_, inShared := shared.macros[tag]
-		_, inPerFrame := perFrame.macros[tag]
-		if !inShared && !inPerFrame {
+		if item, _, _ := source.FunctionalGroupItem(frameIndex, tag); item == nil {
 			return fmt.Errorf("%w: required functional group macro %s is missing", ErrNonconformant, tag)
 		}
 	}
 	return nil
 }
 
-func flattenFunctionalGroupItem(budget *conversionBudget, target, item *object.Object, forbidden *flattenedFunctionalGroups) (flattenedFunctionalGroups, error) {
-	state := flattenedFunctionalGroups{
-		macros: make(map[core.Tag]struct{}, item.Len()),
-		leaves: make(map[core.Tag]core.Element),
-	}
+// flattenFunctionalGroupItem puts the leaves of an item's macros in target:
+// the Unassigned Converted Attributes macros when unassigned, the others
+// otherwise.
+func flattenFunctionalGroupItem(budget *conversionBudget, target, item *object.Object, forbidden *flattenedFunctionalGroups, unassigned bool) (flattenedFunctionalGroups, error) {
+	state := flattenedFunctionalGroups{leaves: make(map[core.Tag]core.Element)}
 	for _, macro := range item.Elements() {
+		if isUnassigned := macro.Tag() == tagUnassignedSharedConverted || macro.Tag() == tagUnassignedPerFrameConverted; isUnassigned != unassigned {
+			continue
+		}
+		// A Legacy Converted source's own sources are not this image's.
+		if macro.Tag() == tagConversionSourceAttributesSequence {
+			continue
+		}
 		if macro.VR() != core.VRSQ {
 			return flattenedFunctionalGroups{}, fmt.Errorf("%w: functional group macro %s is not SQ", ErrNonconformant, macro.Tag())
-		}
-		if forbidden != nil {
-			if _, duplicate := forbidden.macros[macro.Tag()]; duplicate {
-				return flattenedFunctionalGroups{}, fmt.Errorf("%w: functional group macro %s appears in Shared and PerFrame", ErrNonconformant, macro.Tag())
-			}
 		}
 		sequence, ok := macro.Value.(core.SequenceValue)
 		if !ok || len(sequence.Items) != 1 {
 			return flattenedFunctionalGroups{}, fmt.Errorf("%w: functional group macro %s must contain exactly one item", ErrNonconformant, macro.Tag())
 		}
-		state.macros[macro.Tag()] = struct{}{}
+		var creators *dictionary.PrivateReservations
+		if unassigned {
+			var err error
+			creators, _, err = dictionary.PrivateReservationsFromElements(sequence.Items[0].Elements, len(sequence.Items[0].Elements))
+			if err != nil {
+				return flattenedFunctionalGroups{}, fmt.Errorf("%w: private creators in %s: %v", ErrNonconformant, macro.Tag(), err)
+			}
+		}
 		for _, leaf := range sequence.Items[0].Elements {
 			mapped := leaf
+			if unassigned && dictionary.IsPrivateCreatorTag(leaf.Tag()) {
+				continue
+			}
+			if unassigned && dictionary.IsPrivateDataTag(leaf.Tag()) {
+				creator, err := creators.Creator(leaf.Tag())
+				if err != nil {
+					return flattenedFunctionalGroups{}, fmt.Errorf("%w: private element %s: %v", ErrNonconformant, leaf.Tag(), err)
+				}
+				block, err := target.ReservePrivateCreator(leaf.Tag().Group, creator)
+				if err != nil {
+					return flattenedFunctionalGroups{}, fmt.Errorf("%w: reserve private creator for %s: %v", ErrNonconformant, leaf.Tag(), err)
+				}
+				mapped.Header.Tag = core.NewTag(leaf.Tag().Group, uint16(block)<<8|leaf.Tag().Element&0x00ff)
+			}
 			if leaf.Tag() == tagFrameType {
 				mapped.Header.Tag = tagImageType
 			}
@@ -394,19 +434,13 @@ func flattenFunctionalGroupItem(budget *conversionBudget, target, item *object.O
 	return state, nil
 }
 
-func appendSourceReference(dataset *object.Object, source core.DataSet) error {
-	item := source
-	item.Elements = append(item.Elements, seq(tagPurposeOfReferenceCodeSequence, codeItem("121322", "DCM", "Source image for image processing operation")))
-	items := []core.DataSet{}
-	if existing, ok := dataset.Get(tagSourceImageSequence); ok {
-		sequence, sequenceOK := existing.Value.(core.SequenceValue)
-		if !sequenceOK {
-			return fmt.Errorf("%w: SourceImageSequence is malformed", ErrNonconformant)
-		}
-		items = append(items, sequence.Items...)
+// appendSourceReference appends source to the Source Image Sequence as the
+// input of this image processing operation (121322).
+func appendSourceReference(dataset *object.Object, source derivation.Source) error {
+	source.Purpose = &derivation.SourceImageForProcessing
+	if err := derivation.Apply(dataset, derivation.Derivation{Sources: []derivation.Source{source}}); err != nil {
+		return fmt.Errorf("%w: SourceImageSequence: %v", ErrNonconformant, err)
 	}
-	items = append(items, item)
-	dataset.Put(seq(tagSourceImageSequence, items...))
 	return nil
 }
 
@@ -451,7 +485,8 @@ func appendContributingEquipment(dataset *object.Object, equipment ContributingE
 		}
 		items = append(items, sequence.Items...)
 	}
-	items = append(items, dataSet(item...))
+	// Item elements in ascending tag order (PS3.5 7.1).
+	items = append(items, dataSet(sortElements(item)...))
 	dataset.Put(seq(tagContributingEquipmentSequence, items...))
 	return nil
 }
@@ -497,6 +532,8 @@ func conversionClass(dataset *object.Object) (source, target, modality string, e
 		return source, CTImageStorageUID, "CT", nil
 	case EnhancedMRImageStorageUID, LegacyConvertedEnhancedMRImageStorageUID:
 		return source, MRImageStorageUID, "MR", nil
+	case EnhancedPETImageStorageUID, LegacyConvertedEnhancedPETImageStorageUID:
+		return source, PETImageStorageUID, "PT", nil
 	default:
 		return "", "", "", fmt.Errorf("%w", ErrUnsupportedSOPClass)
 	}
@@ -510,6 +547,8 @@ func TargetSOPClassUID(sourceSOPClassUID string) (string, bool) {
 		return CTImageStorageUID, true
 	case EnhancedMRImageStorageUID, LegacyConvertedEnhancedMRImageStorageUID:
 		return MRImageStorageUID, true
+	case EnhancedPETImageStorageUID, LegacyConvertedEnhancedPETImageStorageUID:
+		return PETImageStorageUID, true
 	default:
 		return "", false
 	}

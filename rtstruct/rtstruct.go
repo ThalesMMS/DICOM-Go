@@ -3,10 +3,10 @@ package rtstruct
 import (
 	"errors"
 	"fmt"
-	"image"
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -57,6 +57,11 @@ var (
 	tagRTROIObservationsSequence     = core.NewTag(0x3006, 0x0080)
 	tagObservationNumber             = core.NewTag(0x3006, 0x0082)
 	tagRTROIInterpretedType          = core.NewTag(0x3006, 0x00A4)
+	tagROIInterpreter                = core.NewTag(0x3006, 0x00A6)
+	tagROIGenerationAlgorithm        = core.NewTag(0x3006, 0x0036)
+	tagStructureSetDate              = core.NewTag(0x3006, 0x0008)
+	tagStructureSetTime              = core.NewTag(0x3006, 0x0009)
+	tagOperatorsName                 = core.NewTag(0x0008, 0x1070)
 )
 
 type Point3D struct {
@@ -82,17 +87,29 @@ type ROI struct {
 	Number   int
 	Name     string
 	ColorRGB [3]int
-	Contours []Contour
+	// GenerationAlgorithm is ROI Generation Algorithm (AUTOMATIC,
+	// SEMIAUTOMATIC or MANUAL); empty writes the Type 2 Attribute empty.
+	GenerationAlgorithm string
+	Contours            []Contour
 }
 
 type StructureSet struct {
+	// Common fills the Patient, Study and equipment modules from a source
+	// instance of the same patient (object.InheritCommonModules).
+	Common              object.DerivedCommon
 	SOPClassUID         string
 	SOPInstanceUID      string
 	StudyInstanceUID    string
 	SeriesInstanceUID   string
 	FrameOfReferenceUID string
 	Label               string
-	ROIs                []ROI
+	// SeriesNumber is written empty when zero (Type 2 in the RT Series
+	// module). Date and Time are the Structure Set Date and Time; empty
+	// uses the time of Write.
+	SeriesNumber int
+	Date         string
+	Time         string
+	ROIs         []ROI
 }
 
 type RasterizeOptions struct {
@@ -108,11 +125,29 @@ type VectorROIContour struct {
 	ReferencedImages []ReferencedImage
 }
 
+// RasterROIContour is a pixel mask on one source slice. FromVectorROIs
+// writes its boundaries as CLOSEDPLANAR_XOR contours at sub-pixel positions
+// (roi.RasterMask.SubpixelContours), so holes survive and Rasterize gives
+// the mask back.
+type RasterROIContour struct {
+	// Mask has the Columns and Rows of Geometry.
+	Mask             *dicomroi.RasterMask
+	Geometry         render.SliceGeometry
+	ReferencedImages []ReferencedImage
+	// SmoothSigma, when positive, rounds the pixel staircase with a
+	// Gaussian of this σ in pixels; zero keeps the mask exact.
+	SmoothSigma float64
+}
+
+// VectorROI is one ROI of FromVectorROIs: vector Contours or raster Masks.
+// An ROI cannot mix them, because the CLOSEDPLANAR_XOR contours of a mask
+// cannot be combined with CLOSED_PLANAR ones.
 type VectorROI struct {
 	Number   int
 	Name     string
 	ColorRGB [3]int
 	Contours []VectorROIContour
+	Masks    []RasterROIContour
 }
 
 type FromVectorROIsOptions struct {
@@ -145,6 +180,18 @@ func Write(set *StructureSet) (*object.File, error) {
 	if label == "" {
 		label = "TWIN_RTSTRUCT"
 	}
+	now := time.Now()
+	date, clock := set.Date, set.Time
+	if date == "" {
+		date = now.Format("20060102")
+	}
+	if clock == "" {
+		clock = now.Format("150405")
+	}
+	seriesNumber := derivedio.IS(derivedio.TagSeriesNumber)
+	if set.SeriesNumber > 0 {
+		seriesNumber = derivedio.IS(derivedio.TagSeriesNumber, set.SeriesNumber)
+	}
 	dataset := derivedio.Object(
 		derivedio.CS(tagSpecificCharacterSet, "ISO_IR 192"),
 		derivedio.UI(derivedio.TagSOPClassUID, sopClassUID),
@@ -153,11 +200,23 @@ func Write(set *StructureSet) (*object.File, error) {
 		derivedio.UI(derivedio.TagStudyInstanceUID, set.StudyInstanceUID),
 		derivedio.UI(derivedio.TagSeriesInstanceUID, set.SeriesInstanceUID),
 		derivedio.SH(tagStructureSetLabel, label),
+		derivedio.Str(tagStructureSetDate, core.VRDA, date),
+		derivedio.Str(tagStructureSetTime, core.VRTM, clock),
+		seriesNumber,
+		derivedio.Str(tagOperatorsName, core.VRPN, ""),
 		referencedFrameOfReferenceSequence(set),
 		structureSetROISequence(set),
 		roiContourSequence(set.ROIs),
 		rtROIObservationsSequence(set.ROIs),
 	)
+	// The RT Structure Set IOD includes the Frame of Reference module, which
+	// names the frame the contours use.
+	if uid := strings.TrimSpace(set.FrameOfReferenceUID); uid != "" {
+		dataset.Put(derivedio.UI(derivedio.TagFrameOfReferenceUID, uid))
+	}
+	if err := set.Common.Apply(dataset, object.InheritAll); err != nil {
+		return nil, err
+	}
 	return derivedio.File(sopClassUID, set.SOPInstanceUID, dataset)
 }
 
@@ -176,6 +235,9 @@ func Read(obj *object.Object) (*StructureSet, error) {
 		StudyInstanceUID:  derivedio.CleanUID(obj, derivedio.TagStudyInstanceUID),
 		SeriesInstanceUID: derivedio.CleanUID(obj, derivedio.TagSeriesInstanceUID),
 		Label:             derivedio.CleanString(obj, tagStructureSetLabel),
+		SeriesNumber:      derivedio.Int(obj, derivedio.TagSeriesNumber),
+		Date:              derivedio.CleanString(obj, tagStructureSetDate),
+		Time:              derivedio.CleanString(obj, tagStructureSetTime),
 	}
 	if refs := derivedio.Sequence(obj, tagReferencedFrameOfReferenceSeq); len(refs) > 0 {
 		set.FrameOfReferenceUID = readFrameOfReferenceUID(refs[0])
@@ -217,6 +279,16 @@ func FromVectorROIs(opts FromVectorROIsOptions) (*StructureSet, error) {
 			Name:     item.Name,
 			ColorRGB: item.ColorRGB,
 		}
+		if len(item.Contours) > 0 && len(item.Masks) > 0 {
+			return nil, fmt.Errorf("%w: ROI %d mixes vector contours and raster masks", ErrGeometryMismatch, item.Number)
+		}
+		for _, mask := range item.Masks {
+			contours, err := rasterMaskContours(mask)
+			if err != nil {
+				return nil, err
+			}
+			roiItem.Contours = append(roiItem.Contours, contours...)
+		}
 		for _, contour := range item.Contours {
 			if err := validateSliceGeometry(contour.Geometry); err != nil {
 				return nil, err
@@ -250,6 +322,13 @@ func FromVectorROIs(opts FromVectorROIsOptions) (*StructureSet, error) {
 // ErrGeometryMismatch if the geometry is empty, or ErrMissingReference if the
 // ROI number is not found, or ErrUnsupportedContourType if the ROI contains a
 // geometric type that cannot be represented as a filled raster mask.
+//
+// Contour vertices are projected to sub-pixel image coordinates without
+// rounding and filled with roi.RasterizePolygon: a voxel belongs to a contour
+// when its centre is inside the polygon (even-odd rule, left/top edges
+// inclusive, right/bottom exclusive). CLOSED_PLANAR contours on a slice are
+// united; CLOSEDPLANAR_XOR contours are XOR-combined, which equals the
+// even-odd fill of all of them, so nested contours become holes.
 func Rasterize(set *StructureSet, opts RasterizeOptions) (*dicomroi.Segmentation3D, error) {
 	if set == nil {
 		return nil, fmt.Errorf("%w: structure set is nil", ErrInvalidObject)
@@ -259,145 +338,145 @@ func Rasterize(set *StructureSet, opts RasterizeOptions) (*dicomroi.Segmentation
 		if item.Number != opts.ROINumber {
 			continue
 		}
-		xor, err := contourCombinationMode(item.Contours)
+		fill, err := strictContourFill(item.Contours)
 		if err != nil {
 			return nil, err
 		}
 		for _, contour := range item.Contours {
+			if err := validateContourPointCount(contour); err != nil {
+				return nil, err
+			}
 			sliceIndex, points, err := contourToImage(contour, opts.Geometry)
 			if err != nil {
 				return nil, err
 			}
-			mask := dicomroi.VectorROI{Shape: dicomroi.ROIPolygon, Points: points}.Rasterize(opts.Columns, opts.Rows)
-			existing := out.Mask(sliceIndex)
-			if xor {
-				existing.XOR(mask)
-			} else {
-				existing.Union(mask)
-			}
+			fill.combine(out.Mask(sliceIndex), points)
 		}
 		return out, nil
 	}
 	return nil, fmt.Errorf("%w: ROI %d", ErrMissingReference, opts.ROINumber)
 }
 
-func contourCombinationMode(contours []Contour) (xor bool, err error) {
-	for _, contour := range contours {
-		switch contour.GeometricType {
-		case ContourClosedPlanarXOR:
-			xor = true
-		case "", ContourClosedPlanar:
-		default:
-			return false, fmt.Errorf("%w: %s", ErrUnsupportedContourType, contour.GeometricType)
+func vectorContourPoints(item dicomroi.VectorROI) ([]dicomroi.Point2D, error) {
+	points := item.ControlPoints()
+	for _, point := range points {
+		if math.IsNaN(point.X) || math.IsNaN(point.Y) || math.IsInf(point.X, 0) || math.IsInf(point.Y, 0) {
+			return nil, fmt.Errorf("%w: contour point is not finite", ErrGeometryMismatch)
 		}
 	}
-	if xor {
-		for _, contour := range contours {
-			if contour.GeometricType != ContourClosedPlanarXOR {
-				return false, fmt.Errorf("%w: CLOSEDPLANAR_XOR cannot be mixed with %q", ErrGeometryMismatch, contour.GeometricType)
-			}
-		}
-	}
-	return xor, nil
-}
-
-func vectorContourPoints(item dicomroi.VectorROI) ([]image.Point, error) {
 	switch item.Shape {
 	case dicomroi.ROIEllipse:
-		return ellipseContourPoints(item.Points)
+		return ellipseContourPoints(points)
 	case dicomroi.ROIPolygon:
-		if len(item.Points) < 3 {
+		if len(points) < 3 {
 			return nil, fmt.Errorf("%w: polygon contour needs at least 3 points", ErrGeometryMismatch)
 		}
-		if !nonZeroImagePolygonArea(item.Points) {
+		if dicomroi.ClosedPolygonArea(points) == 0 {
 			return nil, fmt.Errorf("%w: polygon contour has zero area", ErrGeometryMismatch)
 		}
-		return append([]image.Point(nil), item.Points...), nil
+		return points, nil
 	default:
-		return rectangleContourPoints(item.Points)
+		return rectangleContourPoints(points)
 	}
 }
 
-func rectangleContourPoints(points []image.Point) ([]image.Point, error) {
+func rectangleContourPoints(points []dicomroi.Point2D) ([]dicomroi.Point2D, error) {
 	if len(points) < 2 {
 		return nil, fmt.Errorf("%w: rectangle contour needs two corners", ErrGeometryMismatch)
 	}
 	a, b := points[0], points[1]
-	minX, maxX := minMaxInt(a.X, b.X)
-	minY, maxY := minMaxInt(a.Y, b.Y)
+	minX, maxX := math.Min(a.X, b.X), math.Max(a.X, b.X)
+	minY, maxY := math.Min(a.Y, b.Y), math.Max(a.Y, b.Y)
 	if minX == maxX || minY == maxY {
 		return nil, fmt.Errorf("%w: rectangle contour has zero area", ErrGeometryMismatch)
 	}
-	return []image.Point{
-		image.Pt(minX, minY),
-		image.Pt(maxX, minY),
-		image.Pt(maxX, maxY),
-		image.Pt(minX, maxY),
-	}, nil
+	return []dicomroi.Point2D{{X: minX, Y: minY}, {X: maxX, Y: minY}, {X: maxX, Y: maxY}, {X: minX, Y: maxY}}, nil
 }
 
-func ellipseContourPoints(points []image.Point) ([]image.Point, error) {
+// ellipseContourPoints samples the ellipse inscribed in the rectangle of the
+// two corners at 36 sub-pixel points.
+func ellipseContourPoints(points []dicomroi.Point2D) ([]dicomroi.Point2D, error) {
 	if len(points) < 2 {
 		return nil, fmt.Errorf("%w: ellipse contour needs two bounding corners", ErrGeometryMismatch)
 	}
 	a, b := points[0], points[1]
-	minX, maxX := minMaxInt(a.X, b.X)
-	minY, maxY := minMaxInt(a.Y, b.Y)
-	rx := float64(maxX-minX) / 2
-	ry := float64(maxY-minY) / 2
+	minX, maxX := math.Min(a.X, b.X), math.Max(a.X, b.X)
+	minY, maxY := math.Min(a.Y, b.Y), math.Max(a.Y, b.Y)
+	rx := (maxX - minX) / 2
+	ry := (maxY - minY) / 2
 	if rx <= 0 || ry <= 0 {
 		return nil, fmt.Errorf("%w: ellipse contour has zero area", ErrGeometryMismatch)
 	}
-	cx := float64(minX) + rx
-	cy := float64(minY) + ry
+	cx := minX + rx
+	cy := minY + ry
 	const steps = 36
-	out := make([]image.Point, 0, steps)
+	out := make([]dicomroi.Point2D, 0, steps)
 	for i := 0; i < steps; i++ {
 		t := 2 * math.Pi * float64(i) / steps
-		out = append(out, image.Pt(
-			int(math.Round(cx+rx*math.Cos(t))),
-			int(math.Round(cy+ry*math.Sin(t))),
-		))
+		out = append(out, dicomroi.Point2D{X: cx + rx*math.Cos(t), Y: cy + ry*math.Sin(t)})
 	}
 	return out, nil
 }
 
-func imagePointsToPatient(points []image.Point, geometry render.SliceGeometry) []Point3D {
+// imagePointsToPatient maps image points (pixel centres at integers) to
+// patient coordinates.
+// rasterMaskContours traces the boundaries of one slice mask as
+// CLOSEDPLANAR_XOR contours in patient coordinates.
+func rasterMaskContours(item RasterROIContour) ([]Contour, error) {
+	if err := validateSliceGeometry(item.Geometry); err != nil {
+		return nil, err
+	}
+	if item.Mask == nil || item.Mask.Columns != item.Geometry.Columns || item.Mask.Rows != item.Geometry.Rows {
+		return nil, fmt.Errorf("%w: raster mask does not match the %d×%d source image", ErrGeometryMismatch, item.Geometry.Columns, item.Geometry.Rows)
+	}
+	if err := validateReferencedImages(item.ReferencedImages, true); err != nil {
+		return nil, err
+	}
+	iso, err := item.Mask.SubpixelContours(dicomroi.SubpixelContourOptions{SmoothSigma: item.SmoothSigma})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrGeometryMismatch, err)
+	}
+	if len(iso) == 0 {
+		return nil, fmt.Errorf("%w: raster mask is empty", ErrGeometryMismatch)
+	}
+	contours := make([]Contour, 0, len(iso))
+	for _, contour := range iso {
+		contours = append(contours, Contour{
+			GeometricType:    ContourClosedPlanarXOR,
+			Points:           imagePointsToPatient(contour.Points, item.Geometry),
+			ReferencedImages: cloneReferencedImages(item.ReferencedImages),
+		})
+	}
+	return contours, nil
+}
+
+func imagePointsToPatient(points []dicomroi.Point2D, geometry render.SliceGeometry) []Point3D {
 	out := make([]Point3D, 0, len(points))
 	for _, point := range points {
 		patient := geometry.Origin.
-			Add(geometry.RowDir.Scale(float64(point.X) * geometry.ColSpacing)).
-			Add(geometry.ColDir.Scale(float64(point.Y) * geometry.RowSpacing))
+			Add(geometry.RowDir.Scale(point.X * geometry.ColSpacing)).
+			Add(geometry.ColDir.Scale(point.Y * geometry.RowSpacing))
 		out = append(out, Point3D{X: patient.X, Y: patient.Y, Z: patient.Z})
 	}
 	return out
 }
 
 func validateSliceGeometry(geometry render.SliceGeometry) error {
-	if !finitePositive(geometry.RowSpacing) || !finitePositive(geometry.ColSpacing) ||
-		!finiteVecComponents(geometry.Origin) || !finiteVector(geometry.RowDir) || !finiteVector(geometry.ColDir) || !finiteVector(geometry.Normal) ||
-		geometry.Rows <= 0 || geometry.Columns <= 0 {
+	if !validProjectionGeometry(geometry) || geometry.Rows <= 0 || geometry.Columns <= 0 {
 		return fmt.Errorf("%w: missing slice geometry", ErrGeometryMismatch)
 	}
 	return nil
 }
 
-func validateImagePointBounds(points []image.Point, geometry render.SliceGeometry) error {
+// validateImagePointBounds accepts points within the image, up to the outer
+// edge of the border pixels.
+func validateImagePointBounds(points []dicomroi.Point2D, geometry render.SliceGeometry) error {
 	for _, point := range points {
-		if point.X < 0 || point.Y < 0 || point.X >= geometry.Columns || point.Y >= geometry.Rows {
+		if point.X < -0.5 || point.Y < -0.5 || point.X > float64(geometry.Columns)-0.5 || point.Y > float64(geometry.Rows)-0.5 {
 			return fmt.Errorf("%w: contour point lies outside the source image", ErrGeometryMismatch)
 		}
 	}
 	return nil
-}
-
-func nonZeroImagePolygonArea(points []image.Point) bool {
-	var twiceArea float64
-	for i := range points {
-		next := points[(i+1)%len(points)]
-		twiceArea += float64(points[i].X)*float64(next.Y) - float64(next.X)*float64(points[i].Y)
-	}
-	return twiceArea != 0
 }
 
 func finitePositive(value float64) bool {
@@ -572,13 +651,6 @@ func validateContourPointCount(contour Contour) error {
 	return nil
 }
 
-func minMaxInt(a, b int) (int, int) {
-	if a < b {
-		return a, b
-	}
-	return b, a
-}
-
 func referencedFrameOfReferenceSequence(set *StructureSet) core.Element {
 	elements := []core.Element{derivedio.UI(derivedio.TagFrameOfReferenceUID, set.FrameOfReferenceUID)}
 	if studySeq := rtReferencedStudySequence(set); len(studySeq) > 0 {
@@ -666,6 +738,7 @@ func structureSetROISequence(set *StructureSet) core.Element {
 			derivedio.IS(tagROINumber, item.Number),
 			derivedio.UI(tagReferencedFrameOfReferenceUID, set.FrameOfReferenceUID),
 			derivedio.LO(tagROIName, item.Name),
+			derivedio.CS(tagROIGenerationAlgorithm, item.GenerationAlgorithm),
 		))
 	}
 	return derivedio.Seq(tagStructureSetROISequence, sets...)
@@ -718,6 +791,7 @@ func rtROIObservationsSequence(items []ROI) core.Element {
 			derivedio.IS(tagObservationNumber, i+1),
 			derivedio.IS(tagReferencedROINumber, item.Number),
 			derivedio.CS(tagRTROIInterpretedType, "ORGAN"),
+			derivedio.Str(tagROIInterpreter, core.VRPN, ""),
 		))
 	}
 	return derivedio.Seq(tagRTROIObservationsSequence, sets...)
@@ -737,7 +811,7 @@ func readROIs(obj *object.Object) map[int]*ROI {
 	out := map[int]*ROI{}
 	for _, item := range derivedio.Sequence(obj, tagStructureSetROISequence) {
 		number := derivedio.Int(item, tagROINumber)
-		out[number] = &ROI{Number: number, Name: derivedio.CleanString(item, tagROIName)}
+		out[number] = &ROI{Number: number, Name: derivedio.CleanString(item, tagROIName), GenerationAlgorithm: derivedio.CleanString(item, tagROIGenerationAlgorithm)}
 	}
 	return out
 }
@@ -820,9 +894,10 @@ func readReferencedImageHierarchy(obj *object.Object) map[string]ReferencedImage
 	return out
 }
 
-// contourToImage converts 3D contour points to 2D pixel coordinates for the nearest volume slice.
+// contourToImage converts 3D contour points to sub-pixel 2D image coordinates
+// (pixel centres at integers) for the nearest volume slice without rounding.
 // It returns the slice index, the 2D image points, and an error if the volume geometry is empty.
-func contourToImage(contour Contour, geometry render.VolumeGeometry) (int, []image.Point, error) {
+func contourToImage(contour Contour, geometry render.VolumeGeometry) (int, []dicomroi.Point2D, error) {
 	if len(geometry.Slices) == 0 {
 		return 0, nil, fmt.Errorf("%w: empty volume geometry", ErrGeometryMismatch)
 	}
@@ -839,19 +914,9 @@ func contourToImage(contour Contour, geometry render.VolumeGeometry) (int, []ima
 	if distance > tolerance {
 		return 0, nil, fmt.Errorf("%w: contour plane is %.6g mm from nearest slice %d (tolerance %.6g mm)", ErrGeometryMismatch, distance, sliceIndex, tolerance)
 	}
-	slice := geometry.Slices[sliceIndex]
-	rowDir := slice.RowDir.Normalize()
-	colDir := slice.ColDir.Normalize()
-	normal := slice.Normal.Normalize()
-	points := make([]image.Point, 0, len(contour.Points))
-	for _, point := range contour.Points {
-		delta := render.Vec3{X: point.X, Y: point.Y, Z: point.Z}.Sub(slice.Origin)
-		if planeDistance := math.Abs(delta.Dot(normal)); planeDistance > tolerance {
-			return 0, nil, fmt.Errorf("%w: contour point is %.6g mm from slice %d (tolerance %.6g mm)", ErrGeometryMismatch, planeDistance, sliceIndex, tolerance)
-		}
-		x := int(math.Round(delta.Dot(rowDir) / slice.ColSpacing))
-		y := int(math.Round(delta.Dot(colDir) / slice.RowSpacing))
-		points = append(points, image.Point{X: x, Y: y})
+	points, err := projectContour(contour.Points, geometry.Slices[sliceIndex], tolerance)
+	if err != nil {
+		return 0, nil, fmt.Errorf("slice %d: %w", sliceIndex, err)
 	}
 	return sliceIndex, points, nil
 }

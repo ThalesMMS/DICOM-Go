@@ -95,6 +95,7 @@ type Summary struct {
 	MediaType         string `json:"mediaType,omitempty"`
 	PatientName       string `json:"patientName,omitempty"`
 	PatientID         string `json:"patientID,omitempty"`
+	IssuerOfPatientID string `json:"issuerOfPatientID,omitempty"`
 	PatientBirthDate  string `json:"patientBirthDate,omitempty"`
 	InstitutionName   string `json:"institutionName,omitempty"`
 	StudyDate         string `json:"studyDate,omitempty"`
@@ -257,35 +258,40 @@ func summarizeFileContext(ctx context.Context, fileName string, file *object.Fil
 		return failureSummary(fileName, err)
 	}
 
+	metadata := file.Metadata()
 	summary := Summary{
 		FileName:                fileName,
-		TransferSyntaxUID:       file.TransferSyntax.UID,
-		TransferSyntax:          file.TransferSyntax.Name,
-		PayloadKind:             payloadKind(file.TransferSyntax),
-		MediaType:               mediaType(file.TransferSyntax),
-		PatientName:             getString(file, dicomtags.PatientName),
-		PatientID:               getString(file, dicomtags.PatientID),
-		PatientBirthDate:        getString(file, dicomtags.PatientBirthDate),
-		InstitutionName:         getString(file, dicomtags.InstitutionName),
-		StudyDate:               getString(file, dicomtags.StudyDate),
-		StudyTime:               getString(file, dicomtags.StudyTime),
-		SeriesDate:              getString(file, dicomtags.SeriesDate),
-		SeriesTime:              getString(file, dicomtags.SeriesTime),
-		StudyDescription:        getString(file, dicomtags.StudyDescription),
-		Modality:                getString(file, dicomtags.Modality),
-		AccessionNumber:         getString(file, dicomtags.AccessionNumber),
-		SeriesDescription:       getString(file, dicomtags.SeriesDescription),
-		ProtocolName:            getString(file, core.NewTag(0x0018, 0x1030)),
-		StudyInstanceUID:        getString(file, dicomtags.StudyInstanceUID),
-		SeriesInstanceUID:       getString(file, dicomtags.SeriesInstanceUID),
-		SeriesNumber:            getString(file, dicomtags.SeriesNumber),
-		SOPClassUID:             getString(file, dicomtags.SOPClassUID),
-		SOPInstanceUID:          getString(file, dicomtags.SOPInstanceUID),
-		InstanceNumber:          getString(file, dicomtags.InstanceNumber),
-		StudyID:                 getString(file, dicomtags.StudyID),
-		BodyPartExamined:        getString(file, dicomtags.BodyPartExamined),
-		ReferringPhysicianName:  getString(file, dicomtags.ReferringPhysicianName),
-		PerformingPhysicianName: getString(file, dicomtags.PerformingPhysicianName),
+		TransferSyntaxUID:       metadata.TransferSyntaxUID,
+		TransferSyntax:          metadata.TransferSyntaxName,
+		PayloadKind:             "image",
+		PatientName:             metadata.PatientName,
+		PatientID:               metadata.PatientID,
+		IssuerOfPatientID:       metadata.IssuerOfPatientID.String(),
+		PatientBirthDate:        metadata.PatientBirthDate,
+		InstitutionName:         metadata.InstitutionName,
+		StudyDate:               metadata.StudyDate,
+		StudyTime:               metadata.StudyTime,
+		SeriesDate:              metadata.SeriesDate,
+		SeriesTime:              metadata.SeriesTime,
+		StudyDescription:        metadata.StudyDescription,
+		Modality:                metadata.Modality,
+		AccessionNumber:         metadata.AccessionNumber,
+		SeriesDescription:       metadata.SeriesDescription,
+		ProtocolName:            metadata.ProtocolName,
+		StudyInstanceUID:        metadata.StudyInstanceUID,
+		SeriesInstanceUID:       metadata.SeriesInstanceUID,
+		SeriesNumber:            metadata.SeriesNumber,
+		SOPClassUID:             metadata.SOPClassUID,
+		SOPInstanceUID:          metadata.SOPInstanceUID,
+		InstanceNumber:          metadata.InstanceNumber,
+		StudyID:                 metadata.StudyID,
+		BodyPartExamined:        metadata.BodyPartExamined,
+		ReferringPhysicianName:  metadata.ReferringPhysicianName,
+		PerformingPhysicianName: metadata.PerformingPhysicianName,
+	}
+	if transfer.IsVideoTransferSyntax(metadata.TransferSyntaxUID) {
+		summary.PayloadKind = "media"
+		summary.MediaType = "video"
 	}
 
 	visited := 0
@@ -536,20 +542,6 @@ func isResourceLimit(err error) bool {
 		errors.Is(err, object.ErrWalkResourceLimit) || errors.Is(err, validation.ErrValidationLimit)
 }
 
-func payloadKind(syntax transfer.Syntax) string {
-	if transfer.IsVideoTransferSyntax(syntax.UID) {
-		return "media"
-	}
-	return "image"
-}
-
-func mediaType(syntax transfer.Syntax) string {
-	if transfer.IsVideoTransferSyntax(syntax.UID) {
-		return "video"
-	}
-	return ""
-}
-
 func normalizeOptions(opts Options) (Options, error) {
 	if err := ValidateOptions(opts); err != nil {
 		return Options{}, err
@@ -578,14 +570,6 @@ func normalizeOptions(opts Options) (Options, error) {
 
 func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, timeout)
-}
-
-func getString(file *object.File, tag core.Tag) string {
-	value, ok := file.GetString(tag)
-	if !ok {
-		return ""
-	}
-	return value
 }
 
 func joinPath(prefix, tag string) string {

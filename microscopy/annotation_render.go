@@ -1,6 +1,8 @@
 package microscopy
 
 import (
+	"github.com/ThalesMMS/dicom-go/internal/gridindex"
+
 	"fmt"
 	"image"
 	"image/color"
@@ -43,7 +45,7 @@ func RenderAnnotations(
 		for _, primitive := range primitives {
 			points := make([]image.Point, 0, len(primitive.Points))
 			for _, point := range primitive.Points {
-				matrixPoint := image.Pt(int(math.Round(point.X)), int(math.Round(point.Y)))
+				matrixPoint := image.Pt(gridindex.Nearest(point.X), gridindex.Nearest(point.Y))
 				points = append(points, annotationTargetPoint(matrixPoint, viewport, target.Bounds()))
 			}
 			drawAnnotationPrimitive(target, points, group.GraphicType, ink)
@@ -101,12 +103,12 @@ func annotationPlaneVisible(group AnnotationGroup, focalZ, tolerance float64) bo
 }
 
 func annotationTargetPoint(matrix image.Point, viewport, target image.Rectangle) image.Point {
-	x := target.Min.X + int(math.Round(
+	x := target.Min.X + gridindex.Nearest(
 		float64(matrix.X-viewport.Min.X)*float64(target.Dx())/float64(viewport.Dx()),
-	))
-	y := target.Min.Y + int(math.Round(
+	)
+	y := target.Min.Y + gridindex.Nearest(
 		float64(matrix.Y-viewport.Min.Y)*float64(target.Dy())/float64(viewport.Dy()),
-	))
+	)
 	return image.Pt(x, y)
 }
 
@@ -188,8 +190,8 @@ func drawAnnotationEllipse(target *image.RGBA, points []image.Point, ink color.N
 	pointAt := func(angle float64) image.Point {
 		cosine, sine := math.Cos(angle), math.Sin(angle)
 		return image.Pt(
-			int(math.Round(centerX+majorX*cosine+minorX*sine)),
-			int(math.Round(centerY+majorY*cosine+minorY*sine)),
+			gridindex.Nearest(centerX+majorX*cosine+minorX*sine),
+			gridindex.Nearest(centerY+majorY*cosine+minorY*sine),
 		)
 	}
 	previous := pointAt(0)
@@ -241,8 +243,8 @@ func clipAnnotationLine(bounds image.Rectangle, from, to image.Point) (image.Poi
 	}
 	clippedPoint := func(ratio float64) image.Point {
 		return image.Pt(
-			min(bounds.Max.X-1, max(bounds.Min.X, int(math.Round(x0+ratio*dx)))),
-			min(bounds.Max.Y-1, max(bounds.Min.Y, int(math.Round(y0+ratio*dy)))),
+			min(bounds.Max.X-1, max(bounds.Min.X, gridindex.Nearest(x0+ratio*dx))),
+			min(bounds.Max.Y-1, max(bounds.Min.Y, gridindex.Nearest(y0+ratio*dy))),
 		)
 	}
 	return clippedPoint(start), clippedPoint(end), true

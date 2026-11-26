@@ -24,8 +24,8 @@ func validateClassicDataset(dataset *object.Object, targetClassUID, modality str
 	if got, ok := dataset.GetString(tagModality); !ok || strings.TrimSpace(got) != modality || elementVR(dataset, tagModality) != core.VRCS {
 		return fmt.Errorf("%w: Modality must be %s", ErrNonconformant, modality)
 	}
-	if values, ok := dataset.GetStrings(tagImageType); !ok || len(values) < 4 || len(values) > 5 || strings.TrimSpace(values[0]) == "" || elementVR(dataset, tagImageType) != core.VRCS {
-		return fmt.Errorf("%w: ImageType must be mapped from FrameType", ErrNonconformant)
+	if values, ok := dataset.GetStrings(tagImageType); !ok || len(values) < 2 || strings.TrimSpace(values[0]) == "" || elementVR(dataset, tagImageType) != core.VRCS {
+		return fmt.Errorf("%w: ImageType must have at least two Values", ErrNonconformant)
 	}
 	for _, tag := range []core.Tag{tagRows, tagColumns, tagSamplesPerPixel, tagBitsAllocated, tagBitsStored, tagHighBit, tagPixelRepresentation} {
 		if _, ok := uint16Value(dataset, tag); !ok || elementVR(dataset, tag) != core.VRUS {
@@ -55,6 +55,11 @@ func validateClassicDataset(dataset *object.Object, targetClassUID, modality str
 		if err != nil || len(values) != geometry.vm || elementVR(dataset, geometry.tag) != core.VRDS {
 			return fmt.Errorf("%w: required frame geometry %s", ErrNonconformant, geometry.tag)
 		}
+		if geometry.tag == tagImageOrientationPatient {
+			if deviation, ok := object.ImageOrientationDeviation(values); !ok || deviation > object.ImageOrientationTolerance {
+				return fmt.Errorf("%w: Image Orientation (Patient) is not orthonormal", ErrNonconformant)
+			}
+		}
 	}
 	if dataset.Has(tagNumberOfFrames) || dataset.Has(tagSharedFunctionalGroupsSequence) || dataset.Has(tagPerFrameFunctionalGroupsSequence) {
 		return fmt.Errorf("%w: enhanced multi-frame attributes remain", ErrNonconformant)
@@ -76,6 +81,23 @@ func validateClassicDataset(dataset *object.Object, targetClassUID, modality str
 		}{{tagKVP, core.VRDS}, {tagAcquisitionNumber, core.VRIS}} {
 			if !dataset.Has(attribute.tag) || elementVR(dataset, attribute.tag) != attribute.vr {
 				return fmt.Errorf("%w: required CT Type 2 attribute %s", ErrNonconformant, attribute.tag)
+			}
+		}
+	case PETImageStorageUID:
+		for _, tag := range []core.Tag{tagRescaleIntercept, tagRescaleSlope, tagFrameReferenceTime} {
+			values, err := dataset.GetFloats(tag)
+			if err != nil || len(values) != 1 {
+				return fmt.Errorf("%w: required PET attribute %s", ErrNonconformant, tag)
+			}
+		}
+		for _, tag := range []core.Tag{tagUnits, tagCountsSource, tagSeriesType, tagDecayCorrection, tagSeriesDate, tagSeriesTime} {
+			if values, ok := dataset.GetStrings(tag); !ok || len(values) == 0 || cleanText(values[0]) == "" {
+				return fmt.Errorf("%w: required PET attribute %s", ErrNonconformant, tag)
+			}
+		}
+		for _, tag := range []core.Tag{tagNumberOfSlices, tagImageIndex} {
+			if _, ok := uint16Value(dataset, tag); !ok {
+				return fmt.Errorf("%w: required PET attribute %s", ErrNonconformant, tag)
 			}
 		}
 	case MRImageStorageUID:
@@ -105,35 +127,6 @@ func validateClassicDataset(dataset *object.Object, targetClassUID, modality str
 func elementVR(dataset *object.Object, tag core.Tag) core.VR {
 	element, _ := dataset.Get(tag)
 	return element.VR()
-}
-
-func emitMissingType2Attributes(dataset *object.Object, targetClassUID string) {
-	var attributes []struct {
-		tag core.Tag
-		vr  core.VR
-	}
-	switch targetClassUID {
-	case CTImageStorageUID:
-		attributes = []struct {
-			tag core.Tag
-			vr  core.VR
-		}{{tagKVP, core.VRDS}, {tagAcquisitionNumber, core.VRIS}}
-	case MRImageStorageUID:
-		attributes = []struct {
-			tag core.Tag
-			vr  core.VR
-		}{
-			{tagScanOptions, core.VRCS},
-			{tagMRAcquisitionType, core.VRCS},
-			{tagEchoTime, core.VRDS},
-			{tagEchoTrainLength, core.VRIS},
-		}
-	}
-	for _, attribute := range attributes {
-		if !dataset.Has(attribute.tag) {
-			dataset.Put(str(attribute.tag, attribute.vr, ""))
-		}
-	}
 }
 
 func uint16Value(dataset *object.Object, tag core.Tag) (uint16, bool) {

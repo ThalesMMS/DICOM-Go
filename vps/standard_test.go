@@ -2,6 +2,7 @@ package vps
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"math"
 	"reflect"
@@ -9,8 +10,11 @@ import (
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/dictionary/std"
+	"github.com/ThalesMMS/dicom-go/internal/commontest"
+	"github.com/ThalesMMS/dicom-go/internal/derivedio"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/parser"
+	"github.com/ThalesMMS/dicom-go/pixeldata/display"
 	"github.com/ThalesMMS/dicom-go/render"
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
@@ -19,12 +23,12 @@ func TestStandardGrayscalePlanarMPRRoundTrip(t *testing.T) {
 	state := &State{
 		SOPClassUID:         GrayscalePlanarMPRVolumetricPresentationStateStorage,
 		SOPInstanceUID:      "1.2.826.0.1.3680043.9.7433.741.1",
-		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.741.study",
-		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.741.series",
-		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.741.frame",
+		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.741.9102",
+		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.741.9103",
+		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.741.9107",
 		Inputs: []Input{{
 			Number:                   1,
-			InputSetUID:              "1.2.826.0.1.3680043.9.7433.741.input",
+			InputSetUID:              "1.2.826.0.1.3680043.9.7433.741.9128",
 			ReferencedInstances:      []ReferencedInstance{{SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.4.1"}},
 			CropSpecificationNumbers: []int{1},
 			VOI:                      &VOI{WindowCenter: 40, WindowWidth: 400},
@@ -69,6 +73,13 @@ func TestStandardGrayscalePlanarMPRRoundTrip(t *testing.T) {
 
 func TestStandardVolumeRenderingRoundTrip(t *testing.T) {
 	state := standardVRFixtureState()
+	withCommon := cloneStandardVRFixture(state)
+	withCommon.Common = object.DerivedCommon{Source: commontest.Source()}
+	if common, err := Write(withCommon); err != nil {
+		t.Fatalf("Write with common modules: %v", err)
+	} else {
+		commontest.Check(t, common.Dataset, true)
+	}
 	state.SOPInstanceUID = "1.2.826.0.1.3680043.9.7433.741.2"
 	state.Shading = &Shading{Style: ShadingDoubleSided, Ambient: 0.2, LightDirection: render.Vec3{Y: 1}, Diffuse: 0.7, Specular: 0.1, Shininess: 0.4}
 
@@ -105,7 +116,7 @@ func TestStandardVolumeRenderingTableClassificationRoundTrip(t *testing.T) {
 		RedPalette:            []uint16{0, 1000, 40000, 65535},
 		GreenPalette:          []uint16{0, 2000, 30000, 60000},
 		BluePalette:           []uint16{0, 3000, 20000, 50000},
-		AlphaPalette:          []uint16{0, 5000, 50000, 65535},
+		AlphaPalette:          []uint16{0, 5140, 50115, 65535},
 		Description:           "Clinical table",
 	}
 	file, err := Write(state)
@@ -132,7 +143,7 @@ func TestStandardVolumeRenderingTableClassificationRoundTrip(t *testing.T) {
 	}
 	lut := applied.Preset.TF.BakeLUT(0, 1, 4)
 	third := lut.At(2)
-	if math.Abs(third.A-float64(50000)/65535) > 1e-12 {
+	if math.Abs(third.A-float64(50115)/65535) > 1e-12 {
 		t.Fatalf("TABLE alpha[2] = %.16f", third.A)
 	}
 }
@@ -307,4 +318,214 @@ func cloneStandardVRFixture(source *State) *State {
 	}
 	out.Display = &display
 	return &out
+}
+
+// C.11.24 encodes opposite XYZ corners, even when one patient coordinate is
+// equal or reversed along an obliquely oriented encoded volume.
+func TestStandardVPSBoundingBoxUsesOppositeXYZCorners(t *testing.T) {
+	for _, box := range [][6]float64{
+		{-100, 100, -80, 80, -60, 60},
+		{100, 100, -80, 80, -60, 60},
+		{100, -100, 80, -80, 60, -60},
+	} {
+		state := standardVRFixtureState()
+		state.CroppingSpecifications[0].BoundingBox = box
+		file, err := Write(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items := derivedio.Sequence(file.Dataset, tagVolumeCroppingSequence)
+		if len(items) != 1 {
+			t.Fatalf("crop sequence length = %d", len(items))
+		}
+		encoded := derivedio.Floats(items[0], tagBoundingBoxCrop)
+		want := []float64{box[0], box[2], box[4], box[1], box[3], box[5]}
+		if !reflect.DeepEqual(encoded, want) {
+			t.Fatalf("opposite XYZ corners = %v, want %v", encoded, want)
+		}
+		got := roundTripStandardState(t, state)
+		if got.CroppingSpecifications[0].BoundingBox != box {
+			t.Fatalf("round-trip crop = %v, want %v", got.CroppingSpecifications[0].BoundingBox, box)
+		}
+	}
+}
+
+func TestStandardVPSBoundingBoxRejectsCoincidentCorners(t *testing.T) {
+	state := standardVRFixtureState()
+	state.CroppingSpecifications[0].BoundingBox = [6]float64{2, 2, 3, 3, 4, 4}
+	if file, err := Write(state); !errors.Is(err, ErrInvalidObject) || file != nil {
+		t.Fatalf("coincident corners produced file=%v error=%v", file, err)
+	}
+}
+
+func TestStandardVPSTableAlphaDescriptorIsRequiredAndConsistent(t *testing.T) {
+	state := standardVRFixtureState()
+	state.Display.Classification[0] = ClassificationComponent{
+		InputNumbers: []int{1}, RGBTransferFunction: RGBTransferTable, AlphaTransferFunction: AlphaTransferTable,
+		PaletteDescriptor: [3]uint16{2, 0, 16},
+		RedPalette:        []uint16{0, 65535}, GreenPalette: []uint16{0, 65535},
+		BluePalette: []uint16{0, 65535}, AlphaPalette: []uint16{0, 65535},
+	}
+	for _, values := range [][]uint16{nil, {2, 1, 8}, {2, 0, 16}, {3, 0, 8}} {
+		file, err := Write(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		streams := derivedio.Sequence(file.Dataset, tagVolumeStreamSequence)
+		components := derivedio.Sequence(streams[0], tagClassificationSequence)
+		if got := derivedio.Ints(components[0], tagAlphaPaletteDescriptor); !reflect.DeepEqual(got, []int64{2, 0, 8}) {
+			t.Fatalf("authored alpha descriptor = %v", got)
+		}
+		components[0].Put(derivedio.US(tagAlphaPaletteDescriptor, values...))
+		streams[0].SetSequence(tagClassificationSequence, components...)
+		file.Dataset.SetSequence(tagVolumeStreamSequence, streams...)
+		if parsed, err := Read(file.Dataset); parsed != nil || !errors.Is(err, ErrInvalidObject) {
+			t.Fatalf("alpha descriptor %v yielded state=%#v err=%v", values, parsed, err)
+		}
+	}
+}
+
+func TestStandardVPSExplicitLegacyWireMigration(t *testing.T) {
+	state := standardVRFixtureState()
+	box := [6]float64{-100, 100, -80, 80, -60, 60}
+	state.CroppingSpecifications[0].BoundingBox = box
+	state.Display.Classification[0] = ClassificationComponent{
+		InputNumbers: []int{1}, RGBTransferFunction: RGBTransferTable, AlphaTransferFunction: AlphaTransferTable,
+		PaletteDescriptor: [3]uint16{2, 0, 16},
+		RedPalette:        []uint16{0, 65535}, GreenPalette: []uint16{0, 65535},
+		BluePalette: []uint16{0, 65535}, AlphaPalette: []uint16{0, 65535},
+	}
+	file, err := Write(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crops := derivedio.Sequence(file.Dataset, tagVolumeCroppingSequence)
+	crops[0].SetFD(tagBoundingBoxCrop, box[:]...)
+	file.Dataset.SetSequence(tagVolumeCroppingSequence, crops...)
+	streams := derivedio.Sequence(file.Dataset, tagVolumeStreamSequence)
+	components := derivedio.Sequence(streams[0], tagClassificationSequence)
+	components[0].Remove(tagAlphaPaletteDescriptor)
+	components[0].Put(wordPalette(tagAlphaPaletteData, []uint16{0, 65535}))
+	streams[0].SetSequence(tagClassificationSequence, components...)
+	file.Dataset.SetSequence(tagVolumeStreamSequence, streams...)
+	if got, err := Read(file.Dataset); got != nil || !errors.Is(err, ErrInvalidObject) {
+		t.Fatalf("default read accepted missing alpha descriptor: state=%#v error=%v", got, err)
+	}
+	options := ReadOptions{LegacyInterleavedBoundingBox: true, LegacyMissingAlphaDescriptor: true}
+	migrated, err := ReadWithOptions(file.Dataset, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.CroppingSpecifications[0].BoundingBox != box {
+		t.Fatal("explicit legacy recovery lost the authored corners")
+	}
+	got := roundTripStandardState(t, migrated)
+	if !reflect.DeepEqual(got.CroppingSpecifications, state.CroppingSpecifications) || !reflect.DeepEqual(got.Display, state.Display) {
+		t.Fatal("canonical rewrite did not preserve migrated crop and palette")
+	}
+	canonical, err := Write(migrated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalCrop := derivedio.Floats(derivedio.Sequence(canonical.Dataset, tagVolumeCroppingSequence)[0], tagBoundingBoxCrop)
+	if !reflect.DeepEqual(canonicalCrop, []float64{-100, -80, -60, 100, 80, 60}) {
+		t.Fatalf("rewrite emitted nonstandard corners: %v", canonicalCrop)
+	}
+	components[0].SetUS(tagAlphaPaletteDescriptor, 2, 1, 16)
+	streams[0].SetSequence(tagClassificationSequence, components...)
+	file.Dataset.SetSequence(tagVolumeStreamSequence, streams...)
+	if got, err := ReadWithOptions(file.Dataset, options); got != nil || !errors.Is(err, ErrInvalidObject) {
+		t.Fatal("legacy recovery accepted a present incompatible alpha descriptor")
+	}
+}
+
+func TestStandardVPSPreservesExplicitVOIFunction(t *testing.T) {
+	for _, function := range []display.VOIFunction{display.VOILinear, display.VOILinearExact, display.VOISigmoid} {
+		state := standardVRFixtureState()
+		state.Inputs[0].VOI.Function = function
+		got := roundTripStandardState(t, state)
+		if got.Inputs[0].VOI.Function != function {
+			t.Fatalf("function %v became %v", function, got.Inputs[0].VOI.Function)
+		}
+	}
+	state := standardVRFixtureState()
+	state.Inputs[0].VOI.Function = display.VOIFunction(19)
+	if file, err := Write(state); file != nil || !errors.Is(err, ErrUnsupportedPayload) {
+		t.Fatalf("unknown VOI function accepted: %v %v", file, err)
+	}
+}
+
+func TestStandardVPSTableAlphaUsesEightBitWireAndExplicitLegacyRecovery(t *testing.T) {
+	state := standardVRFixtureState()
+	state.Display.Classification[0] = ClassificationComponent{
+		InputNumbers: []int{1}, RGBTransferFunction: RGBTransferTable, AlphaTransferFunction: AlphaTransferTable,
+		PaletteDescriptor: [3]uint16{3, 0, 16}, RedPalette: []uint16{0, 32768, 65535}, GreenPalette: []uint16{0, 32768, 65535}, BluePalette: []uint16{0, 32768, 65535},
+		AlphaPalette: []uint16{0, 32768, 65535},
+	}
+	file, err := Write(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams := derivedio.Sequence(file.Dataset, tagVolumeStreamSequence)
+	components := derivedio.Sequence(streams[0], tagClassificationSequence)
+	data, ok := components[0].Get(tagAlphaPaletteData)
+	if !ok {
+		t.Fatal("alpha data missing")
+	}
+	if words, ok := data.Value.(core.Uint16Value); !ok || !reflect.DeepEqual(words, core.Uint16Value{0x8000, 0x00ff}) {
+		t.Fatalf("alpha wire words=%v", data.Value)
+	}
+	got := roundTripStandardState(t, state)
+	if want := []uint16{0, 32896, 65535}; !reflect.DeepEqual(got.Display.Classification[0].AlphaPalette, want) {
+		t.Fatalf("canonical alpha values=%v, want %v", got.Display.Classification[0].AlphaPalette, want)
+	}
+	components[0].SetUS(tagAlphaPaletteDescriptor, 3, 0, 16)
+	components[0].Put(wordPalette(tagAlphaPaletteData, []uint16{0, 32768, 65535}))
+	streams[0].SetSequence(tagClassificationSequence, components...)
+	file.Dataset.SetSequence(tagVolumeStreamSequence, streams...)
+	if _, err := Read(file.Dataset); !errors.Is(err, ErrInvalidObject) {
+		t.Fatal("default reader accepted nonstandard sixteen-bit alpha")
+	}
+	legacy, err := ReadWithOptions(file.Dataset, ReadOptions{LegacySixteenBitAlpha: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(legacy.Display.Classification[0].AlphaPalette, state.Display.Classification[0].AlphaPalette) {
+		t.Fatal("explicit legacy alpha recovery changed source values")
+	}
+}
+
+func TestStandardVPSAlphaPaletteByteOrder(t *testing.T) {
+	element := byteAlphaPalette([]uint16{0, 32896, 65535})
+	for _, ts := range []transfer.Syntax{transfer.ExplicitVRLittleEndian, transfer.ExplicitVRBigEndian} {
+		var encoded bytes.Buffer
+		if err := parser.NewWriter(&encoded, ts).WriteElement(element); err != nil {
+			t.Fatal(err)
+		}
+		raw := encoded.Bytes()
+		want := []byte{0, 128, 255, 0}
+		if ts == transfer.ExplicitVRBigEndian {
+			want = []byte{128, 0, 0, 255}
+		}
+		if !bytes.Equal(raw[len(raw)-4:], want) {
+			t.Fatalf("alpha bytes %v, want %v", raw[len(raw)-4:], want)
+		}
+	}
+}
+
+func TestStandardVPSAlphaPaletteReadBigEndian(t *testing.T) {
+	words := byteAlphaPalette([]uint16{0, 32896, 65535})
+	obj := object.FromElements([]core.Element{
+		{Header: core.ElementHeader{Tag: tagAlphaPaletteDescriptor, VR: core.VRUS}, Value: core.RawValue{0, 3, 0, 0, 0, 8}},
+		{Header: words.Header, Value: core.RawValue{128, 0, 0, 255}},
+	}, std.Dictionary)
+	obj.SetValueByteOrder(binary.BigEndian)
+	got, err := readClassificationAlpha(obj, [3]uint16{3, 0, 16}, ReadOptions{})
+	if err != nil || !reflect.DeepEqual(got, []uint16{0, 32896, 65535}) {
+		t.Fatalf("big endian alpha %v %v", got, err)
+	}
+	obj.Put(core.Element{Header: words.Header, Value: core.RawValue{128, 0, 9, 255}})
+	if _, err := readClassificationAlpha(obj, [3]uint16{3, 0, 16}, ReadOptions{}); !errors.Is(err, ErrInvalidObject) {
+		t.Fatal("nonzero odd palette padding accepted")
+	}
 }

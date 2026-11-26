@@ -187,14 +187,6 @@ func TestReadAndDecodeFailuresAreExplicit(t *testing.T) {
 		t.Fatalf("missing mapping error = %v", err)
 	}
 
-	nonFinite, err := Read(testMapFile(t, PayloadFloat32, []float64{1, math.NaN(), 3, 4}, 1, true, core.Tag{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := nonFinite.FrameValues(0); !errors.Is(err, ErrNonFinite) {
-		t.Fatalf("NaN decode error = %v, want ErrNonFinite", err)
-	}
-
 	unsupported := testMapFile(t, PayloadFloat32, []float64{1, 2, 3, 4, 5, 6, 7, 8}, 2, true, core.NewTag(0x0020, 0x9128))
 	if _, err := Read(unsupported); !errors.Is(err, ErrUnsupportedDimensions) {
 		t.Fatalf("unsupported dimension error = %v", err)
@@ -390,4 +382,49 @@ func equalFloats(a, b []float64) bool {
 		}
 	}
 	return true
+}
+
+func TestCalibratedFramePreservesMeasurementsWhenOneVoxelOverflows(t *testing.T) {
+	const overflow = 1 << 20
+	scale := math.Ldexp(1, 1010)
+	file := testMapFile(t, PayloadFloat64, []float64{1, overflow, 2, 3}, 1, false, core.Tag{})
+	file.Dataset.Put(derivedio.Seq(tagRealWorldValueMappingSeq,
+		testBoundedMapping("scaled", "ms", "milliseconds", "", 0, overflow, scale, 0),
+	))
+	wire := rereadPart10(t, file)
+	defer wire.Close()
+	m, err := Read(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	domain, err := m.WindowDomain(0)
+	if err != nil || !domain.Known || domain.Min != scale || domain.Max != 3*scale {
+		t.Fatalf("WindowDomain(0) = %+v, %v; want [%g, %g]", domain, err, scale, 3*scale)
+	}
+
+	values := make([]float64, 4)
+	padding := make([]bool, 4)
+	counts, err := m.DecodeFrameInto(0, values, padding)
+	if err != nil || counts != (VoxelCounts{Valid: 3, MappingOverflow: 1}) || counts.Unmeasured() != 1 ||
+		values[0] != scale || !math.IsNaN(values[1]) || values[2] != 2*scale || values[3] != 3*scale || padding[1] {
+		t.Fatalf("DecodeFrameInto = %v, padding %v, counts %+v, error %v", values, padding, counts, err)
+	}
+
+	point := render.Vec3{X: 1}
+	if got, ok, err := m.SamplePatient(point); err != nil || ok {
+		t.Errorf("SamplePatient on overflow = %g, %t, %v; want unmeasured", got, ok, err)
+	}
+	resampled, valid, err := m.Resample(m.Frames[0].Geometry)
+	if err != nil || len(resampled) != 4 || len(valid) != 4 {
+		t.Fatalf("Resample = %v, %v, %v; want four values and validity bits", resampled, valid, err)
+	}
+	for _, i := range []int{0, 2, 3} {
+		if !valid[i] || resampled[i] != values[i] {
+			t.Errorf("Resample voxel %d = %g, %t; want %g, true", i, resampled[i], valid[i], values[i])
+		}
+	}
+	if valid[1] {
+		t.Error("Resample marked overflow as valid")
+	}
 }

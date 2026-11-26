@@ -426,9 +426,11 @@ func TestUnknownValueTypePreservesKnownMacroPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDocument: %v", err)
 	}
+	// Items are written in ascending tag order (PS3.5 7.1), so Continuity
+	// of Content (0040,A050) precedes Text Value (0040,A160).
 	if len(document.Content) != 1 || len(document.Content[0].ValueElements) != 2 ||
-		document.Content[0].ValueElements[0].Tag() != tagTextValue ||
-		document.Content[0].ValueElements[1].Tag() != tagContinuityOfContent {
+		document.Content[0].ValueElements[0].Tag() != tagContinuityOfContent ||
+		document.Content[0].ValueElements[1].Tag() != tagTextValue {
 		t.Fatalf("unknown content = %#v, want preserved Text Value and Continuity of Content", document.Content)
 	}
 	rewritten, err := document.Dataset()

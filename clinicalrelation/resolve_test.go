@@ -256,12 +256,12 @@ func clinicalFixtures(t *testing.T) []clinicalFixture {
 		FrameOfReferenceUID: frameUID,
 		Groups: []sr.MeasurementGroup{{
 			Tracking:          sr.TrackingIdentifier{UID: "1.2.826.0.1.3680043.10.543.764.73", Identifier: "Target"},
-			ReferencedSegment: sr.SegmentReference{SOPClassUID: seg.SegmentationStorage, SOPInstanceUID: segmentSOP, SegmentNumber: 1},
+			ReferencedSegment: sr.SegmentReference{StudyInstanceUID: studyUID, SeriesInstanceUID: "1.2.826.0.1.3680043.10.543.764.20", SOPClassUID: seg.SegmentationStorage, SOPInstanceUID: segmentSOP, SegmentNumber: 1},
 			Measurements: []sr.ReportMeasurement{{
 				ConceptName: sr.CodedEntry{CodeValue: "121206", CodingSchemeDesignator: "DCM", CodeMeaning: "Distance"},
 				Value:       1,
 				Units:       sr.CodedEntry{CodeValue: "mm", CodingSchemeDesignator: "UCUM", CodeMeaning: "millimeter"},
-				Image:       sr.ImageReference{SOPClassUID: ctClass, SOPInstanceUID: sourceSOP},
+				Image:       sr.ImageReference{StudyInstanceUID: studyUID, SeriesInstanceUID: sourceSeries, SOPClassUID: ctClass, SOPInstanceUID: sourceSOP},
 			}},
 		}},
 	})
@@ -289,7 +289,7 @@ func clinicalFixtures(t *testing.T) []clinicalFixture {
 		{name: "kos", file: kosFile, kind: clinicalrelation.ObjectKindKOS, editable: true, studyUID: studyUID, referencedSOPs: []string{sourceSOP}, referencedSeries: []string{sourceSeries}},
 		{name: "rtstruct", file: rtstructFile, kind: clinicalrelation.ObjectKindRTSTRUCT, editable: true, studyUID: studyUID, frameUID: frameUID, referencedSOPs: []string{sourceSOP}, referencedSeries: []string{sourceSeries}},
 		{name: "rtdose", file: rtdoseFile, kind: clinicalrelation.ObjectKindRTDose, studyUID: studyUID, frameUID: frameUID, referencedSOPs: []string{rtdoseRef}},
-		{name: "sr", file: srFile, kind: clinicalrelation.ObjectKindSRMeasurement, editable: true, studyUID: studyUID, frameUID: frameUID, referencedSOPs: []string{segmentSOP, sourceSOP}},
+		{name: "sr", file: srFile, kind: clinicalrelation.ObjectKindSRMeasurement, editable: true, studyUID: studyUID, frameUID: frameUID, referencedSOPs: []string{segmentSOP, sourceSOP}, referencedSeries: []string{sourceSeries}},
 		{name: "vps", file: vpsFile, kind: clinicalrelation.ObjectKindVPS, editable: true, studyUID: studyUID, referencedSOPs: []string{sourceSOP}},
 	}
 }

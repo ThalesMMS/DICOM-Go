@@ -58,7 +58,7 @@ func TestSEGWriteRejectsMissingSourceReferences(t *testing.T) {
 		frame      Frame
 		wantDetail string
 	}{
-		{name: "unlisted-sop", refs: []ReferencedImage{complete}, frame: Frame{ReferencedSOPInstanceUID: "1.2.3.unlisted", ReferencedFrameNumber: 1}, wantDetail: "unlisted source SOP Instance UID"},
+		{name: "unlisted-sop", refs: []ReferencedImage{complete}, frame: Frame{ReferencedSOPInstanceUID: "1.2.3.9115", ReferencedFrameNumber: 1}, wantDetail: "unlisted source SOP Instance UID"},
 		{name: "unlisted-frame", refs: []ReferencedImage{complete}, frame: Frame{ReferencedSOPInstanceUID: sopUID, ReferencedFrameNumber: 2}, wantDetail: "unlisted source SOP Instance UID"},
 		{name: "frame-number-without-sop", frame: Frame{ReferencedFrameNumber: 5}, wantDetail: "without a source SOP Instance UID"},
 		{name: "missing-series", refs: []ReferencedImage{{SOPClassUID: classUID, SOPInstanceUID: sopUID}}, wantDetail: "missing Series Instance UID"},
@@ -176,7 +176,7 @@ func TestSourceReferenceIndexRejectsDuplicatesAndConflictsDeterministically(t *t
 			refs: func() []ReferencedImage {
 				first, second := ref(), ref()
 				first.Frames, second.Frames = []int{1}, []int{2}
-				second.SeriesInstanceUID = "1.2.3.other-series"
+				second.SeriesInstanceUID = "1.2.3.9116"
 				return []ReferencedImage{first, second}
 			}(),
 			wantDetail: "conflict",

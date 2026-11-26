@@ -2,6 +2,7 @@ package sr
 
 import (
 	"errors"
+	"github.com/ThalesMMS/dicom-go/internal/commontest"
 	"testing"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -30,12 +31,18 @@ func sampleKOS() *Document {
 				RelationshipType: RelationshipContains,
 				ConceptName:      CodedEntry{CodeValue: "121079", CodingSchemeDesignator: "DCM", CodeMeaning: "Baseline"},
 				Image: ImageReference{
-					StudyInstanceUID:  "1.2.3.study",
-					SeriesInstanceUID: "1.2.3.series",
-					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
+					StudyInstanceUID:  "1.2.3.9102",
+					SeriesInstanceUID: "1.2.3.9103",
+					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2.1", // Enhanced CT (multi-frame)
 					SOPInstanceUID:    "1.9.9.9",
 					Frames:            []int{1, 3},
 				},
+				Children: []ContentItem{{
+					ValueType:        ValueNum,
+					RelationshipType: RelationshipHasAcqContext,
+					ConceptName:      CodedEntry{CodeValue: "G-D7FE", CodingSchemeDesignator: "SRT", CodeMeaning: "Diameter"},
+					Measurement:      &Measurement{Value: 12.5, Units: CodedEntry{CodeValue: "mm", CodingSchemeDesignator: "UCUM", CodeMeaning: "millimeter"}},
+				}},
 			},
 			{
 				ValueType:        ValueText,
@@ -43,20 +50,22 @@ func sampleKOS() *Document {
 				ConceptName:      CodedEntry{CodeValue: "121071", CodingSchemeDesignator: "DCM", CodeMeaning: "Finding"},
 				Text:             "Nodule in right upper lobe",
 			},
-			{
-				ValueType:        ValueNum,
-				RelationshipType: RelationshipContains,
-				ConceptName:      CodedEntry{CodeValue: "G-D7FE", CodingSchemeDesignator: "SRT", CodeMeaning: "Diameter"},
-				Measurement:      &Measurement{Value: 12.5, Units: CodedEntry{CodeValue: "mm", CodingSchemeDesignator: "UCUM", CodeMeaning: "millimeter"}},
-			},
 		},
 	}
 }
 
 func TestKOSRoundTrip(t *testing.T) {
 	doc := sampleKOS()
-	doc.StudyInstanceUID = "1.2.3.study"
-	doc.SeriesInstanceUID = "1.2.3.kos.series"
+	withCommon := sampleKOS()
+	withCommon.Common = object.DerivedCommon{Source: commontest.Source()}
+	withCommon.SeriesInstanceUID = "1.2.3.9124.9104"
+	if common, err := withCommon.Dataset(); err != nil {
+		t.Fatalf("Dataset with common modules: %v", err)
+	} else {
+		commontest.Check(t, common, false)
+	}
+	doc.StudyInstanceUID = "1.2.3.9102"
+	doc.SeriesInstanceUID = "1.2.3.9124.9103"
 	round, err := ReadDocument(mustDocumentDataset(t, doc))
 	if err != nil {
 		t.Fatalf("ReadDocument() error = %v", err)
@@ -82,8 +91,8 @@ func TestKOSRoundTrip(t *testing.T) {
 	if got, _ := mustDocumentDataset(t, doc).GetString(core.NewTag(0x0020, 0x000E)); got != doc.SeriesInstanceUID {
 		t.Fatalf("dataset SeriesInstanceUID = %q, want %q", got, doc.SeriesInstanceUID)
 	}
-	if len(round.Content) != 3 {
-		t.Fatalf("content count = %d, want 3", len(round.Content))
+	if len(round.Content) != 2 {
+		t.Fatalf("content count = %d, want 2", len(round.Content))
 	}
 
 	img := round.Content[0]
@@ -102,8 +111,11 @@ func TestKOSRoundTrip(t *testing.T) {
 		t.Fatalf("text item = %#v", text)
 	}
 
-	num := round.Content[2]
-	if num.ValueType != ValueNum || num.Measurement == nil {
+	if len(round.Content[0].Children) != 1 {
+		t.Fatalf("image children = %#v", round.Content[0].Children)
+	}
+	num := round.Content[0].Children[0]
+	if num.ValueType != ValueNum || num.RelationshipType != RelationshipHasAcqContext || num.Measurement == nil {
 		t.Fatalf("num item = %#v", num)
 	}
 	if num.Measurement.Value != 12.5 || num.Measurement.Units.CodeValue != "mm" {
@@ -160,32 +172,32 @@ func TestKOSRejectsIncompleteEvidenceReferences(t *testing.T) {
 
 func TestKeyObjectSelectionHelpersBuildAndExtractFindings(t *testing.T) {
 	refs := []ImageReference{
-		{StudyInstanceUID: "1.2.study", SeriesInstanceUID: "1.2.series.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.inst.1", Frames: []int{2}},
-		{StudyInstanceUID: "1.2.study", SeriesInstanceUID: "1.2.series.2", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.inst.2"},
+		{StudyInstanceUID: "1.2.9102", SeriesInstanceUID: "1.2.9103.1", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2.1", SOPInstanceUID: "1.2.9125.1", Frames: []int{2}},
+		{StudyInstanceUID: "1.2.9102", SeriesInstanceUID: "1.2.9103.2", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.9125.2"},
 	}
-	doc := NewKeyObjectSelection("1.2.kos.doc", refs, map[string]string{
-		"1.2.inst.1": "8 mm nodule, RUL",
+	doc := NewKeyObjectSelection("1.2.9124.9126", refs, map[string]string{
+		"1.2.9125.1": "8 mm nodule, RUL",
 	})
 	if doc.SOPClassUID != KeyObjectSelectionDocumentStorage || doc.Modality != "KO" || doc.Title != KOSTitleOfInterest {
 		t.Fatalf("KOS header = %#v", doc)
 	}
 
 	images := KeyObjectSelectionImages(doc)
-	if len(images) != 2 || images[0].SOPInstanceUID != "1.2.inst.1" {
+	if len(images) != 2 || images[0].SOPInstanceUID != "1.2.9125.1" {
 		t.Fatalf("KeyObjectSelectionImages() = %#v", images)
 	}
 	if len(images[0].Frames) != 1 || images[0].Frames[0] != 2 {
 		t.Fatalf("frames = %#v, want [2]", images[0].Frames)
 	}
-	if images[0].StudyInstanceUID != "1.2.study" || images[0].SeriesInstanceUID != "1.2.series.1" {
+	if images[0].StudyInstanceUID != "1.2.9102" || images[0].SeriesInstanceUID != "1.2.9103.1" {
 		t.Fatalf("hierarchy = %q/%q, want source study/series", images[0].StudyInstanceUID, images[0].SeriesInstanceUID)
 	}
 
 	findings := KeyObjectSelectionFindings(doc)
-	if findings["1.2.inst.1"] != "8 mm nodule, RUL" {
+	if findings["1.2.9125.1"] != "8 mm nodule, RUL" {
 		t.Fatalf("KeyObjectSelectionFindings() = %#v", findings)
 	}
-	if _, ok := findings["1.2.inst.2"]; ok {
+	if _, ok := findings["1.2.9125.2"]; ok {
 		t.Fatalf("unexpected empty finding for second image: %#v", findings)
 	}
 }
@@ -193,7 +205,7 @@ func TestKeyObjectSelectionHelpersBuildAndExtractFindings(t *testing.T) {
 func TestDocumentEmitsMandatorySRAttributes(t *testing.T) {
 	doc := &Document{
 		SOPClassUID:    BasicTextSRStorage,
-		SOPInstanceUID: "1.2.3.sr",
+		SOPInstanceUID: "1.2.3.9123",
 		ContentDate:    "20260709",
 		ContentTime:    "120000",
 		Content: []ContentItem{{
@@ -236,7 +248,7 @@ func TestDocumentEmitsMandatorySRAttributes(t *testing.T) {
 func TestDocumentDefaultsMandatoryContentDateAndTime(t *testing.T) {
 	obj := mustDocumentDataset(t, &Document{
 		SOPClassUID:    BasicTextSRStorage,
-		SOPInstanceUID: "1.2.3.sr.default-time",
+		SOPInstanceUID: "1.2.3.9123.9127",
 	})
 	if got, ok := obj.GetString(tagContentDate); !ok || got == "" {
 		t.Fatalf("ContentDate = %q, ok=%v; want generated Type 1 value", got, ok)
@@ -247,10 +259,10 @@ func TestDocumentDefaultsMandatoryContentDateAndTime(t *testing.T) {
 }
 
 func TestKOSGroupsCurrentRequestedProcedureEvidenceByStudyAndSeries(t *testing.T) {
-	doc := NewKeyObjectSelection("1.2.kos", []ImageReference{
-		{StudyInstanceUID: "1.2.study", SeriesInstanceUID: "1.2.series.1", SOPClassUID: "1.2.ct", SOPInstanceUID: "1.2.image.1"},
-		{StudyInstanceUID: "1.2.study", SeriesInstanceUID: "1.2.series.2", SOPClassUID: "1.2.ct", SOPInstanceUID: "1.2.image.2"},
-		{StudyInstanceUID: "1.2.study", SeriesInstanceUID: "1.2.series.1", SOPClassUID: "1.2.ct", SOPInstanceUID: "1.2.image.3"},
+	doc := NewKeyObjectSelection("1.2.9124", []ImageReference{
+		{StudyInstanceUID: "1.2.9102", SeriesInstanceUID: "1.2.9103.1", SOPClassUID: "1.2.9108", SOPInstanceUID: "1.2.9117.1"},
+		{StudyInstanceUID: "1.2.9102", SeriesInstanceUID: "1.2.9103.2", SOPClassUID: "1.2.9108", SOPInstanceUID: "1.2.9117.2"},
+		{StudyInstanceUID: "1.2.9102", SeriesInstanceUID: "1.2.9103.1", SOPClassUID: "1.2.9108", SOPInstanceUID: "1.2.9117.3"},
 	}, nil)
 
 	studies, ok := mustDocumentDataset(t, doc).GetSequence(tagCurrentRequestedProcedureEvidence)
@@ -261,7 +273,7 @@ func TestKOSGroupsCurrentRequestedProcedureEvidenceByStudyAndSeries(t *testing.T
 	if !ok || len(series) != 2 {
 		t.Fatalf("ReferencedSeriesSequence = %d items, ok=%v; want 2", len(series), ok)
 	}
-	wantInstances := map[string]int{"1.2.series.1": 2, "1.2.series.2": 1}
+	wantInstances := map[string]int{"1.2.9103.1": 2, "1.2.9103.2": 1}
 	for _, seriesItem := range series {
 		seriesUID, _ := seriesItem.GetString(tagSeriesInstanceUID)
 		instances, present := seriesItem.GetSequence(tagRefSOPSequence)
@@ -275,15 +287,15 @@ func TestKOSGroupsCurrentRequestedProcedureEvidenceByStudyAndSeries(t *testing.T
 		t.Fatal(err)
 	}
 	refs := KeyObjectSelectionImages(round)
-	if len(refs) != 3 || refs[2].StudyInstanceUID != "1.2.study" || refs[2].SeriesInstanceUID != "1.2.series.1" {
+	if len(refs) != 3 || refs[2].StudyInstanceUID != "1.2.9102" || refs[2].SeriesInstanceUID != "1.2.9103.1" {
 		t.Fatalf("round-trip evidence hierarchy = %#v", refs)
 	}
 }
 
 func TestNilNUMEmitsEmptyMeasuredValueAndUnknownQualifier(t *testing.T) {
 	doc := &Document{
-		SOPClassUID:    BasicTextSRStorage,
-		SOPInstanceUID: "1.2.3.sr",
+		SOPClassUID:    EnhancedSRStorage,
+		SOPInstanceUID: "1.2.3.9123",
 		Content: []ContentItem{{
 			ValueType:        ValueNum,
 			RelationshipType: RelationshipContains,

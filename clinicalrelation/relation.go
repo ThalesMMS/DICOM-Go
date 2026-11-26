@@ -174,3 +174,32 @@ func IsEditableSOPClass(sopClassUID string) bool {
 		return false
 	}
 }
+
+// ReadRequirement describes the dataset values the relation resolver needs.
+type ReadRequirement uint8
+
+const (
+	// ReadIdentity allows a projection retaining the SOP Class, SOP Instance,
+	// Study Instance, Series Instance, and Frame of Reference UIDs.
+	ReadIdentity ReadRequirement = iota
+	// ReadCompleteModules requires complete dataset values. The Pixel Data
+	// payload may be skipped while structurally consuming the dataset.
+	ReadCompleteModules
+	// ReadPixelData requires complete dataset values and the pixel payload
+	// for the class-specific reader to validate.
+	ReadPixelData
+)
+
+// ReadRequirementForSOPClass returns the input requirements of Resolve for the
+// given SOP Class UID. Unknown and empty UIDs use ReadIdentity. This contract
+// describes relation resolution only. Callers own file read limits and admission.
+func ReadRequirementForSOPClass(sopClassUID string) ReadRequirement {
+	requirement, _ := resolverForSOPClass(cleanUID(sopClassUID))
+	return requirement
+}
+
+// ResolvesFromIdentity reports whether Resolve can use a dataset projection
+// containing just the identity and Frame of Reference UID.
+func ResolvesFromIdentity(sopClassUID string) bool {
+	return ReadRequirementForSOPClass(sopClassUID) == ReadIdentity
+}

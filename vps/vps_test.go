@@ -25,14 +25,14 @@ func Test_VolumetricPresentationState_round_trips_supported_sop_classes(t *testi
 			state := State{
 				SOPClassUID:       sopClass,
 				SOPInstanceUID:    "1.2.826.0.1.3680043.9.7433.11.9.1",
-				StudyInstanceUID:  "1.2.826.0.1.3680043.9.7433.11.9.study",
-				SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.11.9.series",
+				StudyInstanceUID:  "1.2.826.0.1.3680043.9.7433.11.9.9102",
+				SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.11.9.9103",
 				Inputs: []Input{{
 					Number:      1,
-					InputSetUID: "1.2.826.0.1.3680043.9.7433.input.1",
+					InputSetUID: "1.2.826.0.1.3680043.9.7433.9128.1",
 					ReferencedInstances: []ReferencedInstance{{
 						SOPClassUID:    "1.2.840.10008.5.1.4.1.1.2",
-						SOPInstanceUID: "1.2.3.ct.1",
+						SOPInstanceUID: "1.2.3.9108.1",
 					}},
 				}},
 				RenderPresetName: render.PresetBonesSkin1,

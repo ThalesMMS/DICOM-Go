@@ -45,13 +45,20 @@ func TestReadBinaryFramesMatchesReferenceForLegacyByteAlignedFrames(t *testing.T
 	assertBinaryFrameMasksEqual(t, got, want)
 }
 
-func TestReadBinaryFramesMatchesReferenceForTruncatedData(t *testing.T) {
+// TestReadBinaryFramesZeroFillsTruncatedData checks the samples behind
+// ReadWithOptions' AllowTruncatedPixelData: missing bits read as zero. Read
+// itself rejects such data (TestReadRejectsTruncatedPixelData).
+func TestReadBinaryFramesZeroFillsTruncatedData(t *testing.T) {
 	doc := &Document{Rows: 5, Columns: 7, Segments: []Segment{{Number: 1}}, Frames: make([]Frame, 3)}
 	data := []byte{0xFF, 0x81, 0x42}
 	obj := object.FromElements([]core.Element{derivedio.Raw(derivedio.TagPixelData, core.VROB, data)}, nil)
 	got := readBinaryFrames(obj, doc, make([]*object.Object, len(doc.Frames)))
 	want := readBinaryFramesReference(data, doc, len(doc.Frames), binaryFrameBitStride(doc.Rows*doc.Columns, len(doc.Frames), len(data)))
 	assertBinaryFrameMasksEqual(t, got, want)
+	report := pixelDataCoverage(doc, len(doc.Frames), len(data))
+	if !reflect.DeepEqual(report.IncompleteFrames, []int{0, 1, 2}) || report.ExpectedPixelDataBytes != 14 {
+		t.Fatalf("coverage %+v", report)
+	}
 }
 
 func randomBinaryDocument(random *rand.Rand, rows, columns, frameCount int) *Document {

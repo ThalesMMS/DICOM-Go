@@ -1,0 +1,39 @@
+# PS3.16 2026d template rows whose EV/DT concept name differs from the PS3.16
+# terminology (Annex D and the codes of other schemes): the meaning the template
+# table gives, or a code the terminology tables do not list ("-").
+# Checked by TestStandardTemplateConceptCodesMatchTheTerminology; regenerate
+# from its failure output when a new edition changes the catalog.
+# TID	Row	Scheme	Value	Template meaning	Terminology meaning
+314	3	NCIt	C80490	Numerator	-
+314	4	NCIt	C80489	Denominator	-
+2125	1	DCM	131244	Ganglion Cell Key Measurements	Ganglion Cell Layer Key Measurements
+3114	13	SCT	364528001	Skin condition	Skin condition assessment
+3209	8	SCT	255593009	Circumferential Extent	Circumferential
+3300	1	LN	18752-6	Stress Testing Report	Exercise Stress Test Report
+3304	13	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure
+3304	21	MDC	2:16000	RR Interval for QTc	RR time period, global
+3312	4	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure
+3602	13	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure
+3602	7	LN	8277-6	Body Surface Area	BSA
+3704	7	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure
+3704	9	SCT	441509002	Pacemaker in situ	Patient has pacemaker
+3808	17	NCDR [2.0b]	115	Dissection in segment observed	Dissection in segment
+3814	6	SCT	250909007	Left Ventricular Contractility	LV Wall motion
+3829	12	SCT	277132007	Therapy	Therapeutic procedure
+3916	2	SCT	408706001	Vascular Stent Diameter	Stent Diameter
+3916	3	SCT	408703009	Vascular Stent Length	Stent Length
+3929	4	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure
+3929	5	SCT	364062005	Respiration Observable	Respiration assessment
+4205	7	DCM	111350	Breast background echo texture	Breast background echotexture
+4300	1	SCT	719178004	Multiparametric magnetic resonance imaging of prostate	Multiparametric MRI of prostate
+5101	6	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure
+5201	6	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure
+5201	7	LN	8277-6	Body Surface Area	BSA
+5401	12	SCT	373099004	Median	Median Value of population
+5401	17	SCT	373099004	Median	Median Value of population
+5401	22	SCT	373099004	Median	Median Value of population
+8200	3	DCM	128004	Modality to Read	Report Requested
+9001	3	LN	8665-2	Last menstrual period	LMP
+10022	4	SCT	304283002	Radionuclide Half Life	Half-life of radiopharmaceutical
+10024	7	LN	8277-6	Body Surface Area	BSA
+12001	10	SCT	271650006	Diastolic Blood Pressure	Diastolic Pressure

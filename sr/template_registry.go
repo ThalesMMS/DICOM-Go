@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ThalesMMS/dicom-go/codes"
+	"github.com/ThalesMMS/dicom-go/codes/dcm"
+	"github.com/ThalesMMS/dicom-go/codes/sct"
 	"unicode/utf8"
 )
 
@@ -41,6 +44,10 @@ const (
 	maxRegistryString       = 2048
 	maxTemplateIncludeDepth = 32
 	maxTemplateRowDepth     = 64
+	// maxRuleIDLength bounds a rule ID, include scopes included: the PS3.16
+	// cardiology templates nest includes to scoped IDs of about 130
+	// characters (TID3900:8.TID3902:5.TID3906:...).
+	maxRuleIDLength = 256
 )
 
 // TemplateRegistryError is a typed, PHI-free registry construction error.
@@ -151,6 +158,10 @@ type TemplateDefinition struct {
 	Extensible       bool
 	OrderSignificant bool
 	Rows             []TemplateRow
+	// Provenance records the source of a generated definition, such as the
+	// PS3.16 catalog of StandardTemplates. Source and Checksum are both set
+	// or both empty.
+	Provenance DefinitionProvenance
 }
 
 // TemplateRow describes one template row. Additional constraints are added to
@@ -168,6 +179,16 @@ type TemplateRow struct {
 	Condition         TemplateCondition
 	Children          []TemplateRow
 	Include           *TemplateKey
+	// IncludeFillsRelationship, on an Include row, applies its
+	// RelationshipTypes and ReferenceMode only to the included top-level
+	// rows that have no RelationshipTypes of their own, as a PS3.16 INCLUDE
+	// row does. When false, the Include row's RelationshipTypes replace
+	// those of every included top-level row.
+	IncludeFillsRelationship bool
+	// AllowRecursiveInclude opts into a self-include below ordinary parents.
+	// The edge and all ancestors must explicitly use ReferenceModeByValue;
+	// zero/Either, unmarked cycles, root self-includes and mutual cycles refuse.
+	AllowRecursiveInclude bool
 }
 
 // ReferenceMode constrains whether a template row is represented by-value or
@@ -200,11 +221,19 @@ const (
 
 // TemplateConditionContext intentionally contains only structural and coded
 // identity data; it excludes SR text, names, UIDs, dates and code meanings.
+//
+// RuleID is the compiled (include-scoped) RuleID of the conditional row and
+// RowCounts the number of children of the same parent matched by each row of
+// that parent, by compiled RuleID, so that a condition can depend on its
+// sibling rows ("required if row 10 is absent"). RowCounts is shared by the
+// conditions of one parent and must not be modified.
 type TemplateConditionContext struct {
 	SOPClassUID     string
 	ParentPath      string
 	ParentValueType ValueType
 	ChildCount      int
+	RuleID          string
+	RowCounts       map[string]int
 }
 
 // TemplateCondition is a caller-supplied, context-aware predicate for one
@@ -395,9 +424,21 @@ func (validator *TemplateValidator) ValidateWithMetadata(ctx context.Context, do
 			addTemplateFinding(&report, validator.options, TemplateCodeResourceLimit, frame.path, "")
 			break
 		}
+		resolved, childScopes, resolveErr := validator.registry.resolveTemplateLevel(ctx, frame.rows, frame.scope, &steps, validator.options.MaxSteps)
+		if resolveErr != nil {
+			if ctx.Err() != nil {
+				return report.clone(), ctx.Err()
+			}
+			addTemplateFinding(&report, validator.options, TemplateCodeResourceLimit, frame.path, "")
+			return validator.finish(report)
+		}
+		frame.rows, frame.childScopes = resolved, childScopes
 		counts := make([]int, len(frame.rows))
 		lastRow := -1
 		for childIndex := range frame.children {
+			if report.Truncated {
+				return validator.finish(report)
+			}
 			items++
 			if items > validator.options.MaxItems {
 				addTemplateFinding(&report, validator.options, TemplateCodeResourceLimit, frame.path, "")
@@ -413,6 +454,7 @@ func (validator *TemplateValidator) ValidateWithMetadata(ctx context.Context, do
 			if frame.orderSignificant && lastRow >= 0 {
 				start = lastRow
 			}
+			ties, bestStatic := 0, 0
 			for rowIndex := start; rowIndex < len(frame.rows); rowIndex++ {
 				steps++
 				if steps > validator.options.MaxSteps {
@@ -434,10 +476,39 @@ func (validator *TemplateValidator) ValidateWithMetadata(ctx context.Context, do
 						matched = rowIndex
 						matchedScore = score
 					}
+					// Rows tie when they describe the item equally well,
+					// whatever they have matched so far.
+					static := templateRowStaticScore(frame.rows[rowIndex])
+					if ties == 0 || static > bestStatic {
+						bestStatic, ties = static, 1
+					} else if static == bestStatic {
+						ties++
+					}
 				}
 			}
 			if steps > validator.options.MaxSteps {
 				break
+			}
+			if ties > 1 && len(child.Children) > 0 {
+				// Rows that describe the item equally well (such as the
+				// Measurement Group CONTAINERs of TID 1410, 1411 and 1501)
+				// are told apart by how well their child rows describe the
+				// item's children.
+				var fitErr error
+				matched, fitErr = validator.bestFittingRow(ctx, document, frame, counts, bestStatic, child, childPath, registryLookups{
+					targets: targets, codeContexts: codeContexts,
+				}, &steps)
+				if fitErr != nil {
+					if ctx.Err() != nil {
+						return report.clone(), ctx.Err()
+					}
+					addTemplateFinding(&report, validator.options, TemplateCodeResourceLimit, childPath, "")
+					return validator.finish(report)
+				}
+				if steps > validator.options.MaxSteps {
+					addTemplateFinding(&report, validator.options, TemplateCodeResourceLimit, childPath, "")
+					break
+				}
 			}
 			if matched < 0 && frame.orderSignificant && start > 0 {
 				for rowIndex := 0; rowIndex < start; rowIndex++ {
@@ -471,14 +542,18 @@ func (validator *TemplateValidator) ValidateWithMetadata(ctx context.Context, do
 				lastRow = matched
 			}
 			counts[matched]++
-			if len(child.Children) > 0 {
+			if len(child.ReferencedContentItemIdentifier) == 0 && (len(child.Children) > 0 || len(frame.rows[matched].Children) > 0) {
 				stack = append(stack, templateValidationFrame{
 					path: childPath, valueType: child.ValueType, children: child.Children,
-					rows: frame.rows[matched].Children, orderSignificant: frame.orderSignificant,
+					rows: frame.rows[matched].Children, scope: frame.childScopes[matched], orderSignificant: frame.orderSignificant,
 				})
 			}
 		}
+		var rowCounts map[string]int
 		for rowIndex, row := range frame.rows {
+			if report.Truncated {
+				return validator.finish(report)
+			}
 			steps++
 			if steps > validator.options.MaxSteps {
 				addTemplateFinding(&report, validator.options, TemplateCodeResourceLimit, frame.path, row.RuleID)
@@ -489,9 +564,13 @@ func (validator *TemplateValidator) ValidateWithMetadata(ctx context.Context, do
 				if row.Condition == nil {
 					addTemplateFinding(&report, validator.options, TemplateCodeConditionUnsupported, frame.path, row.RuleID)
 				} else {
+					if rowCounts == nil {
+						rowCounts = templateRowCounts(frame.rows, counts)
+					}
 					active, err := callTemplateCondition(row.Condition, ctx, TemplateConditionContext{
 						SOPClassUID: document.SOPClassUID, ParentPath: frame.path.String(),
 						ParentValueType: frame.valueType, ChildCount: len(frame.children),
+						RuleID: row.RuleID, RowCounts: rowCounts,
 					})
 					if err != nil {
 						addTemplateFinding(&report, validator.options, TemplateCodeConditionFailed, frame.path, row.RuleID)
@@ -524,6 +603,8 @@ type templateValidationFrame struct {
 	children         []ContentItem
 	rows             []TemplateRow
 	orderSignificant bool
+	scope            string
+	childScopes      []string
 }
 
 func indexTemplateTargets(document *Document, options TemplateValidationOptions) (map[string]*ContentItem, error) {
@@ -586,6 +667,12 @@ func addTemplateFinding(report *ValidationReport, options TemplateValidationOpti
 func addTemplateFindingSeverity(report *ValidationReport, options TemplateValidationOptions, code string, path ContentItemIdentifier, ruleID string, allowedExtension bool) {
 	if len(report.Findings) >= options.MaxFindings {
 		report.Truncated = true
+		// Preserve a typed resource failure even when the output budget is full.
+		if len(report.Findings) > 0 {
+			report.Findings[len(report.Findings)-1] = DiagnosticFinding{
+				Path: path.Clone(), Code: TemplateCodeResourceLimit, Severity: DiagnosticError, Message: templateFindingMessage(TemplateCodeResourceLimit),
+			}
+		}
 		return
 	}
 	severity := DiagnosticError
@@ -639,7 +726,7 @@ func NewTemplateRegistry(templates []TemplateDefinition, contextGroups []Context
 	}
 	rawRowCount := 0
 	for _, definition := range templates {
-		if !validTemplateKey(definition.Key) {
+		if !validTemplateKey(definition.Key) || !validDefinitionProvenance(definition.Provenance) {
 			return nil, newTemplateRegistryError(TemplateRegistryCodeInvalidDefinition)
 		}
 		if _, exists := registry.templates[definition.Key]; exists {
@@ -651,6 +738,7 @@ func NewTemplateRegistry(templates []TemplateDefinition, contextGroups []Context
 		registry.templates[definition.Key] = cloneTemplateDefinition(definition)
 	}
 	rawCodeCount := 0
+	rawGroupIncludeCount := 0
 	for _, definition := range contextGroups {
 		if !validContextGroupDefinition(definition) {
 			return nil, newTemplateRegistryError(TemplateRegistryCodeInvalidDefinition)
@@ -658,6 +746,10 @@ func NewTemplateRegistry(templates []TemplateDefinition, contextGroups []Context
 		if _, exists := registry.contextGroups[definition.Key]; exists {
 			return nil, newTemplateRegistryError(TemplateRegistryCodeDuplicate)
 		}
+		if len(definition.Codes) > maxRegistryCodes-rawCodeCount || len(definition.Includes) > maxRegistryIncludes-rawGroupIncludeCount {
+			return nil, newTemplateRegistryError(TemplateRegistryCodeResourceLimit)
+		}
+		rawGroupIncludeCount += len(definition.Includes)
 		seenCodes := make(map[CodeKey]struct{}, len(definition.Codes))
 		for _, code := range definition.Codes {
 			rawCodeCount++
@@ -683,18 +775,9 @@ func NewTemplateRegistry(templates []TemplateDefinition, contextGroups []Context
 	if err := validateTemplateContextGroups(registry.templates, registry.contextGroups); err != nil {
 		return nil, err
 	}
-	compiledRowCount := 0
+	// Keep one frozen graph: resolve only the current content level during use.
 	for key, definition := range registry.templates {
-		rows, err := registry.expandTemplateRows(definition.Rows, 0, 0, "", &compiledRowCount)
-		if err != nil {
-			return nil, err
-		}
-		if err := validateCompiledRuleIDs(rows); err != nil {
-			return nil, err
-		}
-		compiled := cloneTemplateDefinition(definition)
-		compiled.Rows = rows
-		registry.compiledTemplates[key] = compiled
+		registry.compiledTemplates[key] = definition
 	}
 	compiledMemberCount := 0
 	for key := range registry.contextGroups {
@@ -841,11 +924,14 @@ func validCodeKey(code CodeKey) bool {
 	return validRegistryPart(code.CodingSchemeDesignator)
 }
 
+func validDefinitionProvenance(provenance DefinitionProvenance) bool {
+	return len(provenance.Source) <= maxRegistryString && len(provenance.Checksum) <= maxRegistryString &&
+		((provenance.Source == "") == (provenance.Checksum == ""))
+}
+
 func validContextGroupDefinition(definition ContextGroupDefinition) bool {
-	return validContextGroupKey(definition.Key) && len(definition.Provenance.Source) <= maxRegistryString &&
-		len(definition.Provenance.Checksum) <= maxRegistryString && len(definition.Codes) <= maxRegistryCodes &&
-		len(definition.Includes) <= maxRegistryIncludes &&
-		((definition.Provenance.Source == "") == (definition.Provenance.Checksum == ""))
+	return validContextGroupKey(definition.Key) && validDefinitionProvenance(definition.Provenance) &&
+		len(definition.Codes) <= maxRegistryCodes && len(definition.Includes) <= maxRegistryIncludes
 }
 
 func validateTemplateRows(rows []TemplateRow, totalRows *int) error {
@@ -853,6 +939,9 @@ func validateTemplateRows(rows []TemplateRow, totalRows *int) error {
 	type rowEntry struct {
 		row   TemplateRow
 		depth int
+	}
+	if len(rows) > maxRegistryRows-*totalRows {
+		return newTemplateRegistryError(TemplateRegistryCodeResourceLimit)
 	}
 	stack := make([]rowEntry, 0, len(rows))
 	for _, row := range rows {
@@ -896,6 +985,9 @@ func validateTemplateRows(rows []TemplateRow, totalRows *int) error {
 				return newTemplateRegistryError(TemplateRegistryCodeInvalidDefinition)
 			}
 		}
+		if len(row.Children) > maxRegistryRows-*totalRows-len(stack) || entry.depth >= maxTemplateRowDepth && len(row.Children) > 0 {
+			return newTemplateRegistryError(TemplateRegistryCodeResourceLimit)
+		}
 		for _, child := range row.Children {
 			stack = append(stack, rowEntry{row: child, depth: entry.depth + 1})
 		}
@@ -904,7 +996,7 @@ func validateTemplateRows(rows []TemplateRow, totalRows *int) error {
 }
 
 func validRuleID(value string) bool {
-	if value == "" || len(value) > 128 {
+	if value == "" || len(value) > maxRuleIDLength {
 		return false
 	}
 	for _, character := range value {
@@ -995,15 +1087,25 @@ func containsString(values []string, want string) bool {
 }
 
 func templateRowSelectionScore(row TemplateRow, currentCount int) int {
+	score := templateRowStaticScore(row)
+	if currentCount < row.Cardinality.Min {
+		score += 2_000
+	}
+	if row.Cardinality.Max > 0 && currentCount >= row.Cardinality.Max {
+		score -= 1_000_000
+	}
+	return score
+}
+
+// templateRowStaticScore is the part of the selection score that does not
+// depend on what the row has already matched.
+func templateRowStaticScore(row TemplateRow) int {
 	score := 0
 	switch row.Requirement {
 	case RequirementRequired:
 		score += 10_000
 	case RequirementConditional:
 		score += 5_000
-	}
-	if currentCount < row.Cardinality.Min {
-		score += 2_000
 	}
 	if len(row.ConceptNames) > 0 {
 		score += 1_000 - min(len(row.ConceptNames), 999)
@@ -1019,9 +1121,6 @@ func templateRowSelectionScore(row TemplateRow, currentCount int) int {
 	}
 	if row.ReferenceMode != 0 && row.ReferenceMode != ReferenceModeEither {
 		score += 50
-	}
-	if row.Cardinality.Max > 0 && currentCount >= row.Cardinality.Max {
-		score -= 1_000_000
 	}
 	return score
 }
@@ -1145,36 +1244,7 @@ func validTemplateIdentification(identification TemplateIdentification) bool {
 }
 
 func validateTemplateIncludes(templates map[TemplateKey]TemplateDefinition) error {
-	adjacency := make(map[TemplateKey][]TemplateKey, len(templates))
-	indegree := make(map[TemplateKey]int, len(templates))
-	for key := range templates {
-		indegree[key] = 0
-	}
-	includeCount := 0
-	for key, definition := range templates {
-		stack := append([]TemplateRow(nil), definition.Rows...)
-		for len(stack) > 0 {
-			row := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			stack = append(stack, row.Children...)
-			if row.Include == nil {
-				continue
-			}
-			includeCount++
-			if includeCount > maxRegistryIncludes {
-				return newTemplateRegistryError(TemplateRegistryCodeResourceLimit)
-			}
-			if _, exists := templates[*row.Include]; !exists {
-				return newTemplateRegistryError(TemplateRegistryCodeMissingInclude)
-			}
-			adjacency[key] = append(adjacency[key], *row.Include)
-			indegree[*row.Include]++
-		}
-	}
-	if graphHasCycle(adjacency, indegree) {
-		return newTemplateRegistryError(TemplateRegistryCodeIncludeCycle)
-	}
-	return nil
+	return validateTemplateIncludeGraph(templates)
 }
 
 func validateContextGroupIncludes(groups map[ContextGroupKey]ContextGroupDefinition) error {
@@ -1220,46 +1290,6 @@ func validateTemplateContextGroups(templates map[TemplateKey]TemplateDefinition,
 	return nil
 }
 
-func (registry *TemplateRegistry) expandTemplateRows(rows []TemplateRow, includeDepth, rowDepth int, scope string, rowCount *int) ([]TemplateRow, error) {
-	if includeDepth > maxTemplateIncludeDepth || rowDepth > maxTemplateRowDepth {
-		return nil, newTemplateRegistryError(TemplateRegistryCodeResourceLimit)
-	}
-	out := make([]TemplateRow, 0, len(rows))
-	for _, row := range rows {
-		*rowCount++
-		if *rowCount > maxRegistryRows {
-			return nil, newTemplateRegistryError(TemplateRegistryCodeResourceLimit)
-		}
-		if row.Include != nil {
-			included := registry.templates[*row.Include]
-			includeScope := scopedTemplateRuleID(scope, row.RuleID)
-			expanded, err := registry.expandTemplateRows(included.Rows, includeDepth+1, rowDepth, includeScope, rowCount)
-			if err != nil {
-				return nil, err
-			}
-			expanded, err = applyTemplateIncludeConstraints(row, expanded)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, expanded...)
-			continue
-		}
-		cloned := cloneTemplateRows([]TemplateRow{row})[0]
-		cloned.Children = nil
-		cloned.RuleID = scopedTemplateRuleID(scope, cloned.RuleID)
-		if !validRuleID(cloned.RuleID) {
-			return nil, newTemplateRegistryError(TemplateRegistryCodeInvalidDefinition)
-		}
-		children, err := registry.expandTemplateRows(row.Children, includeDepth, rowDepth+1, scope, rowCount)
-		if err != nil {
-			return nil, err
-		}
-		cloned.Children = children
-		out = append(out, cloned)
-	}
-	return out, nil
-}
-
 func scopedTemplateRuleID(scope, ruleID string) string {
 	if scope == "" {
 		return ruleID
@@ -1269,8 +1299,15 @@ func scopedTemplateRuleID(scope, ruleID string) string {
 
 func applyTemplateIncludeConstraints(include TemplateRow, rows []TemplateRow) ([]TemplateRow, error) {
 	for index := range rows {
-		if len(include.RelationshipTypes) > 0 {
+		switch {
+		case len(include.RelationshipTypes) == 0:
+		case !include.IncludeFillsRelationship:
 			rows[index].RelationshipTypes = append([]string(nil), include.RelationshipTypes...)
+		case len(rows[index].RelationshipTypes) == 0:
+			rows[index].RelationshipTypes = append([]string(nil), include.RelationshipTypes...)
+			if include.ReferenceMode != 0 {
+				rows[index].ReferenceMode = include.ReferenceMode
+			}
 		}
 		cardinality, err := composeTemplateCardinality(include.Cardinality, rows[index].Cardinality)
 		if err != nil {
@@ -1414,64 +1451,58 @@ func graphHasCycle[K comparable](adjacency map[K][]K, indegree map[K]int) bool {
 	return visited != len(indegree)
 }
 
-// CurrentMeasurementReportTemplate describes exactly the private structural
-// shape emitted by WriteMeasurementReport today. It deliberately does not
-// claim conformance to any DICOM TID.
+// CurrentMeasurementReportTemplate describes exactly the structural shape
+// that WriteMeasurementReport emits: the TID 1500 rows it writes (language,
+// observation context, procedure reported, image library and Imaging
+// Measurements with TID 1501/1411 groups). It is dicom-go's own structural
+// check of that output, under its own key, not a full TID 1500 definition.
 func CurrentMeasurementReportTemplate() TemplateDefinition {
+	row := func(rule, relationship string, valueType ValueType, concept codes.Code, min, max int, requirement Requirement, children ...TemplateRow) TemplateRow {
+		r := TemplateRow{
+			RuleID: rule, RelationshipTypes: []string{relationship}, ReferenceMode: ReferenceModeByValue,
+			ValueTypes: []ValueType{valueType}, Cardinality: Cardinality{Min: min, Max: max}, Requirement: requirement,
+			Children: children,
+		}
+		if concept.Value != "" {
+			r.ConceptNames = []CodeKey{{CodeValue: concept.Value, CodingSchemeDesignator: concept.Scheme}}
+		}
+		return r
+	}
+	measurement := row("measurement", RelationshipContains, ValueNum, codes.Code{}, 1, 0, RequirementOptional,
+		row("measurement-image", RelationshipInferredFrom, ValueImage, dcm.SourceOfMeasurement, 1, 1, RequirementOptional),
+		row("measurement-spatial", RelationshipInferredFrom, ValueSCoord3D, dcm.SourceOfMeasurement, 1, 1, RequirementOptional),
+	)
+	group := row("measurement-group", RelationshipContains, ValueContainer, dcm.MeasurementGroup, 1, 0, RequirementOptional,
+		row("tracking-identifier", RelationshipHasObsContext, ValueText, dcm.TrackingIdentifier, 1, 1, RequirementOptional),
+		row("tracking-unique-identifier", RelationshipHasObsContext, ValueUIDRef, dcm.TrackingUniqueIdentifier, 1, 1, RequirementOptional),
+		row("finding", RelationshipContains, ValueCode, dcm.Finding, 1, 1, RequirementOptional),
+		row("referenced-segment", RelationshipContains, ValueImage, dcm.ReferencedSegment, 1, 1, RequirementOptional),
+		row("source-series-for-segmentation", RelationshipContains, ValueUIDRef, dcm.SourceSeriesForSegmentation, 1, 1, RequirementOptional),
+		row("finding-site", RelationshipHasConceptMod, ValueCode, sct.FindingSite, 1, 0, RequirementOptional),
+		measurement,
+	)
 	return TemplateDefinition{
 		Key: TemplateKey{
 			MappingResource: "DICOMGO",
 			Identifier:      "CURRENT_MEASUREMENT_REPORT",
-			Version:         "1",
+			Version:         "2",
 		},
 		OrderSignificant: true,
-		Rows: []TemplateRow{{
-			RuleID:            "measurement-group",
-			RelationshipTypes: []string{RelationshipContains},
-			ReferenceMode:     ReferenceModeByValue,
-			ValueTypes:        []ValueType{ValueContainer},
-			ConceptNames: []CodeKey{{
-				CodeValue: "125007", CodingSchemeDesignator: "DCM",
-			}},
-			Cardinality: Cardinality{Min: 1},
-			Requirement: RequirementOptional,
-			Children: []TemplateRow{
-				{
-					RuleID: "tracking-identifier", RelationshipTypes: []string{RelationshipContains},
-					ReferenceMode: ReferenceModeByValue, ValueTypes: []ValueType{ValueText},
-					ConceptNames: []CodeKey{{CodeValue: "112039", CodingSchemeDesignator: "DCM"}},
-					Cardinality:  Cardinality{Min: 1, Max: 1}, Requirement: RequirementRequired,
-				},
-				{
-					RuleID: "tracking-unique-identifier", RelationshipTypes: []string{RelationshipHasProperties},
-					ReferenceMode: ReferenceModeByValue, ValueTypes: []ValueType{ValueUIDRef},
-					ConceptNames: []CodeKey{{CodeValue: "112040", CodingSchemeDesignator: "DCM"}},
-					Cardinality:  Cardinality{Min: 1, Max: 1}, Requirement: RequirementRequired,
-				},
-				{
-					RuleID: "referenced-segment", RelationshipTypes: []string{RelationshipInferredFrom},
-					ReferenceMode: ReferenceModeByValue, ValueTypes: []ValueType{ValueImage},
-					ConceptNames: []CodeKey{{CodeValue: "121191", CodingSchemeDesignator: "DCM"}},
-					Cardinality:  Cardinality{Min: 1, Max: 1}, Requirement: RequirementOptional,
-				},
-				{
-					RuleID: "measurement", RelationshipTypes: []string{RelationshipContains},
-					ReferenceMode: ReferenceModeByValue, ValueTypes: []ValueType{ValueNum},
-					Cardinality: Cardinality{Min: 1}, Requirement: RequirementOptional,
-					Children: []TemplateRow{
-						{
-							RuleID: "measurement-image", RelationshipTypes: []string{RelationshipInferredFrom},
-							ReferenceMode: ReferenceModeByValue, ValueTypes: []ValueType{ValueImage},
-							Cardinality: Cardinality{Min: 1, Max: 1}, Requirement: RequirementOptional,
-						},
-						{
-							RuleID: "measurement-spatial", RelationshipTypes: []string{RelationshipInferredFrom},
-							ReferenceMode: ReferenceModeByValue, ValueTypes: []ValueType{ValueSCoord3D},
-							Cardinality: Cardinality{Min: 1, Max: 1}, Requirement: RequirementOptional,
-						},
-					},
-				},
-			},
-		}},
+		Rows: []TemplateRow{
+			row("language", RelationshipHasConceptMod, ValueCode, dcm.LanguageOfContentItemAndDescendants, 1, 1, RequirementRequired),
+			row("observer-type", RelationshipHasObsContext, ValueCode, dcm.ObserverType, 1, 1, RequirementRequired),
+			row("person-observer-name", RelationshipHasObsContext, ValuePName, dcm.PersonObserverName, 1, 1, RequirementOptional),
+			row("person-observer-organization", RelationshipHasObsContext, ValueText, dcm.PersonObserversOrganizationName, 1, 1, RequirementOptional),
+			row("device-observer-uid", RelationshipHasObsContext, ValueUIDRef, dcm.DeviceObserverUID, 1, 1, RequirementOptional),
+			row("device-observer-name", RelationshipHasObsContext, ValueText, dcm.DeviceObserverName, 1, 1, RequirementOptional),
+			row("device-observer-manufacturer", RelationshipHasObsContext, ValueText, dcm.DeviceObserverManufacturer, 1, 1, RequirementOptional),
+			row("device-observer-model", RelationshipHasObsContext, ValueText, dcm.DeviceObserverModelName, 1, 1, RequirementOptional),
+			row("device-observer-serial-number", RelationshipHasObsContext, ValueText, dcm.DeviceObserverSerialNumber, 1, 1, RequirementOptional),
+			row("procedure-reported", RelationshipHasConceptMod, ValueCode, dcm.ProcedureReported, 1, 0, RequirementRequired),
+			row("image-library", RelationshipContains, ValueContainer, dcm.ImageLibrary, 1, 1, RequirementOptional,
+				row("image-library-group", RelationshipContains, ValueContainer, dcm.ImageLibraryGroup, 1, 0, RequirementRequired,
+					row("image-library-entry", RelationshipContains, ValueImage, codes.Code{}, 1, 0, RequirementRequired))),
+			row("imaging-measurements", RelationshipContains, ValueContainer, dcm.ImagingMeasurements, 1, 1, RequirementRequired, group),
+		},
 	}
 }

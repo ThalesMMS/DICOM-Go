@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/derivation"
 	"github.com/ThalesMMS/dicom-go/internal/derivedio"
 	"github.com/ThalesMMS/dicom-go/object"
 )
@@ -65,15 +66,20 @@ func CloneToSeries(src *object.File, opts Options) (*object.File, error) {
 	clone.Dataset.Put(derivedio.UI(derivedio.TagSeriesInstanceUID, seriesUID))
 	clone.Dataset.Put(derivedio.UI(derivedio.TagSOPInstanceUID, sopUID))
 	clone.Dataset.Put(derivedio.Strings(tagImageType, core.VRCS, derivedImageType(clone.Dataset)))
-	clone.Dataset.Put(derivedio.Seq(tagSourceImageSequence, derivedio.DataSet(
-		derivedio.UI(derivedio.TagRefSOPClassUID, strings.TrimSpace(sourceClassUID)),
-		derivedio.UI(derivedio.TagRefSOPInstanceUID, strings.TrimSpace(sourceSOPUID)),
-	)))
+	// The copy's only source is src, and a new description replaces src's.
+	clone.Dataset.Remove(tagSourceImageSequence)
+	if strings.TrimSpace(opts.DerivationDescription) != "" {
+		clone.Dataset.Remove(tagDerivationDescription)
+	}
+	if err := derivation.Apply(clone.Dataset, derivation.Derivation{
+		Description: opts.DerivationDescription,
+		Sources:     []derivation.Source{{SOPClassUID: sourceClassUID, SOPInstanceUID: sourceSOPUID}},
+	}); err != nil {
+		_ = clone.Close()
+		return nil, fmt.Errorf("dicom/seriesderive: %w", err)
+	}
 	if value := strings.TrimSpace(opts.SeriesDescription); value != "" {
 		clone.Dataset.Put(derivedio.LO(derivedio.TagSeriesDescr, value))
-	}
-	if value := strings.TrimSpace(opts.DerivationDescription); value != "" {
-		clone.Dataset.Put(derivedio.Str(tagDerivationDescription, core.VRST, value))
 	}
 	if value := strings.TrimSpace(opts.SeriesNumber); value != "" {
 		clone.Dataset.Put(derivedio.Str(tagSeriesNumber, core.VRIS, value))

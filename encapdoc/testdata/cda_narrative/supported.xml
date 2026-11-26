@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="1.2.826.0.1.3680043.10.1470" extension="SYNTHETIC"/>
+  <title>Synthetic CDA report</title>
+  <component>
+    <structuredBody>
+      <component>
+        <section>
+          <title>Findings</title>
+          <text>
+            <paragraph>A synthetic <content styleCode="Bold">finding</content> &amp; observation.<br/>Second line.</paragraph>
+            <list listType="ordered">
+              <caption>Follow-up steps</caption>
+              <item>First step</item>
+              <item>Second step<list listType="unordered"><item>Nested detail</item></list>Continuation after nested list.</item>
+            </list>
+            <table>
+              <caption>Synthetic measurements</caption>
+              <thead><tr><th>Measure</th><th>Value</th></tr></thead>
+              <tbody><tr><td>Diameter</td><td>3 cm</td></tr><tr><td>Note</td><td><paragraph>Cell line one</paragraph><paragraph>Cell line two</paragraph></td></tr></tbody>
+            </table>
+          </text>
+          <entry><observation><text>CLINICAL ENTRY MUST NOT BECOME NARRATIVE</text></observation></entry>
+          <component><section><title>Nested conclusion</title><text><paragraph>Independent nested section.</paragraph></text></section></component>
+        </section>
+      </component>
+      <component><section><title>Additional note</title><text>Literal &lt;b&gt;markup&lt;/b&gt; remains inert text.</text></section></component>
+    </structuredBody>
+  </component>
+</ClinicalDocument>

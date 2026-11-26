@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/ThalesMMS/dicom-go/internal/storedsample"
 	"github.com/ThalesMMS/dicom-go/pixeldata"
 )
 
@@ -16,11 +17,11 @@ func encodeStoredFrame(ctx context.Context, raw []byte, metadata pixeldata.Metad
 	if order == nil {
 		order = binary.LittleEndian
 	}
-	if metadata.BitsStored == 0 || metadata.BitsStored > metadata.BitsAllocated ||
-		metadata.HighBit >= metadata.BitsAllocated || metadata.HighBit+1 < metadata.BitsStored {
+	reader, err := storedsample.New(int(metadata.BitsAllocated), int(metadata.BitsStored), int(metadata.HighBit), metadata.PixelRepresentation == 1, order)
+	if err != nil {
 		return nil, ErrUnsupportedPixels
 	}
-	width := int(metadata.BitsAllocated / 8)
+	width := reader.Width()
 	count64, ok := checkedMul(uint64(metadata.Rows), uint64(metadata.Columns))
 	if !ok || count64 > uint64(math.MaxInt) || width <= 0 {
 		return nil, ErrUnsupportedPixels
@@ -35,38 +36,16 @@ func encodeStoredFrame(ctx context.Context, raw []byte, metadata pixeldata.Metad
 		return nil, ErrUnsupportedPixels
 	}
 	out := make([]byte, count*outWidth)
-	shift := metadata.HighBit + 1 - metadata.BitsStored
-	mask := uint64(math.MaxUint64)
-	if metadata.BitsStored < 64 {
-		mask = uint64(1)<<metadata.BitsStored - 1
-	}
-	signBit := uint64(0)
-	if metadata.PixelRepresentation == 1 {
-		signBit = uint64(1) << (metadata.BitsStored - 1)
-	}
 	for index := 0; index < count; index++ {
 		if index&4095 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 		}
-		source := raw[index*width:]
-		var unsigned uint64
-		switch width {
-		case 1:
-			unsigned = uint64(source[0])
-		case 2:
-			unsigned = uint64(order.Uint16(source))
-		case 4:
-			unsigned = uint64(order.Uint32(source))
-		default:
-			return nil, ErrUnsupportedPixels
-		}
-		unsigned = (unsigned >> shift) & mask
-		signed := int64(unsigned)
-		if signBit != 0 && unsigned&signBit != 0 {
-			signed = int64(unsigned | ^mask)
-		}
+		// Stored values are sign-extended from BitsStored when signed, so the
+		// low bits of either view are the destination's two's complement.
+		signed := reader.Value(raw[index*width:])
+		unsigned := uint64(signed)
 		destination := out[index*outWidth:]
 		switch datatype {
 		case DatatypeUint8:
@@ -82,14 +61,14 @@ func encodeStoredFrame(ctx context.Context, raw []byte, metadata pixeldata.Metad
 		case DatatypeInt32:
 			binary.LittleEndian.PutUint32(destination, uint32(int32(signed)))
 		case DatatypeFloat32:
-			value := storedValueFloat(unsigned, signed, metadata.PixelRepresentation == 1)*transform.slope + transform.intercept
+			value := float64(signed)*transform.slope + transform.intercept
 			converted := float32(value)
 			if !finite(value) || math.IsNaN(float64(converted)) || math.IsInf(float64(converted), 0) {
 				return nil, ErrUnsupportedScaling
 			}
 			binary.LittleEndian.PutUint32(destination, math.Float32bits(converted))
 		case DatatypeFloat64:
-			value := storedValueFloat(unsigned, signed, metadata.PixelRepresentation == 1)*transform.slope + transform.intercept
+			value := float64(signed)*transform.slope + transform.intercept
 			if !finite(value) {
 				return nil, ErrUnsupportedScaling
 			}
@@ -115,6 +94,9 @@ func encodeFloat64Values(ctx context.Context, values []float64) ([]byte, error) 
 	return out, nil
 }
 
+// encodeFloat64ValuesInto writes calibrated values as little-endian float64.
+// NaN and ±Inf are legal IEEE 754 payload values in a float NIfTI volume and
+// are written unchanged; the caller has already classified and counted them.
 func encodeFloat64ValuesInto(ctx context.Context, destination []byte, values []float64) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -128,19 +110,9 @@ func encodeFloat64ValuesInto(ctx context.Context, destination []byte, values []f
 				return err
 			}
 		}
-		if !finite(value) {
-			return ErrUnsupportedPixels
-		}
 		binary.LittleEndian.PutUint64(destination[index*8:], math.Float64bits(value))
 	}
 	return nil
-}
-
-func storedValueFloat(unsigned uint64, signed int64, isSigned bool) float64 {
-	if isSigned {
-		return float64(signed)
-	}
-	return float64(unsigned)
 }
 
 func datatypeBytes(datatype int16) (int, bool) {

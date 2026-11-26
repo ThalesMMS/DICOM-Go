@@ -102,12 +102,32 @@ func ComputeDVH(ctx context.Context, dose *Dose, set *rtstruct.StructureSet, roi
 		return DVHResult{}, fmt.Errorf("%w: ROI %d does not overlap the dose grid", ErrGeometryMismatch, roiNumber)
 	}
 
+	// Include zero in the axis as for unsigned grids, while also preserving
+	// negative errors in their own bins. Use the whole grid for a shared axis
+	// across different ROIs.
+	lower, upper := 0.0, max(0, dose.Maximum)
+	if dose.Type == DoseTypeError {
+		for index, value := range dose.Values {
+			if index&4095 == 0 && ctx.Err() != nil {
+				return DVHResult{}, ctx.Err()
+			}
+			lower = min(lower, value)
+		}
+	}
+	scale := 1.0
+	if math.IsInf(upper-lower, 1) {
+		scale = 0.5
+	}
+	scaledLower := lower * scale
+	span := upper*scale - scaledLower
+
 	result := DVHResult{
 		ROINumber:      roiNumber,
 		ROIName:        roiName,
 		DoseUnit:       dose.DisplayUnit(),
 		SummationType:  dose.SummationType,
 		Minimum:        math.Inf(1),
+		Maximum:        math.Inf(-1),
 		PartialOverlap: roiExtendsOutsideDose(set, roiNumber, dose),
 		Provenance:     dose.ProvenanceLabel(),
 	}
@@ -153,8 +173,8 @@ func ComputeDVH(ctx context.Context, dose *Dose, set *rtstruct.StructureSet, roi
 				result.Maximum = value
 			}
 			index := 0
-			if dose.Maximum > 0 {
-				index = int(math.Floor(value / dose.Maximum * float64(opts.Bins-1)))
+			if span > 0 {
+				index = int(math.Floor((value*scale - scaledLower) / span * float64(opts.Bins-1)))
 			}
 			index = max(0, min(index, opts.Bins-1))
 			histogram[index] += voxelVolumeCC
@@ -172,9 +192,9 @@ func ComputeDVH(ctx context.Context, dose *Dose, set *rtstruct.StructureSet, roi
 	cumulative := 0.0
 	for index := opts.Bins - 1; index >= 0; index-- {
 		cumulative += histogram[index]
-		doseValue := 0.0
+		doseValue := lower
 		if opts.Bins > 1 {
-			doseValue = dose.Maximum * float64(index) / float64(opts.Bins-1)
+			doseValue = interpolateDose(lower, upper, float64(index)/float64(opts.Bins-1))
 		}
 		result.Bins[index] = DVHBin{
 			Dose:          doseValue,
@@ -241,9 +261,9 @@ func roiExtendsOutsideDose(set *rtstruct.StructureSet, roiNumber int, dose *Dose
 				column := delta.Dot(first.RowDir) / first.ColSpacing
 				row := delta.Dot(first.ColDir) / first.RowSpacing
 				position := patient.Dot(dose.Geometry.Normal)
-				if column < -0.5 || column > float64(dose.Columns)-0.5 ||
-					row < -0.5 || row > float64(dose.Rows)-0.5 ||
-					position < minPosition || position > maxPosition {
+				if !render.ContinuousIndexInside(column, dose.Columns) ||
+					!render.ContinuousIndexInside(row, dose.Rows) ||
+					position < minPosition || position >= maxPosition {
 					return true
 				}
 			}

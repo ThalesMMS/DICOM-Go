@@ -32,7 +32,7 @@ func TestDocumentRoundTripsAllContentValueTypes(t *testing.T) {
 			PixelOriginInterpretation: "FRAME", FiducialUID: "1.2.3.6",
 		}, Children: []ContentItem{{
 			ValueType: ValueImage, RelationshipType: RelationshipSelectedFrom,
-			Image: ImageReference{SOPClassUID: "1.2.840.10008.5.1.4.1.1.2", SOPInstanceUID: "1.2.3.7", Frames: []int{2}},
+			Image: ImageReference{StudyInstanceUID: "1.2.3.71", SeriesInstanceUID: "1.2.3.72", SOPClassUID: "1.2.840.10008.5.1.4.1.1.2.1", SOPInstanceUID: "1.2.3.7", Frames: []int{2}},
 		}}},
 		{ValueType: ValueSCoord3D, RelationshipType: RelationshipContains, Spatial3D: SpatialReference{
 			FrameOfReferenceUID: "1.2.3.8", GraphicType: "MULTIPOINT",
@@ -46,7 +46,7 @@ func TestDocumentRoundTripsAllContentValueTypes(t *testing.T) {
 		}},
 	}
 	doc := &Document{
-		SOPClassUID: BasicTextSRStorage, SOPInstanceUID: "1.2.3.324", Modality: "SR",
+		SOPClassUID: ExtensibleSRStorage, SOPInstanceUID: "1.2.3.324", Modality: "SR",
 		Title:   CodedEntry{CodeValue: "REPORT", CodingSchemeDesignator: "99TEST", CodeMeaning: "Full value report"},
 		Content: content,
 	}

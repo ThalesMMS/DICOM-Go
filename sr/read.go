@@ -32,6 +32,12 @@ type ReadOptions struct {
 	ResolveReferences bool
 	ReferenceMode     ValidationMode
 	MaxFindings       int
+	// ValidateRelationships adds the findings of ValidateRelationships (the
+	// IOD's by-value relationship content constraints) to the report, in
+	// RelationshipMode (warn by default). SOP Classes without a PS3.3 A.35
+	// table are skipped.
+	ValidateRelationships bool
+	RelationshipMode      ValidationMode
 }
 
 // DefaultReadOptions returns bounded, permissive legacy-compatible defaults.
@@ -43,6 +49,7 @@ func DefaultReadOptions() ReadOptions {
 		MaxPathComponents: 65,
 		ReferenceMode:     ValidationModeWarn,
 		MaxFindings:       1_024,
+		RelationshipMode:  ValidationModeWarn,
 	}
 }
 
@@ -264,6 +271,7 @@ func readDocumentWithOptions(obj *object.Object, options ReadOptions) (ReadResul
 		VerificationFlag:    dec.string(obj, tagVerificationFlag),
 		ContinuityOfContent: dec.string(obj, tagContinuityOfContent),
 	}
+	doc.CompletionFlagDescription, doc.VerifyingObservers, doc.PredecessorDocuments = readLifecycle(dec, obj)
 	rootPath := ContentItemIdentifier{1}
 	var rootContexts ContentItemCodeContexts
 	rootContexts.Path = rootPath.String()
@@ -299,6 +307,20 @@ func readDocumentWithOptions(obj *object.Object, options ReadOptions) (ReadResul
 		result.References = index
 		result.Report = report
 		if err != nil {
+			return result, err
+		}
+	}
+	if options.ValidateRelationships {
+		mode := options.RelationshipMode
+		if mode == 0 {
+			mode = ValidationModeWarn
+		}
+		report, err := ValidateRelationships(doc, RelationshipOptions{
+			Mode: mode, MaxDepth: options.MaxDepth, MaxItems: options.MaxItems, MaxFindings: options.MaxFindings,
+		})
+		result.Report.Findings = append(result.Report.Findings, report.Findings...)
+		result.Report.Truncated = result.Report.Truncated || report.Truncated
+		if err != nil && !errors.Is(err, ErrUnconstrainedSOPClass) {
 			return result, err
 		}
 	}
@@ -416,8 +438,9 @@ func readContentItems(dec *decoder, items []*object.Object, depth int, parentPat
 }
 
 type evidenceHierarchy struct {
-	studyUID  string
-	seriesUID string
+	studyUID    string
+	seriesUID   string
+	retrieveURL string
 }
 
 func readCurrentRequestedProcedureEvidence(dec *decoder, obj *object.Object) map[string]evidenceHierarchy {
@@ -428,11 +451,12 @@ func readCurrentRequestedProcedureEvidence(dec *decoder, obj *object.Object) map
 		seriesItems, _ := dec.sequence(study, tagReferencedSeriesSequence)
 		for _, series := range seriesItems {
 			seriesUID := dec.string(series, tagSeriesInstanceUID)
+			retrieveURL := dec.string(series, tagRetrieveURL)
 			sopItems, _ := dec.sequence(series, tagRefSOPSequence)
 			for _, sop := range sopItems {
 				sopInstanceUID := dec.string(sop, tagRefSOPInstanceUID)
 				if sopInstanceUID != "" {
-					out[sopInstanceUID] = evidenceHierarchy{studyUID: studyUID, seriesUID: seriesUID}
+					out[sopInstanceUID] = evidenceHierarchy{studyUID: studyUID, seriesUID: seriesUID, retrieveURL: retrieveURL}
 				}
 			}
 		}
@@ -446,6 +470,7 @@ func applyEvidenceHierarchy(items []ContentItem, evidence map[string]evidenceHie
 			if hierarchy, ok := evidence[clean(items[i].Image.SOPInstanceUID)]; ok {
 				items[i].Image.StudyInstanceUID = hierarchy.studyUID
 				items[i].Image.SeriesInstanceUID = hierarchy.seriesUID
+				items[i].Image.RetrieveURL = hierarchy.retrieveURL
 			}
 		}
 		applyEvidenceHierarchy(items[i].Children, evidence)

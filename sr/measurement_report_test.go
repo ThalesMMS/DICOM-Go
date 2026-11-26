@@ -3,6 +3,8 @@ package sr
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"github.com/ThalesMMS/dicom-go/internal/commontest"
 	"testing"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -16,9 +18,9 @@ func Test_TID1500MeasurementReport_round_trips_measurements_and_references(t *te
 	report := MeasurementReport{
 		SOPClassUID:         Comprehensive3DSRStorage,
 		SOPInstanceUID:      "1.2.826.0.1.3680043.9.7433.88.34.1",
-		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.88.34.study",
-		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.88.34.series",
-		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.88.34.frame",
+		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.88.34.9102",
+		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.88.34.9103",
+		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.88.34.9107",
 		ContentDate:         "20260621",
 		ContentTime:         "120000",
 		Title: CodedEntry{
@@ -29,21 +31,25 @@ func Test_TID1500MeasurementReport_round_trips_measurements_and_references(t *te
 		Groups: []MeasurementGroup{{
 			Tracking: TrackingIdentifier{UID: "1.2.826.0.1.3680043.9.7433.88.34.2", Identifier: "Lesion 1"},
 			ReferencedSegment: SegmentReference{
-				SOPClassUID:    "1.2.840.10008.5.1.4.1.1.66.4",
-				SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.88.34.3",
-				SegmentNumber:  1,
+				StudyInstanceUID:  "1.2.826.0.1.3680043.9.7433.88.34.9102",
+				SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.88.34.9105",
+				SOPClassUID:       "1.2.840.10008.5.1.4.1.1.66.4",
+				SOPInstanceUID:    "1.2.826.0.1.3680043.9.7433.88.34.3",
+				SegmentNumber:     1,
 			},
 			Measurements: []ReportMeasurement{{
 				ConceptName: CodedEntry{CodeValue: "121206", CodingSchemeDesignator: "DCM", CodeMeaning: "Distance"},
 				Value:       42.5,
 				Units:       CodedEntry{CodeValue: "mm", CodingSchemeDesignator: "UCUM", CodeMeaning: "millimeter"},
 				Image: ImageReference{
-					SOPClassUID:    "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.88.34.4",
-					Frames:         []int{1},
+					StudyInstanceUID:  "1.2.826.0.1.3680043.9.7433.88.34.9102",
+					SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.88.34.9104",
+					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2.1",
+					SOPInstanceUID:    "1.2.826.0.1.3680043.9.7433.88.34.4",
+					Frames:            []int{1},
 				},
 				Spatial: SpatialReference{
-					FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.88.34.frame",
+					FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.88.34.9107",
 					GraphicType:         GraphicTypePoint3D,
 					Coordinates:         []Point3D{{X: 1, Y: 2, Z: 3}},
 				},
@@ -53,6 +59,14 @@ func Test_TID1500MeasurementReport_round_trips_measurements_and_references(t *te
 	file, err := WriteMeasurementReport(&report)
 	if err != nil {
 		t.Fatalf("WriteMeasurementReport: %v", err)
+	}
+	withCommon := report
+	withCommon.Common = object.DerivedCommon{Source: commontest.Source()}
+	if common, err := WriteMeasurementReport(&withCommon); err != nil {
+		t.Fatalf("WriteMeasurementReport with common modules: %v", err)
+	} else {
+		// The report carries its own Frame of Reference; the source's is not inherited.
+		commontest.Check(t, common.Dataset, withCommon.FrameOfReferenceUID != "")
 	}
 	var encoded bytes.Buffer
 	if err := object.WriteFile(&encoded, file); err != nil {
@@ -91,6 +105,39 @@ func Test_TID1500MeasurementReport_round_trips_measurements_and_references(t *te
 	}
 	if roundTrip.Groups[0].ReferencedSegment.SegmentNumber != 1 {
 		t.Fatalf("segment number = %d, want 1", roundTrip.Groups[0].ReferencedSegment.SegmentNumber)
+	}
+}
+
+func TestMeasurementReportValidatesReferencedSegmentNumber(t *testing.T) {
+	for _, number := range []int{-1, 0, 1, 65535, 65536, 65537} {
+		t.Run(fmt.Sprint(number), func(t *testing.T) {
+			report := &MeasurementReport{SOPInstanceUID: "1.2.3.4", Groups: []MeasurementGroup{{
+				ReferencedSegment: SegmentReference{
+					StudyInstanceUID:  "1.2.3.6",
+					SeriesInstanceUID: "1.2.3.7",
+					SOPClassUID:       "1.2.840.10008.5.1.4.1.1.66.4",
+					SOPInstanceUID:    "1.2.3.5",
+					SegmentNumber:     number,
+				},
+			}}}
+			file, err := WriteMeasurementReport(report)
+			if number < 1 || number > 65535 {
+				if !errors.Is(err, ErrInvalidMeasurementReport) || file != nil {
+					t.Fatalf("file=%v, error=%v; want ErrInvalidMeasurementReport", file, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			roundTrip, err := ReadMeasurementReport(file.Dataset)
+			if err != nil || len(roundTrip.Groups) != 1 || roundTrip.Groups[0].ReferencedSegment.SegmentNumber != number {
+				t.Fatalf("round trip=%+v, error=%v", roundTrip, err)
+			}
+		})
+	}
+	if _, err := WriteMeasurementReport(&MeasurementReport{SOPInstanceUID: "1.2.3.4", Groups: []MeasurementGroup{{}}}); err != nil {
+		t.Fatalf("group without a segment reference: %v", err)
 	}
 }
 
@@ -247,9 +294,14 @@ func TestMeasurementReportEmitsMandatoryDocumentAndContainerAttributes(t *testin
 	if contentTime, ok := file.Dataset.GetString(tagContentTime); !ok || contentTime == "" {
 		t.Fatalf("ContentTime = %q, ok=%v; want generated Type 1 value", contentTime, ok)
 	}
-	groups, ok := file.Dataset.GetSequence(tagContentSequence)
+	// The last root child is Imaging Measurements, which holds the group.
+	children, ok := file.Dataset.GetSequence(tagContentSequence)
+	if !ok || len(children) == 0 || conceptMeaning(children[len(children)-1]) != "Imaging Measurements" {
+		t.Fatalf("ContentSequence = %d items, ok=%v; want Imaging Measurements last", len(children), ok)
+	}
+	groups, ok := children[len(children)-1].GetSequence(tagContentSequence)
 	if !ok || len(groups) != 1 {
-		t.Fatalf("ContentSequence = %d groups, ok=%v; want 1", len(groups), ok)
+		t.Fatalf("Imaging Measurements = %d groups, ok=%v; want 1", len(groups), ok)
 	}
 	if got, ok := groups[0].GetString(tagContinuityOfContent); !ok || got != "SEPARATE" {
 		t.Fatalf("group ContinuityOfContent = %q, ok=%v; want SEPARATE", got, ok)

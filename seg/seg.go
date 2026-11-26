@@ -1,15 +1,19 @@
 package seg
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
 	"math/bits"
 	"strings"
+	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
+	"github.com/ThalesMMS/dicom-go/derivation"
 	"github.com/ThalesMMS/dicom-go/internal/derivedio"
+	"github.com/ThalesMMS/dicom-go/internal/dicomcolor"
 	"github.com/ThalesMMS/dicom-go/internal/objectview"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/render"
@@ -24,7 +28,24 @@ const (
 	SegmentationTypeFractional = "FRACTIONAL"
 	SegmentationTypeLabelMap   = "LABELMAP"
 
-	AlgorithmManual = "MANUAL"
+	// DefaultContentLabel is the Content Label Write uses when the
+	// document has none.
+	DefaultContentLabel = "SEGMENTATION"
+
+	// Segmentation Fractional Type (0062,0010) enumerated values.
+	FractionalTypeProbability = "PROBABILITY"
+	FractionalTypeOccupancy   = "OCCUPANCY"
+
+	// Segments Overlap (0062,0013) enumerated values.
+	SegmentsOverlapYes       = "YES"
+	SegmentsOverlapNo        = "NO"
+	SegmentsOverlapUndefined = "UNDEFINED"
+
+	// Segment Algorithm Type (0062,0008) enumerated values. AUTOMATIC and
+	// SEMIAUTOMATIC segments need a Segment Algorithm Name (0062,0009).
+	AlgorithmManual        = "MANUAL"
+	AlgorithmAutomatic     = "AUTOMATIC"
+	AlgorithmSemiautomatic = "SEMIAUTOMATIC"
 
 	// MaxReadFrames bounds the number of frame objects materialized by Read.
 	MaxReadFrames = 100_000
@@ -42,7 +63,32 @@ var (
 	ErrResourceLimitExceeded       = errors.New("dicom/seg: resource limit exceeded")
 	ErrInvalidObject               = errors.New("dicom/seg: invalid object")
 	ErrMissingReference            = errors.New("dicom/seg: missing reference")
+	// ErrTruncatedPixelData reports Pixel Data shorter than Number of Frames
+	// × Rows × Columns samples. ReadWithOptions accepts it on request.
+	ErrTruncatedPixelData = errors.New("dicom/seg: truncated Pixel Data")
 )
+
+// ReadOptions relaxes Read.
+type ReadOptions struct {
+	// AllowTruncatedPixelData reads Pixel Data shorter than its frames: the
+	// missing samples read as zero (background) and the ReadReport lists the
+	// incomplete frames. Read rejects such data with ErrTruncatedPixelData.
+	AllowTruncatedPixelData bool
+}
+
+// ReadReport describes what ReadWithOptions recovered.
+type ReadReport struct {
+	// PixelDataBytes is the length of Pixel Data and ExpectedPixelDataBytes
+	// the length its frames require.
+	PixelDataBytes         int64
+	ExpectedPixelDataBytes int64
+	// IncompleteFrames are the indexes, in Document.Frames, of the frames
+	// whose samples were missing in part or in full and were read as zero.
+	IncompleteFrames []int
+}
+
+// Truncated reports whether Pixel Data was shorter than its frames.
+func (r ReadReport) Truncated() bool { return len(r.IncompleteFrames) > 0 }
 
 var (
 	tagSourceImageSequence           = core.NewTag(0x0008, 0x2112)
@@ -57,15 +103,22 @@ var (
 	tagImagePositionPatient          = core.NewTag(0x0020, 0x0032)
 	tagImageOrientationPatient       = core.NewTag(0x0020, 0x0037)
 	tagInStackPositionNumber         = core.NewTag(0x0020, 0x9057)
+	tagPixelPaddingValue             = core.NewTag(0x0028, 0x0120)
+	tagStackID                       = core.NewTag(0x0020, 0x9056)
+	tagFrameContentSequence          = core.NewTag(0x0020, 0x9111)
 	tagSegmentSequence               = core.NewTag(0x0062, 0x0002)
 	tagSegmentationType              = core.NewTag(0x0062, 0x0001)
 	tagSegmentedPropertyCategorySeq  = core.NewTag(0x0062, 0x0003)
 	tagSegmentNumber                 = core.NewTag(0x0062, 0x0004)
 	tagSegmentLabel                  = core.NewTag(0x0062, 0x0005)
 	tagSegmentAlgorithmType          = core.NewTag(0x0062, 0x0008)
+	tagSegmentAlgorithmName          = core.NewTag(0x0062, 0x0009)
 	tagSegmentIdentificationSequence = core.NewTag(0x0062, 0x000A)
 	tagRecommendedDisplayCIELabValue = core.NewTag(0x0062, 0x000D)
 	tagSegmentedPropertyTypeSeq      = core.NewTag(0x0062, 0x000F)
+	tagMaximumFractionalValue        = core.NewTag(0x0062, 0x000E)
+	tagSegmentationFractionalType    = core.NewTag(0x0062, 0x0010)
+	tagSegmentsOverlap               = core.NewTag(0x0062, 0x0013)
 	tagPixelSpacing                  = core.NewTag(0x0028, 0x0030)
 	tagPixelMeasuresSequence         = core.NewTag(0x0028, 0x9110)
 	tagDimensionIndexValues          = core.NewTag(0x0020, 0x9157)
@@ -75,6 +128,10 @@ var (
 	tagPlanePositionSequence         = core.NewTag(0x0020, 0x9113)
 	tagPlaneOrientationSequence      = core.NewTag(0x0020, 0x9116)
 	tagSharedFunctionalGroups        = core.NewTag(0x5200, 0x9229)
+	tagImageType                     = core.NewTag(0x0008, 0x0008)
+	tagLossyImageCompression         = core.NewTag(0x0028, 0x2110)
+	tagDimensionOrganizationSequence = core.NewTag(0x0020, 0x9221)
+	tagDimensionOrganizationUID      = core.NewTag(0x0020, 0x9164)
 	tagPerFrameFunctionalGroups      = core.NewTag(0x5200, 0x9230)
 )
 
@@ -92,107 +149,46 @@ type CodedEntry struct {
 }
 
 type Segment struct {
-	Number                    int
-	Label                     string
-	AlgorithmType             string
+	Number        int
+	Label         string
+	AlgorithmType string
+	// AlgorithmName is Segment Algorithm Name (0062,0009), required when
+	// AlgorithmType is AUTOMATIC or SEMIAUTOMATIC.
+	AlgorithmName string
+	// AlgorithmIdentification is an optional single-item Segmentation Algorithm
+	// Identification Sequence (0062,0007). The zero value omits the sequence.
+	AlgorithmIdentification   AlgorithmIdentification
 	RecommendedDisplayCIELab  [3]uint16
 	SegmentedPropertyCategory CodedEntry
 	SegmentedPropertyType     CodedEntry
 }
 
+// ValidateAlgorithm checks the segment's algorithm metadata without supplying
+// defaults. Imported segments with unknown metadata can still be displayed,
+// but must not be edited and saved as if their provenance were known.
+func (segment Segment) ValidateAlgorithm() error {
+	algorithmType := strings.TrimSpace(segment.AlgorithmType)
+	switch algorithmType {
+	case AlgorithmManual:
+	case AlgorithmAutomatic, AlgorithmSemiautomatic:
+		if strings.TrimSpace(segment.AlgorithmName) == "" {
+			return fmt.Errorf("%w: segment %d is %s without a Segment Algorithm Name", ErrInvalidObject, segment.Number, algorithmType)
+		}
+	default:
+		return fmt.Errorf("%w: segment %d algorithm type %q", ErrInvalidObject, segment.Number, algorithmType)
+	}
+	return segment.AlgorithmIdentification.Validate()
+}
+
 // RGBToDICOMCIELab converts an 8-bit sRGB color into DICOM's PCS-encoded
 // CIELab triplet (PS3.3 C.10.7.1.1).
 func RGBToDICOMCIELab(rgb [3]int) [3]uint16 {
-	r := displaySRGBToLinear(float64(clampDisplayByte(rgb[0])) / 255)
-	g := displaySRGBToLinear(float64(clampDisplayByte(rgb[1])) / 255)
-	b := displaySRGBToLinear(float64(clampDisplayByte(rgb[2])) / 255)
-
-	x65 := 0.4124564*r + 0.3575761*g + 0.1804375*b
-	y65 := 0.2126729*r + 0.7151522*g + 0.0721750*b
-	z65 := 0.0193339*r + 0.1191920*g + 0.9503041*b
-	x50 := 1.0479298*x65 + 0.0229468*y65 - 0.0501922*z65
-	y50 := 0.0296278*x65 + 0.9904345*y65 - 0.0170738*z65
-	z50 := -0.0092430*x65 + 0.0150552*y65 + 0.7518743*z65
-
-	fx := displayLabF(x50 / 0.96422)
-	fy := displayLabF(y50)
-	fz := displayLabF(z50 / 0.82521)
-	return [3]uint16{
-		scaleDisplayLabWord(116*fy-16, 0, 100),
-		scaleDisplayLabWord(500*(fx-fy), -128, 127),
-		scaleDisplayLabWord(200*(fy-fz), -128, 127),
-	}
+	return dicomcolor.RGBToCIELab(rgb)
 }
 
 // DICOMCIELabToRGB converts a DICOM PCS-encoded CIELab triplet to 8-bit sRGB.
 func DICOMCIELabToRGB(encoded [3]uint16) [3]int {
-	l := float64(encoded[0]) * 100 / 65535
-	a := float64(encoded[1])*255/65535 - 128
-	b := float64(encoded[2])*255/65535 - 128
-	fy := (l + 16) / 116
-	fx := fy + a/500
-	fz := fy - b/200
-	x50 := 0.96422 * displayLabFInverse(fx)
-	y50 := displayLabFInverse(fy)
-	z50 := 0.82521 * displayLabFInverse(fz)
-
-	x65 := 0.9554734*x50 - 0.0230985*y50 + 0.0632593*z50
-	y65 := -0.0283697*x50 + 1.0099955*y50 + 0.0210414*z50
-	z65 := 0.0123140*x50 - 0.0205077*y50 + 1.3303659*z50
-	r := 3.2404542*x65 - 1.5371385*y65 - 0.4985314*z65
-	g := -0.9692660*x65 + 1.8760108*y65 + 0.0415560*z65
-	bl := 0.0556434*x65 - 0.2040259*y65 + 1.0572252*z65
-	return [3]int{
-		int(math.Round(255 * displayLinearToSRGB(r))),
-		int(math.Round(255 * displayLinearToSRGB(g))),
-		int(math.Round(255 * displayLinearToSRGB(bl))),
-	}
-}
-
-func displaySRGBToLinear(value float64) float64 {
-	if value <= 0.04045 {
-		return value / 12.92
-	}
-	return math.Pow((value+0.055)/1.055, 2.4)
-}
-
-func displayLinearToSRGB(value float64) float64 {
-	value = math.Max(0, math.Min(1, value))
-	if value <= 0.0031308 {
-		return 12.92 * value
-	}
-	return 1.055*math.Pow(value, 1/2.4) - 0.055
-}
-
-func displayLabF(value float64) float64 {
-	const delta = 6.0 / 29.0
-	if value > delta*delta*delta {
-		return math.Cbrt(value)
-	}
-	return value/(3*delta*delta) + 4.0/29.0
-}
-
-func displayLabFInverse(value float64) float64 {
-	const delta = 6.0 / 29.0
-	if value > delta {
-		return value * value * value
-	}
-	return 3 * delta * delta * (value - 4.0/29.0)
-}
-
-func scaleDisplayLabWord(value, minValue, maxValue float64) uint16 {
-	value = math.Max(minValue, math.Min(maxValue, value))
-	return uint16(math.Round((value - minValue) * 65535 / (maxValue - minValue)))
-}
-
-func clampDisplayByte(value int) int {
-	if value < 0 {
-		return 0
-	}
-	if value > 255 {
-		return 255
-	}
-	return value
+	return dicomcolor.CIELabToRGB(encoded)
 }
 
 type Frame struct {
@@ -202,22 +198,71 @@ type Frame struct {
 	ReferencedFrameNumber    int
 	Geometry                 render.SliceGeometry
 	Mask                     *roi.RasterMask
-	LabelMap                 []uint16
+	// DerivationDescription is optional per-frame provenance (0008,2111)
+	// inside the Derivation Image Functional Group. It is not a coded claim of
+	// clinical correctness; callers describe the actual processing performed.
+	DerivationDescription string
+	// LabelMap holds the segment number of every pixel of a LABELMAP frame,
+	// row by row.
+	LabelMap []uint16
+	// Fractional holds the samples of a FRACTIONAL frame, row by row, from 0
+	// to the document's MaxFractionalValue. An empty slice is all zero.
+	Fractional []uint8
 }
 
+// Identification is the Series Number, Instance Number and Content
+// Identification Macro (PS3.3 10.9) of a segmentation: Content Label (a CS
+// value), Content Description and Content Creator's Name.
+type Identification = derivedio.Identification
+
 type Document struct {
+	// Common fills the Patient, Study and equipment modules from a source
+	// instance of the same patient (object.InheritCommonModules): Patient
+	// Name, ID, Birth Date and Sex, Study Date and Time, Referring
+	// Physician's Name, Study ID, Accession Number and Position Reference
+	// Indicator are copied when the source has them and written empty (Type
+	// 2) otherwise, and Manufacturer, Manufacturer's Model Name, Device Serial
+	// Number and Software Versions (Enhanced General Equipment, Type 1) come
+	// from Common.Equipment, dicom-go by default.
+	Common              object.DerivedCommon
 	SOPClassUID         string
 	SOPInstanceUID      string
 	StudyInstanceUID    string
 	SeriesInstanceUID   string
 	FrameOfReferenceUID string
-	Rows                int
-	Columns             int
-	SegmentationType    string
-	Segments            []Segment
-	ReferencedImages    []ReferencedImage
-	Geometry            render.VolumeGeometry
-	Frames              []Frame
+	// Identification is the Series Number, Instance Number (both 1 by
+	// default) and the Content Identification (Content Label SEGMENTATION
+	// by default) of the Segmentation Series and Image modules.
+	Identification Identification
+	// ContentDate and ContentTime (Type 1) default to the time of Write.
+	ContentDate      string
+	ContentTime      string
+	Rows             int
+	Columns          int
+	SegmentationType string
+	// FractionalType (PROBABILITY or OCCUPANCY) and MaxFractionalValue (the
+	// sample of probability 1 or full occupancy, 1 to 255) describe FRACTIONAL
+	// segmentations.
+	FractionalType     string
+	MaxFractionalValue int
+	// LabelMapBitsAllocated is 8 or 16 for a label map. Write picks 8 when it
+	// is zero and every segment number fits.
+	LabelMapBitsAllocated int
+	// LabelMapBackground is the pixel value a label map treats as background
+	// (not belonging to any segment), recorded as Pixel Padding Value
+	// (0028,0120) (PS3.3 A.51.4, C.7.5.1.1.2 Note 6). Read takes it from that
+	// attribute, or 0 when it is absent (a negative SS value is dropped as
+	// non-conformant); Write records it for every label map and pads short
+	// frames with it. It is ignored for BINARY and FRACTIONAL segmentations,
+	// which must not carry Pixel Padding Value.
+	LabelMapBackground uint16
+	// SegmentsOverlap is Segments Overlap (0062,0013) as read (YES, NO,
+	// UNDEFINED or empty). Write computes it from the frames instead.
+	SegmentsOverlap  string
+	Segments         []Segment
+	ReferencedImages []ReferencedImage
+	Geometry         render.VolumeGeometry
+	Frames           []Frame
 }
 
 type FromROIOptions struct {
@@ -380,6 +425,7 @@ func normalizeSegment(segment Segment, fallbackNumber int) Segment {
 		segment.Label = fmt.Sprintf("Segment %d", segment.Number)
 	}
 	segment.AlgorithmType = strings.TrimSpace(segment.AlgorithmType)
+	segment.AlgorithmName = strings.TrimSpace(segment.AlgorithmName)
 	if segment.AlgorithmType == "" {
 		segment.AlgorithmType = AlgorithmManual
 	}
@@ -402,6 +448,8 @@ func sameSegmentDefinition(a, b Segment) bool {
 	return a.Number == b.Number &&
 		a.Label == b.Label &&
 		a.AlgorithmType == b.AlgorithmType &&
+		a.AlgorithmName == b.AlgorithmName &&
+		a.AlgorithmIdentification == b.AlgorithmIdentification &&
 		a.RecommendedDisplayCIELab == b.RecommendedDisplayCIELab &&
 		a.SegmentedPropertyCategory == b.SegmentedPropertyCategory &&
 		a.SegmentedPropertyType == b.SegmentedPropertyType
@@ -429,21 +477,54 @@ func referenceKey(ref ReferencedImage) string {
 }
 
 // ToROI reconstructs a three-dimensional ROI segmentation from a DICOM segmentation document for a specified segment. If segmentNumber is zero, it uses the first segment's number.
+// FRACTIONAL frames are thresholded at half the Maximum Fractional Value
+// (see ToROIWithOptions).
 //
 // Returns the reconstructed segmentation, or an error if doc is nil.
 func ToROI(doc *Document, segmentNumber int) (*roi.Segmentation3D, error) {
+	return ToROIWithOptions(doc, segmentNumber, ROIOptions{})
+}
+
+// ROIOptions configure ToROIWithOptions.
+type ROIOptions struct {
+	// FractionalThreshold is the fraction of the Maximum Fractional Value at
+	// or above which a FRACTIONAL sample is inside the ROI; zero means 0.5.
+	// Samples of zero are never inside.
+	FractionalThreshold float64
+}
+
+// ToROIWithOptions is ToROI with a chosen threshold for FRACTIONAL frames.
+func ToROIWithOptions(doc *Document, segmentNumber int, opts ROIOptions) (*roi.Segmentation3D, error) {
 	if doc == nil {
 		return nil, fmt.Errorf("%w: document is nil", ErrInvalidObject)
 	}
-	if segmentNumber == 0 && len(doc.Segments) > 0 {
-		segmentNumber = doc.Segments[0].Number
+	threshold, err := normalizeFractionalThreshold(opts.FractionalThreshold)
+	if err != nil {
+		return nil, err
+	}
+	if segmentNumber == 0 {
+		// A label map may describe its background as a segment.
+		background := labelMapBackground(doc)
+		for _, segment := range doc.Segments {
+			if segment.Number != 0 && segment.Number != background {
+				segmentNumber = segment.Number
+				break
+			}
+		}
 	}
 	out := roi.NewSegmentation3D(doc.Geometry, doc.Columns, doc.Rows)
 	for _, frame := range doc.Frames {
-		if frame.SegmentNumber != segmentNumber {
+		// A label-map frame holds every segment of its position.
+		if len(frame.LabelMap) == 0 && frame.SegmentNumber != segmentNumber {
 			continue
 		}
 		switch {
+		case len(frame.Fractional) > 0 || doc.SegmentationType == SegmentationTypeFractional:
+			mask, err := fractionalMask(doc, frame, threshold)
+			if err != nil {
+				return nil, err
+			}
+			out.SetMask(frame.SliceIndex, mask)
 		case frame.Mask != nil:
 			out.SetMask(frame.SliceIndex, frame.Mask)
 		case len(frame.LabelMap) > 0:
@@ -464,6 +545,12 @@ func ToROI(doc *Document, segmentNumber int) (*roi.Segmentation3D, error) {
 
 // Write serializes a Document into a DICOM segmentation file. If the Document's SOP class UID is not set, it defaults to SegmentationStorage (binary masks). It returns an error if the Document is nil, the SOP class UID is unsupported, or source-image references are incomplete, conflicting, or unresolved.
 func Write(doc *Document) (*object.File, error) {
+	return writeDocument(doc, true, "")
+}
+
+// writeDocument shares the unchanged metadata builder with the incremental
+// path. That path validates its source separately and supplies exact overlap.
+func writeDocument(doc *Document, pixels bool, overlap string) (*object.File, error) {
 	if doc == nil {
 		return nil, fmt.Errorf("%w: document is nil", ErrInvalidObject)
 	}
@@ -485,8 +572,10 @@ func Write(doc *Document) (*object.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateFramePayloads(doc, sopClassUID); err != nil {
-		return nil, err
+	if pixels {
+		if err := validateFramePayloads(doc, sopClassUID); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateWriteDimensions(doc); err != nil {
 		return nil, err
@@ -494,10 +583,29 @@ func Write(doc *Document) (*object.File, error) {
 	if err := validateUnsignedShortFields(doc); err != nil {
 		return nil, err
 	}
+	identification, err := doc.Identification.Elements(DefaultContentLabel)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidObject, err)
+	}
+	now := time.Now()
+	contentDate, contentTime := doc.ContentDate, doc.ContentTime
+	if contentDate == "" {
+		contentDate = now.Format("20060102")
+	}
+	if contentTime == "" {
+		contentTime = now.Format("150405")
+	}
 	elements := []core.Element{
 		derivedio.UI(derivedio.TagSOPClassUID, sopClassUID),
 		derivedio.UI(derivedio.TagSOPInstanceUID, doc.SOPInstanceUID),
 		derivedio.CS(derivedio.TagModality, "SEG"),
+		// A segmentation is derived, lossless and dated (Segmentation
+		// Image and Multi-frame Functional Groups modules).
+		derivedio.Strings(tagImageType, core.VRCS, []string{"DERIVED", "PRIMARY"}),
+		derivedio.CS(tagLossyImageCompression, "00"),
+		derivedio.Str(derivedio.TagContentDate, core.VRDA, contentDate),
+		derivedio.Str(derivedio.TagContentTime, core.VRTM, contentTime),
+		dimensionOrganizationSequence(doc),
 		derivedio.UI(derivedio.TagStudyInstanceUID, doc.StudyInstanceUID),
 		derivedio.UI(derivedio.TagSeriesInstanceUID, doc.SeriesInstanceUID),
 		derivedio.UI(derivedio.TagFrameOfReferenceUID, doc.FrameOfReferenceUID),
@@ -507,40 +615,167 @@ func Write(doc *Document) (*object.File, error) {
 		derivedio.US(derivedio.TagSamplesPerPixel, 1),
 		derivedio.CS(derivedio.TagPhotometricInterpretation, "MONOCHROME2"),
 		derivedio.CS(tagSegmentationType, segmentationType(doc)),
-		segmentSequence(doc.Segments),
+		segmentSequence(doc.Segments, sopClassUID == LabelMapSegmentationStorage),
 		referencedSeriesSequence(doc.ReferencedImages),
-		dimensionIndexSequence(),
+		dimensionIndexSequence(doc, sopClassUID),
 	}
+	elements = append(elements, identification...)
+	// Shared Functional Groups Sequence is Type 2 with zero or one item; an
+	// empty item keeps readers that expect exactly one (DCMTK) working.
 	if shared, ok := sharedFunctionalGroupsSequence(doc); ok {
 		elements = append(elements, shared)
+	} else {
+		elements = append(elements, derivedio.Seq(tagSharedFunctionalGroups, derivedio.DataSet()))
 	}
-	elements = append(elements, perFrameSequence(doc, resolvedSourceReferences))
-	switch sopClassUID {
-	case LabelMapSegmentationStorage:
+	perFrame, err := perFrameSequence(doc, sopClassUID, resolvedSourceReferences)
+	if err != nil {
+		return nil, err
+	}
+	elements = append(elements, perFrame)
+	if overlap == "" {
+		overlap, err = segmentsOverlapValue(doc, sopClassUID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	elements = append(elements, derivedio.CS(tagSegmentsOverlap, overlap))
+	switch {
+	case sopClassUID == LabelMapSegmentationStorage:
+		bitsAllocated, err := labelMapBitsAllocated(doc)
+		if err != nil {
+			return nil, err
+		}
+		pixelVR := core.VROW
+		if bitsAllocated == 8 {
+			pixelVR = core.VROB
+		}
 		elements = append(elements,
-			derivedio.US(derivedio.TagBitsAllocated, 16),
-			derivedio.US(derivedio.TagBitsStored, 16),
-			derivedio.US(derivedio.TagHighBit, 15),
+			derivedio.US(derivedio.TagBitsAllocated, uint16(bitsAllocated)),
+			derivedio.US(derivedio.TagBitsStored, uint16(bitsAllocated)),
+			derivedio.US(derivedio.TagHighBit, uint16(bitsAllocated-1)),
 			derivedio.US(derivedio.TagPixelRepresentation, 0),
-			derivedio.Raw(derivedio.TagPixelData, core.VROW, labelMapPixelData(doc)),
+			// The background of a label map (PS3.3 A.51.4); US, as Pixel
+			// Representation is 0.
+			derivedio.US(tagPixelPaddingValue, doc.LabelMapBackground),
 		)
+		if pixels {
+			elements = append(elements, derivedio.Raw(derivedio.TagPixelData, pixelVR, labelMapPixelData(doc, bitsAllocated)))
+		}
+	case segmentationType(doc) == SegmentationTypeFractional:
+		elements = append(elements,
+			derivedio.CS(tagSegmentationFractionalType, doc.FractionalType),
+			derivedio.US(tagMaximumFractionalValue, uint16(doc.MaxFractionalValue)),
+			derivedio.US(derivedio.TagBitsAllocated, 8),
+			derivedio.US(derivedio.TagBitsStored, 8),
+			derivedio.US(derivedio.TagHighBit, 7),
+			derivedio.US(derivedio.TagPixelRepresentation, 0),
+		)
+		if pixels {
+			elements = append(elements, derivedio.Raw(derivedio.TagPixelData, core.VROB, fractionalPixelData(doc)))
+		}
 	default:
 		elements = append(elements,
 			derivedio.US(derivedio.TagBitsAllocated, 1),
 			derivedio.US(derivedio.TagBitsStored, 1),
 			derivedio.US(derivedio.TagHighBit, 0),
 			derivedio.US(derivedio.TagPixelRepresentation, 0),
-			derivedio.Raw(derivedio.TagPixelData, core.VROB, binaryPixelData(doc)),
 		)
+		if pixels {
+			elements = append(elements, derivedio.Raw(derivedio.TagPixelData, core.VROB, binaryPixelData(doc)))
+		}
 	}
-	return derivedio.File(sopClassUID, doc.SOPInstanceUID, derivedio.Object(elements...))
+	dataset := derivedio.Object(elements...)
+	if err := doc.Common.Apply(dataset, object.InheritAll); err != nil {
+		return nil, err
+	}
+	return derivedio.File(sopClassUID, doc.SOPInstanceUID, dataset)
 }
 
 // Read parses a DICOM segmentation dataset into a Document.
 // It returns an error if the dataset is nil, if the SOP class UID is not
-// SegmentationStorage or LabelMapSegmentationStorage, or if its segmentation
-// type cannot be represented by Document.
+// SegmentationStorage or LabelMapSegmentationStorage, if its segmentation
+// type cannot be represented by Document, or ErrTruncatedPixelData if Pixel
+// Data is shorter than its frames.
 func Read(obj *object.Object) (*Document, error) {
+	doc, _, err := ReadWithOptions(obj, ReadOptions{})
+	return doc, err
+}
+
+// ReadWithOptions is Read with opt-in recovery; the report describes what was
+// recovered.
+func ReadWithOptions(obj *object.Object, opts ReadOptions) (*Document, ReadReport, error) {
+	return readWithOptionsContext(context.Background(), obj, opts)
+}
+
+func readWithOptionsContext(ctx context.Context, obj *object.Object, opts ReadOptions) (*Document, ReadReport, error) {
+	return readWithLayoutContext(ctx, obj, opts, false)
+}
+
+func readWithLayoutContext(ctx context.Context, obj *object.Object, opts ReadOptions, continuousBinary bool) (*Document, ReadReport, error) {
+	var report ReadReport
+	if err := ctx.Err(); err != nil {
+		return nil, report, err
+	}
+	doc, err := readDocumentHeader(obj)
+	if err != nil {
+		return nil, report, err
+	}
+	return readDocumentPixelsContext(ctx, obj, doc, opts, continuousBinary)
+}
+
+func readDocumentPixelsContext(ctx context.Context, obj *object.Object, doc *Document, opts ReadOptions, continuousBinary bool) (*Document, ReadReport, error) {
+	var report ReadReport
+	if err := validateNativePixelData(obj); err != nil {
+		return nil, report, err
+	}
+	geometry, err := readVolumeGeometryContext(ctx, obj, doc.Rows, doc.Columns)
+	if err != nil {
+		return nil, report, err
+	}
+	doc.Geometry = geometry
+	doc.Frames, report, err = readFramesLayoutContext(ctx, obj, doc, continuousBinary)
+	if err != nil {
+		return nil, report, err
+	}
+	if report.Truncated() && !opts.AllowTruncatedPixelData {
+		return nil, report, fmt.Errorf("%w: %d bytes for %d frames of %d x %d need %d (%d incomplete frames)", ErrTruncatedPixelData,
+			report.PixelDataBytes, len(doc.Frames), doc.Rows, doc.Columns, report.ExpectedPixelDataBytes, len(report.IncompleteFrames))
+	}
+	sourceReferences, err := newSourceReferenceIndex(doc.ReferencedImages)
+	if err != nil {
+		return nil, report, err
+	}
+	if _, err := sourceReferences.resolveFrames(doc.Frames); err != nil {
+		return nil, report, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, report, err
+	}
+	return doc, report, nil
+}
+
+// ReadHeader reads SEG identity, segment definitions and source references
+// without materializing or validating pixel samples. Apply bounded metadata
+// read options to the source Object; use Read/ReadContext for pixel validation.
+func ReadHeader(obj *object.Object) (*Document, error) {
+	doc, err := readDocumentHeader(obj)
+	if err != nil {
+		return nil, err
+	}
+	if len(doc.Segments) == 0 || len(doc.Segments) > 65535 {
+		return nil, fmt.Errorf("%w: invalid segment count", ErrInvalidObject)
+	}
+	seen := map[int]bool{}
+	for _, segment := range doc.Segments {
+		if segment.Number < 1 || segment.Number > 65535 || seen[segment.Number] {
+			return nil, fmt.Errorf("%w: invalid/duplicate segment number", ErrInvalidObject)
+		}
+		seen[segment.Number] = true
+	}
+	return doc, nil
+}
+
+func readDocumentHeader(obj *object.Object) (*Document, error) {
 	if obj == nil {
 		return nil, fmt.Errorf("%w: dataset is nil", ErrInvalidObject)
 	}
@@ -548,38 +783,33 @@ func Read(obj *object.Object) (*Document, error) {
 	if sopClassUID != SegmentationStorage && sopClassUID != LabelMapSegmentationStorage {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedSOPClass, sopClassUID)
 	}
+	segments, err := readSegments(obj)
+	if err != nil {
+		return nil, err
+	}
 	doc := &Document{
 		SOPClassUID:         sopClassUID,
 		SOPInstanceUID:      derivedio.CleanUID(obj, derivedio.TagSOPInstanceUID),
 		StudyInstanceUID:    derivedio.CleanUID(obj, derivedio.TagStudyInstanceUID),
 		SeriesInstanceUID:   derivedio.CleanUID(obj, derivedio.TagSeriesInstanceUID),
 		FrameOfReferenceUID: derivedio.CleanUID(obj, derivedio.TagFrameOfReferenceUID),
+		Identification:      derivedio.ReadIdentification(obj),
+		ContentDate:         derivedio.CleanString(obj, derivedio.TagContentDate),
+		ContentTime:         derivedio.CleanString(obj, derivedio.TagContentTime),
 		Rows:                derivedio.Int(obj, derivedio.TagRows),
 		Columns:             derivedio.Int(obj, derivedio.TagColumns),
 		SegmentationType:    derivedio.CleanString(obj, tagSegmentationType),
-		Segments:            readSegments(obj),
+		SegmentsOverlap:     derivedio.CleanString(obj, tagSegmentsOverlap),
+		Segments:            segments,
 		ReferencedImages:    readReferencedImages(obj),
 	}
 	if err := validateRepresentableSegmentationType(doc.SOPClassUID, doc.SegmentationType); err != nil {
 		return nil, err
 	}
+	if err := readSampleLayout(obj, doc); err != nil {
+		return nil, err
+	}
 	if err := validateReadDimensions(obj, doc); err != nil {
-		return nil, err
-	}
-	if err := validateNativePixelData(obj); err != nil {
-		return nil, err
-	}
-	geometry, err := readVolumeGeometry(obj, doc.Rows, doc.Columns)
-	if err != nil {
-		return nil, err
-	}
-	doc.Geometry = geometry
-	doc.Frames = readFrames(obj, doc)
-	sourceReferences, err := newSourceReferenceIndex(doc.ReferencedImages)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := sourceReferences.resolveFrames(doc.Frames); err != nil {
 		return nil, err
 	}
 	return doc, nil
@@ -646,8 +876,8 @@ func validateNativePixelData(obj *object.Object) error {
 	}
 }
 
-func readVolumeGeometry(obj *object.Object, rows, columns int) (render.VolumeGeometry, error) {
-	template, fallbackSpacing, ok := readSharedSliceGeometry(obj, rows, columns)
+func readVolumeGeometryContext(ctx context.Context, obj *object.Object, rows, columns int) (render.VolumeGeometry, error) {
+	template, fallbackSpacing, ok := readSliceGeometryTemplate(obj, rows, columns)
 	if !ok {
 		return render.VolumeGeometry{}, nil
 	}
@@ -657,6 +887,9 @@ func readVolumeGeometry(obj *object.Object, rows, columns int) (render.VolumeGeo
 	origins := make(map[int]render.Vec3, len(frameItems))
 	firstIndex, lastIndex := -1, -1
 	for i, item := range frameItems {
+		if err := ctx.Err(); err != nil {
+			return render.VolumeGeometry{}, err
+		}
 		index := i
 		if values, valuesOK := readDimensionIndexValues(item); valuesOK {
 			if decoded, indexOK := sliceIndexFromDimensionValues(values, spatialDimensionIndex); indexOK {
@@ -666,7 +899,7 @@ func readVolumeGeometry(obj *object.Object, rows, columns int) (render.VolumeGeo
 		if index < 0 || index >= MaxReadFrames {
 			return render.VolumeGeometry{}, fmt.Errorf("%w: slice index %d exceeds %d", ErrResourceLimitExceeded, index, MaxReadFrames-1)
 		}
-		origin, originOK := readFrameImagePosition(item)
+		origin, originOK := readFrameImagePosition(obj, i)
 		if !originOK {
 			continue
 		}
@@ -702,6 +935,9 @@ func readVolumeGeometry(obj *object.Object, rows, columns int) (render.VolumeGeo
 	anchor := origins[firstIndex]
 	if step.Length() > 0 {
 		for index := 0; index <= lastIndex; index++ {
+			if err := ctx.Err(); err != nil {
+				return render.VolumeGeometry{}, err
+			}
 			geometry := template
 			geometry.Origin = anchor.Add(step.Scale(float64(index - firstIndex)))
 			if origin, exists := origins[index]; exists {
@@ -711,6 +947,9 @@ func readVolumeGeometry(obj *object.Object, rows, columns int) (render.VolumeGeo
 		}
 	} else {
 		for index := 0; index <= lastIndex; index++ {
+			if err := ctx.Err(); err != nil {
+				return render.VolumeGeometry{}, err
+			}
 			origin, exists := origins[index]
 			if !exists {
 				continue
@@ -728,20 +967,19 @@ func readVolumeGeometry(obj *object.Object, rows, columns int) (render.VolumeGeo
 	return geometry, nil
 }
 
-func readSharedSliceGeometry(obj *object.Object, rows, columns int) (render.SliceGeometry, float64, bool) {
-	sharedItems := derivedio.Sequence(obj, tagSharedFunctionalGroups)
-	if len(sharedItems) == 0 {
-		return render.SliceGeometry{}, 0, false
-	}
-	pixelMeasures := derivedio.Sequence(sharedItems[0], tagPixelMeasuresSequence)
-	orientationItems := derivedio.Sequence(sharedItems[0], tagPlaneOrientationSequence)
-	if len(pixelMeasures) == 0 || len(orientationItems) == 0 {
+// readSliceGeometryTemplate reads the Pixel Measures and Plane Orientation of
+// the first frame, shared or per-frame, through the functional group resolver.
+func readSliceGeometryTemplate(obj *object.Object, rows, columns int) (render.SliceGeometry, float64, bool) {
+	pixelMeasures, _, _ := obj.FunctionalGroupItem(0, tagPixelMeasuresSequence)
+	orientationItem, _, _ := obj.FunctionalGroupItem(0, tagPlaneOrientationSequence)
+	if pixelMeasures == nil || orientationItem == nil {
 		return render.SliceGeometry{}, 0, false
 	}
 
-	spacing, spacingErr := pixelMeasures[0].GetFloats(tagPixelSpacing)
-	orientation, orientationErr := orientationItems[0].GetFloats(tagImageOrientationPatient)
-	if spacingErr != nil || len(spacing) < 2 || !positiveFinite(spacing[0]) || !positiveFinite(spacing[1]) ||
+	rowSpacing, columnSpacing, spacingValues, spacingErr := pixelMeasures.SpacingPair(tagPixelSpacing)
+	spacing := []float64{rowSpacing, columnSpacing}
+	orientation, orientationErr := orientationItem.GetFloats(tagImageOrientationPatient)
+	if spacingErr != nil || spacingValues == object.SpacingValuesAbsent ||
 		orientationErr != nil || len(orientation) < 6 {
 		return render.SliceGeometry{}, 0, false
 	}
@@ -753,9 +991,9 @@ func readSharedSliceGeometry(obj *object.Object, rows, columns int) (render.Slic
 		return render.SliceGeometry{}, 0, false
 	}
 
-	fallbackSpacing := positiveFloat(pixelMeasures[0], tagSpacingBetweenSlices)
+	fallbackSpacing := positiveFloat(pixelMeasures, tagSpacingBetweenSlices)
 	if fallbackSpacing == 0 {
-		fallbackSpacing = positiveFloat(pixelMeasures[0], tagSliceThickness)
+		fallbackSpacing = positiveFloat(pixelMeasures, tagSliceThickness)
 	}
 	return render.SliceGeometry{
 		RowDir: rowDir, ColDir: colDir, Normal: normal,
@@ -779,10 +1017,8 @@ func validateRepresentableSegmentationType(sopClassUID string, segmentationType 
 	switch sopClassUID {
 	case SegmentationStorage:
 		switch segmentationType {
-		case "", SegmentationTypeBinary:
+		case "", SegmentationTypeBinary, SegmentationTypeFractional:
 			return nil
-		case SegmentationTypeFractional:
-			return fmt.Errorf("%w: %s samples are not representable as binary masks", ErrUnsupportedSegmentationType, segmentationType)
 		default:
 			return fmt.Errorf("%w: %q for Segmentation Storage", ErrUnsupportedSegmentationType, segmentationType)
 		}
@@ -807,16 +1043,33 @@ func segmentationType(doc *Document) string {
 	return SegmentationTypeBinary
 }
 
-func segmentSequence(segments []Segment) core.Element {
+// segmentSequence encodes the Segment Sequence. Label-map segment numbers are
+// pixel values and are kept as given, zero (a described background) included;
+// other segments with no number are numbered by position.
+func segmentSequence(segments []Segment, labelMap bool) core.Element {
 	items := make([]core.DataSet, 0, len(segments))
 	for i, segment := range segments {
+		number := segment.Number
+		hasLabel := strings.TrimSpace(segment.Label) != ""
 		segment = normalizeSegment(segment, i+1)
+		if labelMap {
+			segment.Number = number
+			if !hasLabel && number == 0 {
+				segment.Label = "Segment 0"
+			}
+		}
 		elements := []core.Element{
 			derivedio.US(tagSegmentNumber, uint16(segment.Number)),
 			derivedio.LO(tagSegmentLabel, segment.Label),
 			derivedio.CS(tagSegmentAlgorithmType, segment.AlgorithmType),
 			codeSequence(tagSegmentedPropertyCategorySeq, segment.SegmentedPropertyCategory),
 			codeSequence(tagSegmentedPropertyTypeSeq, segment.SegmentedPropertyType),
+		}
+		if segment.AlgorithmName != "" {
+			elements = append(elements, derivedio.LO(tagSegmentAlgorithmName, segment.AlgorithmName))
+		}
+		if segment.AlgorithmIdentification != (AlgorithmIdentification{}) {
+			elements = append(elements, algorithmIdentificationSequence(segment.AlgorithmIdentification))
 		}
 		if segment.RecommendedDisplayCIELab != ([3]uint16{}) {
 			elements = append(elements, derivedio.US(tagRecommendedDisplayCIELabValue,
@@ -865,9 +1118,78 @@ func referencedSeriesSequence(refs []ReferencedImage) core.Element {
 }
 
 func validateFramePayloads(doc *Document, sopClassUID string) error {
+	return validateFramePayloadsContext(context.Background(), doc, sopClassUID)
+}
+
+func validateFramePayloadsContext(ctx context.Context, doc *Document, sopClassUID string) error {
+	fractional := sopClassUID == SegmentationStorage && segmentationType(doc) == SegmentationTypeFractional
+	if fractional {
+		if doc.FractionalType != FractionalTypeProbability && doc.FractionalType != FractionalTypeOccupancy {
+			return fmt.Errorf("%w: Segmentation Fractional Type %q", ErrInvalidObject, doc.FractionalType)
+		}
+		if doc.MaxFractionalValue < 1 || doc.MaxFractionalValue > 255 {
+			return fmt.Errorf("%w: Maximum Fractional Value %d is outside 1-255", ErrInvalidObject, doc.MaxFractionalValue)
+		}
+	}
+	pixels := doc.Rows * doc.Columns
+	var described map[int]bool
+	if sopClassUID == LabelMapSegmentationStorage {
+		described = make(map[int]bool, len(doc.Segments))
+		for _, segment := range doc.Segments {
+			described[segment.Number] = true
+		}
+	}
 	for i, frame := range doc.Frames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if frame.Mask != nil && (frame.Mask.Rows != doc.Rows || frame.Mask.Columns != doc.Columns) {
 			return fmt.Errorf("%w: frame %d mask dimensions %dx%d do not match %dx%d", ErrInvalidObject, i, frame.Mask.Columns, frame.Mask.Rows, doc.Columns, doc.Rows)
+		}
+		if len(frame.Fractional) > 0 && !fractional {
+			return fmt.Errorf("%w: frame %d has fractional samples in a %s segmentation", ErrUnsupportedFramePayload, i, segmentationType(doc))
+		}
+		switch {
+		case fractional:
+			if len(frame.Fractional) == 0 && frame.Mask != nil && !frame.Mask.Empty() {
+				return fmt.Errorf("%w: fractional frame %d contains only a binary mask", ErrUnsupportedFramePayload, i)
+			}
+			if len(frame.Fractional) != 0 && len(frame.Fractional) != pixels {
+				return fmt.Errorf("%w: fractional frame %d has %d samples, want %d", ErrInvalidObject, i, len(frame.Fractional), pixels)
+			}
+			for j, sample := range frame.Fractional {
+				if j%4096 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				if int(sample) > doc.MaxFractionalValue {
+					return fmt.Errorf("%w: fractional frame %d sample %d exceeds Maximum Fractional Value %d", ErrInvalidObject, i, sample, doc.MaxFractionalValue)
+				}
+			}
+			continue
+		case sopClassUID == LabelMapSegmentationStorage:
+			if len(frame.LabelMap) == 0 && frame.Mask != nil && !frame.Mask.Empty() {
+				return fmt.Errorf("%w: label-map frame %d contains only a binary mask", ErrUnsupportedFramePayload, i)
+			}
+			if len(frame.LabelMap) > pixels {
+				return fmt.Errorf("%w: label-map frame %d has %d values, want %d", ErrInvalidObject, i, len(frame.LabelMap), pixels)
+			}
+			// Every encoded value, including the background that pads a
+			// short frame, must be a described segment (PS3.3 C.8.20.2.3.3).
+			if len(frame.LabelMap) < pixels && !described[int(doc.LabelMapBackground)] {
+				return fmt.Errorf("%w: label-map frame %d pads with background %d, which no segment describes", ErrInvalidObject, i, doc.LabelMapBackground)
+			}
+			for j, value := range frame.LabelMap {
+				if j%4096 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				if !described[int(value)] {
+					return fmt.Errorf("%w: label-map frame %d uses value %d, which no segment describes", ErrInvalidObject, i, value)
+				}
+			}
 		}
 		switch sopClassUID {
 		case SegmentationStorage:
@@ -887,11 +1209,28 @@ func validateUnsignedShortFields(doc *Document) error {
 	if doc.Rows <= 0 || doc.Rows > 1<<16-1 || doc.Columns <= 0 || doc.Columns > 1<<16-1 {
 		return fmt.Errorf("%w: dimensions %dx%d are outside US", ErrInvalidObject, doc.Columns, doc.Rows)
 	}
+	labelMap := doc.SOPClassUID == LabelMapSegmentationStorage
+	seen := make(map[int]bool, len(doc.Segments))
 	for i, segment := range doc.Segments {
-		number := normalizeSegment(segment, i+1).Number
-		if number <= 0 || number > 1<<16-1 {
+		number := segment.Number
+		if !labelMap {
+			number = normalizeSegment(segment, i+1).Number
+		}
+		if number < 0 || (number == 0 && !labelMap) || number > 1<<16-1 {
 			return fmt.Errorf("%w: segment %d number %d is outside US", ErrInvalidObject, i, number)
 		}
+		if seen[number] {
+			return fmt.Errorf("%w: segment number %d is not unique", ErrInvalidObject, number)
+		}
+		normalized := normalizeSegment(segment, i+1)
+		normalized.Number = number
+		if err := normalized.ValidateAlgorithm(); err != nil {
+			return err
+		}
+		seen[number] = true
+	}
+	if labelMap {
+		return nil
 	}
 	for i, frame := range doc.Frames {
 		if frame.SegmentNumber <= 0 || frame.SegmentNumber > 1<<16-1 {
@@ -971,11 +1310,53 @@ func geometryThickness(geometry render.VolumeGeometry) float64 {
 	return 1
 }
 
-func dimensionIndexSequence() core.Element {
-	return derivedio.Seq(tagDimensionIndexSequence, derivedio.DataSet(
-		tagPointerElement(tagDimensionIndexPointer, tagInStackPositionNumber),
-		tagPointerElement(tagFunctionalGroupPointer, tagPlanePositionSequence),
-	))
+// dimensionIndexSequence describes the frame dimensions: the Referenced
+// Segment Number (except in a label map, whose frames hold every segment)
+// and the frame position, as Image Position (Patient) when every frame has
+// one, otherwise as In-Stack Position Number in a single stack.
+// dimensionOrganizationUID identifies the single Dimension Organization of
+// a segmentation, derived from its SOP Instance UID.
+func dimensionOrganizationUID(doc *Document) string {
+	return derivedio.DerivedUID(doc.SOPInstanceUID, "dimension-organization")
+}
+
+func dimensionOrganizationSequence(doc *Document) core.Element {
+	return derivedio.Seq(tagDimensionOrganizationSequence, derivedio.DataSet(derivedio.UI(tagDimensionOrganizationUID, dimensionOrganizationUID(doc))))
+}
+
+func dimensionIndexSequence(doc *Document, sopClassUID string) core.Element {
+	organization := derivedio.UI(tagDimensionOrganizationUID, dimensionOrganizationUID(doc))
+	var items []core.DataSet
+	if sopClassUID != LabelMapSegmentationStorage {
+		items = append(items, derivedio.DataSet(
+			tagPointerElement(tagDimensionIndexPointer, tagReferencedSegmentNumber()),
+			tagPointerElement(tagFunctionalGroupPointer, tagSegmentIdentificationSequence),
+			organization,
+		))
+	}
+	if framesHavePositions(doc) {
+		items = append(items, derivedio.DataSet(
+			tagPointerElement(tagDimensionIndexPointer, tagImagePositionPatient),
+			tagPointerElement(tagFunctionalGroupPointer, tagPlanePositionSequence),
+			organization,
+		))
+	} else {
+		items = append(items, derivedio.DataSet(
+			tagPointerElement(tagDimensionIndexPointer, tagInStackPositionNumber),
+			tagPointerElement(tagFunctionalGroupPointer, tagFrameContentSequence),
+			organization,
+		))
+	}
+	return derivedio.Seq(tagDimensionIndexSequence, items...)
+}
+
+func framesHavePositions(doc *Document) bool {
+	for _, frame := range doc.Frames {
+		if _, ok := geometryForFrame(doc.Geometry, frame); !ok {
+			return false
+		}
+	}
+	return len(doc.Frames) > 0
 }
 
 func tagPointerElement(tag core.Tag, value core.Tag) core.Element {
@@ -986,30 +1367,32 @@ func tagPointerElement(tag core.Tag, value core.Tag) core.Element {
 }
 
 // perFrameSequence constructs the per-frame functional groups DICOM sequence, containing segment identification, dimension indices, and reference information for each frame.
-func perFrameSequence(doc *Document, sourceReferences []ReferencedImage) core.Element {
+func perFrameSequence(doc *Document, sopClassUID string, sourceReferences []ReferencedImage) (core.Element, error) {
 	items := make([]core.DataSet, 0, len(doc.Frames))
+	positioned := framesHavePositions(doc)
 	for frameIndex, frame := range doc.Frames {
-		elements := []core.Element{
-			derivedio.Seq(tagSegmentIdentificationSequence, derivedio.DataSet(derivedio.US(tagReferencedSegmentNumber(), uint16(frame.SegmentNumber)))),
-			dimensionIndexValuesElement(frame),
+		var elements []core.Element
+		// The Segmentation Functional Group is required unless the type is
+		// LABELMAP, where it is absent (PS3.3 Table A.51-2).
+		if sopClassUID != LabelMapSegmentationStorage {
+			elements = append(elements, derivedio.Seq(tagSegmentIdentificationSequence, derivedio.DataSet(derivedio.US(tagReferencedSegmentNumber(), uint16(frame.SegmentNumber)))))
 		}
-		if frame.ReferencedSOPInstanceUID != "" {
-			elements = append(elements, derivedio.UI(derivedio.TagRefSOPInstanceUID, frame.ReferencedSOPInstanceUID))
-		}
-		if frame.ReferencedFrameNumber > 0 {
-			elements = append(elements, derivedio.IS(derivedio.TagRefFrameNumber, frame.ReferencedFrameNumber))
-		}
+		elements = append(elements, frameContentSequence(frame, sopClassUID != LabelMapSegmentationStorage, !positioned))
 		if geom, ok := geometryForFrame(doc.Geometry, frame); ok {
 			elements = append(elements, derivedio.Seq(tagPlanePositionSequence, derivedio.DataSet(
 				derivedio.DS(tagImagePositionPatient, geom.Origin.X, geom.Origin.Y, geom.Origin.Z),
 			)))
 		}
 		if frame.ReferencedSOPInstanceUID != "" {
-			elements = append(elements, derivationImageSequence(sourceReferences[frameIndex], frame))
+			derivationImage, err := derivationImageSequence(sourceReferences[frameIndex], frame)
+			if err != nil {
+				return core.Element{}, fmt.Errorf("%w: frame %d: %v", ErrMissingReference, frameIndex+1, err)
+			}
+			elements = append(elements, derivationImage)
 		}
 		items = append(items, derivedio.DataSet(elements...))
 	}
-	return derivedio.Seq(tagPerFrameFunctionalGroups, items...)
+	return derivedio.Seq(tagPerFrameFunctionalGroups, items...), nil
 }
 
 func geometryForFrame(geometry render.VolumeGeometry, frame Frame) (render.SliceGeometry, bool) {
@@ -1034,18 +1417,20 @@ func validSliceGeometry(geometry render.SliceGeometry) bool {
 		geometry.ColDir.Length() > 0
 }
 
-func derivationImageSequence(ref ReferencedImage, frame Frame) core.Element {
-	source := []core.Element{}
-	if ref.SOPClassUID != "" {
-		source = append(source, derivedio.UI(derivedio.TagRefSOPClassUID, ref.SOPClassUID))
-	}
-	source = append(source, derivedio.UI(derivedio.TagRefSOPInstanceUID, frame.ReferencedSOPInstanceUID))
+// derivationImageSequence is the Derivation Image Functional Group of a
+// frame (PS3.3 C.8.20.3.1): derivation 113076 (Segmentation) from the source
+// frame, referenced as the input of image processing (121322); both codes
+// are Type 1 in the Derivation Image Macro.
+func derivationImageSequence(ref ReferencedImage, frame Frame) (core.Element, error) {
+	source := derivation.Source{SOPClassUID: ref.SOPClassUID, SOPInstanceUID: frame.ReferencedSOPInstanceUID, Purpose: &derivation.SourceImageForProcessing}
 	if frame.ReferencedFrameNumber > 0 {
-		source = append(source, derivedio.IS(derivedio.TagRefFrameNumber, frame.ReferencedFrameNumber))
+		source.Frames = []int{frame.ReferencedFrameNumber}
 	}
-	return derivedio.Seq(tagDerivationImageSequence, derivedio.DataSet(
-		derivedio.Seq(tagSourceImageSequence, derivedio.DataSet(source...)),
-	))
+	item, err := derivation.Derivation{Description: frame.DerivationDescription, Codes: []derivation.Code{derivation.Segmentation}, Sources: []derivation.Source{source}}.Item()
+	if err != nil {
+		return core.Element{}, err
+	}
+	return derivedio.Seq(tagDerivationImageSequence, item), nil
 }
 
 type sourceReferenceIndex struct {
@@ -1279,31 +1664,92 @@ func minInt(a, b int) int {
 	return b
 }
 
-// labelMapPixelData returns the serialized pixel data for the label-map frames in a document.
-func labelMapPixelData(doc *Document) []byte {
+// labelMapPixelData returns the serialized pixel data for the label-map
+// frames in a document, with one or two bytes per value.
+func labelMapPixelData(doc *Document, bitsAllocated int) []byte {
 	valuesPerFrame := doc.Rows * doc.Columns
-	values := make([]uint16, 0, valuesPerFrame*len(doc.Frames))
-	for _, frame := range doc.Frames {
-		labelMap := frame.LabelMap
-		if len(labelMap) < valuesPerFrame {
-			padded := make([]uint16, valuesPerFrame)
-			copy(padded, labelMap)
-			labelMap = padded
+	bytesPerValue := bitsAllocated / 8
+	out := make([]byte, valuesPerFrame*len(doc.Frames)*bytesPerValue)
+	for frameIndex, frame := range doc.Frames {
+		base := frameIndex * valuesPerFrame * bytesPerValue
+		for i := 0; i < valuesPerFrame; i++ {
+			// A short frame is padded with the background.
+			value := doc.LabelMapBackground
+			if i < len(frame.LabelMap) {
+				value = frame.LabelMap[i]
+			}
+			if bytesPerValue == 1 {
+				out[base+i] = byte(value)
+			} else {
+				binary.LittleEndian.PutUint16(out[base+2*i:], value)
+			}
 		}
-		values = append(values, labelMap[:valuesPerFrame]...)
 	}
-	return derivedio.Uint16Bytes(values)
+	if len(out)%2 != 0 {
+		out = append(out, 0)
+	}
+	return out
+}
+
+// labelMapBitsAllocated returns 8 or 16: the requested width, or 8 when every
+// described segment number, pixel value and the background fit in a byte.
+func labelMapBitsAllocated(doc *Document) (int, error) {
+	// Pixel Padding Value is a sample value too.
+	largest := int(doc.LabelMapBackground)
+	for _, segment := range doc.Segments {
+		largest = max(largest, segment.Number)
+	}
+	for _, frame := range doc.Frames {
+		for _, value := range frame.LabelMap {
+			largest = max(largest, int(value))
+		}
+	}
+	switch doc.LabelMapBitsAllocated {
+	case 0:
+		if largest <= 0xFF {
+			return 8, nil
+		}
+		return 16, nil
+	case 8:
+		if largest > 0xFF {
+			return 0, fmt.Errorf("%w: label %d does not fit 8-bit label-map samples", ErrInvalidObject, largest)
+		}
+		return 8, nil
+	case 16:
+		return 16, nil
+	default:
+		return 0, fmt.Errorf("%w: label-map Bits Allocated %d is not 8 or 16", ErrInvalidObject, doc.LabelMapBitsAllocated)
+	}
+}
+
+// fractionalPixelData concatenates the 8-bit samples of the frames.
+func fractionalPixelData(doc *Document) []byte {
+	samplesPerFrame := doc.Rows * doc.Columns
+	out := make([]byte, samplesPerFrame*len(doc.Frames), samplesPerFrame*len(doc.Frames)+1)
+	for frameIndex, frame := range doc.Frames {
+		copy(out[frameIndex*samplesPerFrame:], frame.Fractional)
+	}
+	if len(out)%2 != 0 {
+		out = append(out, 0)
+	}
+	return out
 }
 
 // readSegments reads segment definitions from a DICOM dataset object.
-func readSegments(obj *object.Object) []Segment {
+func readSegments(obj *object.Object) ([]Segment, error) {
 	items := derivedio.Sequence(obj, tagSegmentSequence)
 	out := make([]Segment, 0, len(items))
 	for _, item := range items {
+		algorithm, err := readAlgorithmIdentification(item)
+		if err != nil {
+			return nil, err
+		}
 		segment := Segment{
 			Number:                    derivedio.Int(item, tagSegmentNumber),
 			Label:                     derivedio.CleanString(item, tagSegmentLabel),
 			AlgorithmType:             derivedio.CleanString(item, tagSegmentAlgorithmType),
+			AlgorithmName:             derivedio.CleanString(item, tagSegmentAlgorithmName),
+			AlgorithmIdentification:   algorithm,
 			SegmentedPropertyCategory: readCodeSequence(item, tagSegmentedPropertyCategorySeq),
 			SegmentedPropertyType:     readCodeSequence(item, tagSegmentedPropertyTypeSeq),
 		}
@@ -1312,7 +1758,7 @@ func readSegments(obj *object.Object) []Segment {
 		}
 		out = append(out, segment)
 	}
-	return out
+	return out, nil
 }
 
 func uint16ValuesRepresentable(values []int64) bool {
@@ -1361,25 +1807,71 @@ func readReferencedImages(obj *object.Object) []ReferencedImage {
 	return out
 }
 
-// readFrames extracts frame data from a DICOM segmentation dataset. If per-frame metadata is absent, frames are populated based on the dataset's frame count. Returns a slice of Frame objects with segment information and pixel data.
-func readFrames(obj *object.Object, doc *Document) []Frame {
+// readFrames extracts frame data from a DICOM segmentation dataset. If
+// per-frame metadata is absent, frames are populated based on the dataset's
+// frame count. Samples missing from a short Pixel Data read as zero; the
+// report lists the frames they belong to.
+func readFrames(obj *object.Object, doc *Document) ([]Frame, ReadReport) {
 	frameItems := derivedio.Sequence(obj, tagPerFrameFunctionalGroups)
 	if len(frameItems) == 0 {
 		frameCount := derivedio.Int(obj, derivedio.TagNumberOfFrames)
 		frameItems = make([]*object.Object, frameCount)
 	}
-	switch doc.SOPClassUID {
-	case LabelMapSegmentationStorage:
-		return readLabelMapFrames(obj, doc, frameItems)
+	dataBytes := 0
+	objectview.VisitRaw(obj, derivedio.TagPixelData, func(data objectview.Raw) { dataBytes = data.Len() })
+	report := pixelDataCoverage(doc, len(frameItems), dataBytes)
+	switch {
+	case doc.SOPClassUID == LabelMapSegmentationStorage:
+		return readLabelMapFrames(obj, doc, frameItems), report
+	case doc.SegmentationType == SegmentationTypeFractional:
+		return readFractionalFrames(obj, doc, frameItems), report
 	default:
-		return readBinaryFrames(obj, doc, frameItems)
+		return readBinaryFrames(obj, doc, frameItems), report
 	}
+}
+
+// pixelDataCoverage compares dataBytes of Pixel Data with the length that
+// frameCount frames of doc's sample layout require: 1 bit per pixel packed
+// across frames for BINARY, a byte for FRACTIONAL and 8 or 16 bits for a
+// label map.
+func pixelDataCoverage(doc *Document, frameCount, dataBytes int) ReadReport {
+	pixels := int64(doc.Rows) * int64(doc.Columns)
+	report := ReadReport{PixelDataBytes: int64(dataBytes)}
+	if pixels <= 0 || frameCount <= 0 {
+		return report
+	}
+	// A frame is complete when its last sample (bit) lies within the data.
+	var sampleBits int64
+	switch {
+	case doc.SOPClassUID == LabelMapSegmentationStorage:
+		sampleBits = 16
+		if doc.LabelMapBitsAllocated == 8 {
+			sampleBits = 8
+		}
+	case doc.SegmentationType == SegmentationTypeFractional:
+		sampleBits = 8
+	default:
+		sampleBits = 1
+	}
+	frameBits := pixels * sampleBits
+	stride := frameBits
+	if sampleBits == 1 {
+		stride = int64(binaryFrameBitStride(int(pixels), frameCount, dataBytes))
+	}
+	report.ExpectedPixelDataBytes = (frameBits*int64(frameCount) + 7) / 8
+	available := int64(dataBytes) * 8
+	for frame := 0; frame < frameCount; frame++ {
+		if int64(frame)*stride+frameBits > available {
+			report.IncompleteFrames = append(report.IncompleteFrames, frame)
+		}
+	}
+	return report
 }
 
 // readBinaryFrames reads binary DICOM pixel data and creates Frame objects with raster masks for each frame.
 func readBinaryFrames(obj *object.Object, doc *Document, frameItems []*object.Object) []Frame {
 	var frames []Frame
-	if objectview.VisitRaw(obj, derivedio.TagPixelData, func(data objectview.Raw) {
+	if objectview.VisitNativePixels(obj, derivedio.TagPixelData, func(data objectview.Raw) {
 		frames = readBinaryFramesFromPixelData(data, obj, doc, frameItems)
 	}) {
 		return frames
@@ -1388,32 +1880,56 @@ func readBinaryFrames(obj *object.Object, doc *Document, frameItems []*object.Ob
 }
 
 func readBinaryFramesFromPixelData(data objectview.Raw, obj *object.Object, doc *Document, frameItems []*object.Object) []Frame {
+	frames, _ := readBinaryFramesFromPixelDataContext(context.Background(), data, obj, doc, frameItems)
+	return frames
+}
+
+func readBinaryFramesFromPixelDataContext(ctx context.Context, data objectview.Raw, obj *object.Object, doc *Document, frameItems []*object.Object) ([]Frame, error) {
+	stride := binaryFrameBitStride(doc.Rows*doc.Columns, len(frameItems), data.Len())
+	return readBinaryFramesWithStrideContext(ctx, data, obj, doc, frameItems, stride)
+}
+
+func readBinaryFramesWithStrideContext(ctx context.Context, data objectview.Raw, obj *object.Object, doc *Document, frameItems []*object.Object, frameBitStride int) ([]Frame, error) {
 	bitsPerFrame := doc.Rows * doc.Columns
 	if bitsPerFrame <= 0 {
-		return nil
+		return nil, nil
 	}
 	spatialDimensionIndex := spatialDimensionValueIndex(obj)
 	frames := make([]Frame, 0, len(frameItems))
-	frameBitStride := binaryFrameBitStride(bitsPerFrame, len(frameItems), data.Len())
 	for i, item := range frameItems {
-		frame := readFrameItem(item, i, spatialDimensionIndex, doc.Geometry)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		frame := readFrameItem(obj, item, i, spatialDimensionIndex, doc.Geometry)
 		if frame.SegmentNumber == 0 && len(doc.Segments) == 1 {
 			frame.SegmentNumber = doc.Segments[0].Number
 		}
 		baseBit := i * frameBitStride
-		frame.Mask = readPackedBinaryMask(data, baseBit, doc.Columns, doc.Rows)
+		var err error
+		frame.Mask, err = readPackedBinaryMaskContext(ctx, data, baseBit, doc.Columns, doc.Rows)
+		if err != nil {
+			return nil, err
+		}
 		frames = append(frames, frame)
 	}
-	return frames
+	return frames, nil
 }
 
 func readPackedBinaryMask(data objectview.Raw, baseBit, columns, rows int) *roi.RasterMask {
+	mask, _ := readPackedBinaryMaskContext(context.Background(), data, baseBit, columns, rows)
+	return mask
+}
+
+func readPackedBinaryMaskContext(ctx context.Context, data objectview.Raw, baseBit, columns, rows int) (*roi.RasterMask, error) {
 	mask := roi.NewRasterMask(columns, rows)
 	if data.Len() == 0 || columns <= 0 || rows <= 0 {
-		return mask
+		return mask, nil
 	}
 	dataBits := data.Len() * 8
 	for y := 0; y < rows; y++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rowStart := baseBit + y*columns
 		if rowStart >= dataBits {
 			break
@@ -1456,7 +1972,7 @@ func readPackedBinaryMask(data objectview.Raw, baseBit, columns, rows int) *roi.
 			mask.SetRun(y, activeStart, activeEnd)
 		}
 	}
-	return mask
+	return mask, nil
 }
 
 func binaryFrameBitStride(bitsPerFrame, frameCount, dataBytes int) int {
@@ -1471,7 +1987,7 @@ func binaryFrameBitStride(bitsPerFrame, frameCount, dataBytes int) int {
 
 func readLabelMapFrames(obj *object.Object, doc *Document, frameItems []*object.Object) []Frame {
 	var frames []Frame
-	if objectview.VisitRaw(obj, derivedio.TagPixelData, func(data objectview.Raw) {
+	if objectview.VisitNativePixels(obj, derivedio.TagPixelData, func(data objectview.Raw) {
 		frames = readLabelMapFramesFromPixelData(data, obj, doc, frameItems)
 	}) {
 		return frames
@@ -1480,39 +1996,60 @@ func readLabelMapFrames(obj *object.Object, doc *Document, frameItems []*object.
 }
 
 func readLabelMapFramesFromPixelData(data objectview.Raw, obj *object.Object, doc *Document, frameItems []*object.Object) []Frame {
-	valueCount := data.Len() / 2
+	frames, _ := readLabelMapFramesFromPixelDataContext(context.Background(), data, obj, doc, frameItems)
+	return frames
+}
+
+func readLabelMapFramesFromPixelDataContext(ctx context.Context, data objectview.Raw, obj *object.Object, doc *Document, frameItems []*object.Object) ([]Frame, error) {
+	bytesPerValue := 2
+	if doc.LabelMapBitsAllocated == 8 {
+		bytesPerValue = 1
+	}
+	valueCount := data.Len() / bytesPerValue
 	valuesPerFrame := doc.Rows * doc.Columns
 	spatialDimensionIndex := spatialDimensionValueIndex(obj)
 	frames := make([]Frame, 0, len(frameItems))
 	for i, item := range frameItems {
-		frame := readFrameItem(item, i, spatialDimensionIndex, doc.Geometry)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		frame := readFrameItem(obj, item, i, spatialDimensionIndex, doc.Geometry)
 		start := i * valuesPerFrame
 		end := start + valuesPerFrame
 		if start < valueCount {
+			frame.LabelMap = make([]uint16, valuesPerFrame)
 			if end > valueCount {
 				end = valueCount
+				// The samples missing from a truncated frame are background.
+				for j := end - start; j < valuesPerFrame; j++ {
+					frame.LabelMap[j] = doc.LabelMapBackground
+				}
 			}
-			frame.LabelMap = make([]uint16, end-start)
 			for valueIndex := start; valueIndex < end; valueIndex++ {
-				frame.LabelMap[valueIndex-start] = data.Uint16LE(valueIndex)
+				if valueIndex&4095 == 0 {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+				}
+				if bytesPerValue == 1 {
+					frame.LabelMap[valueIndex-start] = uint16(data.Byte(valueIndex))
+				} else {
+					frame.LabelMap[valueIndex-start] = data.Uint16LE(valueIndex)
+				}
 			}
-		}
-		if frame.SegmentNumber == 0 && len(doc.Segments) > 0 {
-			frame.SegmentNumber = doc.Segments[0].Number
 		}
 		frames = append(frames, frame)
 	}
-	return frames
+	return frames, nil
 }
 
-// readFrameItem extracts frame metadata from a DICOM per-frame functional group item, using fallbackIndex as the default slice index.
-func readFrameItem(item *object.Object, fallbackIndex int, spatialDimensionIndex int, geometry render.VolumeGeometry) Frame {
-	frame := Frame{SliceIndex: fallbackIndex}
-	if item == nil {
-		return frame
-	}
-	if segItems := derivedio.Sequence(item, tagSegmentIdentificationSequence); len(segItems) > 0 {
-		frame.SegmentNumber = derivedio.Int(segItems[0], tagReferencedSegmentNumber())
+// readFrameItem extracts the metadata of frame frameIndex (also its default
+// slice index): its functional group macros through the resolver, so shared
+// macros apply too, and its Dimension Index Values from its per-frame item.
+func readFrameItem(obj *object.Object, item *object.Object, frameIndex int, spatialDimensionIndex int, geometry render.VolumeGeometry) Frame {
+	frame := Frame{SliceIndex: frameIndex}
+	if segment, _, _ := obj.FunctionalGroupItem(frameIndex, tagSegmentIdentificationSequence); segment != nil {
+		frame.SegmentNumber = derivedio.Int(segment, tagReferencedSegmentNumber())
 	}
 	if values, ok := readDimensionIndexValues(item); ok {
 		if sliceIndex, ok := sliceIndexFromDimensionValues(values, spatialDimensionIndex); ok {
@@ -1522,26 +2059,52 @@ func readFrameItem(item *object.Object, fallbackIndex int, spatialDimensionIndex
 	if frame.SliceIndex >= 0 && frame.SliceIndex < len(geometry.Slices) {
 		frame.Geometry = geometry.Slices[frame.SliceIndex]
 	}
-	if origin, ok := readFrameImagePosition(item); ok {
+	if origin, ok := readFrameImagePosition(obj, frameIndex); ok {
 		frame.Geometry.Origin = origin
 		if sliceIndex, ok := sliceIndexFromPlanePosition(origin, geometry); ok {
 			frame.SliceIndex = sliceIndex
 			frame.Geometry = geometry.Slices[sliceIndex]
 		}
 	}
-	frame.ReferencedSOPInstanceUID = derivedio.CleanUID(item, derivedio.TagRefSOPInstanceUID)
-	frame.ReferencedFrameNumber = derivedio.Int(item, derivedio.TagRefFrameNumber)
+	// The source image is in the Derivation Image macro; dicom-go wrote it
+	// directly in the per-frame item before.
+	source := item
+	if derivation, _, _ := obj.FunctionalGroupItem(frameIndex, tagDerivationImageSequence); derivation != nil {
+		frame.DerivationDescription, _ = derivation.GetString(core.NewTag(0x0008, 0x2111))
+		if sources := derivedio.Sequence(derivation, tagSourceImageSequence); len(sources) > 0 && sources[0] != nil {
+			source = sources[0]
+		}
+	}
+	if source != nil {
+		frame.ReferencedSOPInstanceUID = derivedio.CleanUID(source, derivedio.TagRefSOPInstanceUID)
+		frame.ReferencedFrameNumber = derivedio.Int(source, derivedio.TagRefFrameNumber)
+	}
 	return frame
 }
 
-func dimensionIndexValuesElement(frame Frame) core.Element {
-	value := frame.SliceIndex + 1
-	if value < 1 {
-		value = 1
+// frameContentSequence is the Frame Content macro of a frame (PS3.3
+// C.7.6.16.2.2): its Dimension Index Values (the segment, when segments are
+// a dimension, then the one-based slice position) and, when frames are
+// ordered as a stack, the Stack ID and In-Stack Position Number.
+func frameContentSequence(frame Frame, segmentDimension, stack bool) core.Element {
+	position := max(frame.SliceIndex+1, 1)
+	values := []uint32{uint32(position)}
+	if segmentDimension {
+		values = []uint32{uint32(frame.SegmentNumber), uint32(position)}
 	}
-	var raw [4]byte
-	binary.LittleEndian.PutUint32(raw[:], uint32(value))
-	return core.NewRawElement(tagDimensionIndexValues, core.VRUL, raw[:])
+	raw := make([]byte, 4*len(values))
+	for i, value := range values {
+		binary.LittleEndian.PutUint32(raw[4*i:], value)
+	}
+	var elements []core.Element
+	if stack {
+		elements = append(elements,
+			derivedio.SH(tagStackID, "1"),
+			core.NewRawElement(tagInStackPositionNumber, core.VRUL, binary.LittleEndian.AppendUint32(nil, uint32(position))),
+		)
+	}
+	elements = append(elements, core.NewRawElement(tagDimensionIndexValues, core.VRUL, raw))
+	return derivedio.Seq(tagFrameContentSequence, derivedio.DataSet(elements...))
 }
 
 func spatialDimensionValueIndex(obj *object.Object) int {
@@ -1595,9 +2158,15 @@ func readTagValues(obj *object.Object, tag core.Tag) []core.Tag {
 	return values
 }
 
+// readDimensionIndexValues reads the Dimension Index Values of a per-frame
+// item from its Frame Content Sequence, or from the item itself, where
+// dicom-go wrote them before.
 func readDimensionIndexValues(obj *object.Object) ([]int, bool) {
 	if obj == nil {
 		return nil, false
+	}
+	if items := derivedio.Sequence(obj, tagFrameContentSequence); len(items) > 0 && items[0].Has(tagDimensionIndexValues) {
+		obj = items[0]
 	}
 	elem, ok := obj.Get(tagDimensionIndexValues)
 	if !ok {
@@ -1650,12 +2219,12 @@ func sliceIndexFromDimensionValues(values []int, spatialDimensionIndex int) (int
 	return value - 1, true
 }
 
-func readFrameImagePosition(item *object.Object) (render.Vec3, bool) {
-	positionItems := derivedio.Sequence(item, tagPlanePositionSequence)
-	if len(positionItems) == 0 {
+func readFrameImagePosition(obj *object.Object, frameIndex int) (render.Vec3, bool) {
+	position, _, _ := obj.FunctionalGroupItem(frameIndex, tagPlanePositionSequence)
+	if position == nil {
 		return render.Vec3{}, false
 	}
-	values, err := positionItems[0].GetFloats(tagImagePositionPatient)
+	values, err := position.GetFloats(tagImagePositionPatient)
 	if err != nil || len(values) < 3 {
 		return render.Vec3{}, false
 	}
@@ -1679,11 +2248,16 @@ func sliceIndexFromPlanePosition(origin render.Vec3, geometry render.VolumeGeome
 	if bestIndex < 0 {
 		return 0, false
 	}
-	tolerance := 0.01
+	// The DICOM grid tolerance (#1115): a twentieth of the smallest spacing.
+	slice := geometry.Slices[bestIndex]
+	spacing := math.Min(slice.RowSpacing, slice.ColSpacing)
 	if geometry.MeanSpacing > 0 {
-		tolerance = math.Max(tolerance, geometry.MeanSpacing*0.001)
+		spacing = math.Min(spacing, geometry.MeanSpacing)
 	}
-	if bestDistance > tolerance {
+	if !(spacing > 0) {
+		spacing = 1
+	}
+	if bestDistance > render.DICOMGridCoordinateTolerance*spacing {
 		return 0, false
 	}
 	return bestIndex, true

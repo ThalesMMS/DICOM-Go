@@ -21,7 +21,6 @@ const (
 	MicroscopyBulkSimpleAnnotationsStorage  = "1.2.840.10008.5.1.4.1.1.91.1"
 	maxMicroscopyFrames                     = 100_000_000
 	defaultOpticalPathIdentifier            = "1"
-	defaultMicroscopyFocalPlaneIndex        = 0
 )
 
 var (
@@ -31,6 +30,10 @@ var (
 )
 
 var (
+	tagICCProfile                        = core.NewTag(0x0028, 0x2000)
+	tagConcatenationFrameOffset          = core.NewTag(0x0020, 0x9228)
+	tagDimensionOrganizationType         = core.NewTag(0x0020, 0x9311)
+	tagImageType                         = core.NewTag(0x0008, 0x0008)
 	tagSOPClassUID                       = core.NewTag(0x0008, 0x0016)
 	tagSOPInstanceUID                    = core.NewTag(0x0008, 0x0018)
 	tagStudyInstanceUID                  = core.NewTag(0x0020, 0x000D)
@@ -42,6 +45,7 @@ var (
 	tagSharedFunctionalGroups            = core.NewTag(0x5200, 0x9229)
 	tagPerFrameFunctionalGroups          = core.NewTag(0x5200, 0x9230)
 	tagPixelMeasuresSequence             = core.NewTag(0x0028, 0x9110)
+	tagSpacingBetweenSlices              = core.NewTag(0x0018, 0x0088)
 	tagTotalPixelMatrixColumns           = core.NewTag(0x0048, 0x0006)
 	tagTotalPixelMatrixRows              = core.NewTag(0x0048, 0x0007)
 	tagTotalPixelMatrixOriginSequence    = core.NewTag(0x0048, 0x0008)
@@ -58,8 +62,6 @@ var (
 	tagRowPositionTotalMatrix            = core.NewTag(0x0048, 0x021F)
 	tagNumberOfOpticalPaths              = core.NewTag(0x0048, 0x0302)
 	tagTotalPixelMatrixFocalPlanes       = core.NewTag(0x0048, 0x0303)
-	tagNumberOfFocalPlanes               = core.NewTag(0x0048, 0x0013)
-	tagDistanceBetweenFocalPlanes        = core.NewTag(0x0048, 0x0014)
 	tagXOffsetSlide                      = core.NewTag(0x0040, 0x072A)
 	tagYOffsetSlide                      = core.NewTag(0x0040, 0x073A)
 	tagZOffsetSlide                      = core.NewTag(0x0040, 0x074A)
@@ -83,6 +85,9 @@ type SlidePoint struct {
 }
 
 type OpticalPath struct {
+	// ICCProfile belongs to this optical path, never the root pixel macro.
+	// Read owns these bytes and bounds their aggregate allocation.
+	ICCProfile  []byte
 	Identifier  string
 	Description string
 }
@@ -128,6 +133,9 @@ type TileKey struct {
 // Level describes one WSI pyramid resolution. Pixel spacing is expressed in
 // millimeters per Total Pixel Matrix pixel.
 type Level struct {
+	// FrameOffset is the number of preceding frames for the first retained
+	// source in a TILED_FULL concatenation.
+	FrameOffset       int
 	ID                string
 	MatrixWidth       int
 	MatrixHeight      int
@@ -144,6 +152,8 @@ type Level struct {
 	ImplicitTiling    bool
 	OpticalPathIDs    []string
 	FocalPlaneOffsets []float64
+	concatenation     slideConcatenation
+	members           []slideTileMember
 }
 
 func (l Level) MatrixBounds() image.Rectangle {
@@ -223,16 +233,22 @@ func (l Level) TilesForViewport(viewport image.Rectangle, opticalPath string, fo
 // TilesForViewportLimit is TilesForViewport with a center-priority result cap.
 // A non-positive limit returns every matching tile.
 func (l Level) TilesForViewportLimit(viewport image.Rectangle, opticalPath string, focalPlane, limit int) []Tile {
+	return l.tilesForViewportLimit(viewport, focalPlane, limit, func(path string) bool {
+		return opticalPath == "" || path == opticalPath
+	}, false)
+}
+
+func (l Level) tilesForViewportLimit(viewport image.Rectangle, focalPlane, limit int, matchesPath func(string) bool, deduplicate bool) []Tile {
 	viewport = viewport.Intersect(l.MatrixBounds())
 	if viewport.Empty() {
 		return nil
 	}
 	if l.ImplicitTiling {
-		return l.implicitTilesForViewport(viewport, opticalPath, focalPlane, limit)
+		return l.implicitTilesForViewport(viewport, focalPlane, limit, matchesPath)
 	}
 	out := make([]Tile, 0)
 	for _, tile := range l.Tiles {
-		if opticalPath != "" && tile.OpticalPath != opticalPath {
+		if !matchesPath(tile.OpticalPath) {
 			continue
 		}
 		if focalPlane >= 0 && tile.FocalPlane != focalPlane {
@@ -246,13 +262,19 @@ func (l Level) TilesForViewportLimit(viewport image.Rectangle, opticalPath strin
 	sort.SliceStable(out, func(i, j int) bool {
 		return squaredDistance(out[i].Bounds(), center) < squaredDistance(out[j].Bounds(), center)
 	})
+	if deduplicate {
+		return deduplicateTiles(out, limit)
+	}
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
 	return out
 }
 
-func (l Level) implicitTilesForViewport(viewport image.Rectangle, opticalPath string, focalPlane, limit int) []Tile {
+func (l Level) implicitTilesForViewport(viewport image.Rectangle, focalPlane, limit int, matchesPath func(string) bool) []Tile {
+	if l.FrameCount <= 0 || l.TileWidth <= 0 || l.TileHeight <= 0 {
+		return nil
+	}
 	tilesAcross := ceilDiv(l.MatrixWidth, l.TileWidth)
 	tilesDown := ceilDiv(l.MatrixHeight, l.TileHeight)
 	tilesPerPlanePath := tilesAcross * tilesDown
@@ -262,7 +284,7 @@ func (l Level) implicitTilesForViewport(viewport image.Rectangle, opticalPath st
 	}
 	var pathIndices []int
 	for index, identifier := range pathIDs {
-		if opticalPath == "" || opticalPath == identifier {
+		if matchesPath(identifier) {
 			pathIndices = append(pathIndices, index)
 		}
 	}
@@ -281,7 +303,7 @@ func (l Level) implicitTilesForViewport(viewport image.Rectangle, opticalPath st
 	lastColumn := min(tilesAcross-1, (viewport.Max.X-1)/l.TileWidth)
 	firstRow := max(0, viewport.Min.Y/l.TileHeight)
 	lastRow := min(tilesDown-1, (viewport.Max.Y-1)/l.TileHeight)
-	capacity := (lastColumn - firstColumn + 1) * (lastRow - firstRow + 1) * len(pathIndices) * (lastPlane - firstPlane + 1)
+	capacity := min(l.FrameCount, (lastColumn-firstColumn+1)*(lastRow-firstRow+1)*len(pathIndices)*(lastPlane-firstPlane+1))
 	if limit > 0 {
 		capacity = min(capacity, limit)
 	}
@@ -289,9 +311,9 @@ func (l Level) implicitTilesForViewport(viewport image.Rectangle, opticalPath st
 	appendCoordinate := func(rowIndex, columnIndex int) bool {
 		for plane := firstPlane; plane <= lastPlane; plane++ {
 			for _, pathIndex := range pathIndices {
-				ordinal := rowIndex*tilesAcross + columnIndex
-				frameNumber := plane*tilesPerPlanePath*len(pathIDs) + pathIndex*tilesPerPlanePath + ordinal + 1
-				if frameNumber > l.FrameCount {
+				ordinal := pathIndex*tilesPerPlanePath*planeCount + plane*tilesPerPlanePath + rowIndex*tilesAcross + columnIndex
+				source, frameNumber, found := l.locateTileFrame(ordinal)
+				if !found {
 					continue
 				}
 				column := columnIndex * l.TileWidth
@@ -301,7 +323,7 @@ func (l Level) implicitTilesForViewport(viewport image.Rectangle, opticalPath st
 					z = l.FocalPlaneOffsets[plane]
 				}
 				out = append(out, Tile{
-					Source: l.Source, FrameNumber: frameNumber,
+					Source: source, FrameNumber: frameNumber,
 					Row: row, Column: column,
 					Width: min(l.TileWidth, l.MatrixWidth-column), Height: min(l.TileHeight, l.MatrixHeight-row),
 					OpticalPath: pathIDs[pathIndex], FocalPlane: plane, ZOffsetMillimeter: z,
@@ -352,6 +374,9 @@ func (l Level) implicitTilesForViewport(viewport image.Rectangle, opticalPath st
 }
 
 type Instance struct {
+	// ColorPixels identifies native RGB/YBR/palette colour rather than a
+	// monochrome channel intended for an explicit fluorescence tint.
+	ColorPixels    bool
 	Level          Level
 	OpticalPaths   []OpticalPath
 	FocalPlanes    []float64
@@ -375,7 +400,9 @@ func (p *Pyramid) Add(instance Instance) error {
 	if level.MatrixWidth <= 0 || level.MatrixHeight <= 0 || level.TileWidth <= 0 || level.TileHeight <= 0 {
 		return fmt.Errorf("%w: invalid pyramid level", ErrInvalidSlide)
 	}
-	p.Levels = append(p.Levels, level)
+	if err := p.addLevel(level); err != nil {
+		return err
+	}
 	p.OpticalPaths = appendUniqueOpticalPaths(p.OpticalPaths, instance.OpticalPaths...)
 	p.FocalPlanes = appendUniqueFloats(p.FocalPlanes, instance.FocalPlanes...)
 	if instance.Specimen != (Specimen{}) {
@@ -432,12 +459,11 @@ func Read(file *object.File) (Instance, error) {
 	matrixHeight := derivedio.Int(root, tagTotalPixelMatrixRows)
 	tileWidth := derivedio.Int(root, tagColumns)
 	tileHeight := derivedio.Int(root, tagRows)
-	frameCount := derivedio.Int(root, tagNumberOfFrames)
-	if frameCount <= 0 {
-		frameCount = 1
+	frameCount, err := slideCount(root, tagNumberOfFrames, maxMicroscopyFrames)
+	if err != nil {
+		return Instance{}, err
 	}
-	if matrixWidth <= 0 || matrixHeight <= 0 || tileWidth <= 0 || tileHeight <= 0 ||
-		frameCount > maxMicroscopyFrames {
+	if matrixWidth <= 0 || matrixHeight <= 0 || tileWidth <= 0 || tileHeight <= 0 {
 		return Instance{}, fmt.Errorf(
 			"%w: matrix=%dx%d tile=%dx%d frames=%d",
 			ErrInvalidSlide, matrixWidth, matrixHeight, tileWidth, tileHeight, frameCount,
@@ -449,127 +475,60 @@ func Read(file *object.File) (Instance, error) {
 		SOPInstanceUID:    derivedio.CleanUID(root, tagSOPInstanceUID),
 	}
 	spacingX, spacingY := slidePixelSpacing(root, matrixWidth, matrixHeight)
-	origin := slideOrigin(root)
+	origin, err := slideOrigin(root)
+	if err != nil {
+		return Instance{}, err
+	}
 	orientation := slideOrientation(root)
-	opticalPaths := readOpticalPaths(root)
+	opticalPaths, err := readOpticalPaths(root)
+	if err != nil {
+		return Instance{}, err
+	}
 	if len(opticalPaths) == 0 {
 		opticalPaths = []OpticalPath{{Identifier: defaultOpticalPathIdentifier}}
 	}
-	focalPlanes := readFocalPlanes(root, origin.Z)
-	perFrame := derivedio.Sequence(root, tagPerFrameFunctionalGroups)
-	var tiles []Tile
-	if len(perFrame) > 0 {
-		var err error
-		tiles, err = readTiles(root, ref, matrixWidth, matrixHeight, tileWidth, tileHeight, frameCount, opticalPaths, focalPlanes)
-		if err != nil {
-			return Instance{}, err
-		}
-	} else {
-		tilesPerPlanePath := int64(ceilDiv(matrixWidth, tileWidth)) * int64(ceilDiv(matrixHeight, tileHeight))
-		expected := tilesPerPlanePath * int64(max(1, len(opticalPaths))) * int64(max(1, len(focalPlanes)))
-		if int64(frameCount) > expected {
-			return Instance{}, fmt.Errorf("%w: %d implicit frames exceed %d tile positions", ErrInvalidSlide, frameCount, expected)
-		}
+	concatenation, err := readSlideConcatenation(root)
+	if err != nil {
+		return Instance{}, err
 	}
-	pathIDs := make([]string, len(opticalPaths))
+	if concatenation.offset > maxMicroscopyFrames-frameCount {
+		return Instance{}, fmt.Errorf("%w: concatenation frame offset", ErrInvalidSlide)
+	}
+	level := Level{
+		ID:          fmt.Sprintf("%s:%dx%d", ref.SOPInstanceUID, matrixWidth, matrixHeight),
+		MatrixWidth: matrixWidth, MatrixHeight: matrixHeight,
+		TileWidth: tileWidth, TileHeight: tileHeight,
+		PixelSpacingX: spacingX, PixelSpacingY: spacingY,
+		Origin: origin, Orientation: orientation,
+		ImagedVolumeDepth: firstFloat(root, tagImagedVolumeDepth),
+		Source:            ref,
+		FrameOffset:       concatenation.offset, FrameCount: frameCount, concatenation: concatenation,
+		OpticalPathIDs: make([]string, len(opticalPaths)),
+	}
 	for index, path := range opticalPaths {
-		pathIDs[index] = path.Identifier
+		level.OpticalPathIDs[index] = path.Identifier
 	}
-	instance := Instance{
-		Level: Level{
-			ID:          fmt.Sprintf("%s:%dx%d", ref.SOPInstanceUID, matrixWidth, matrixHeight),
-			MatrixWidth: matrixWidth, MatrixHeight: matrixHeight,
-			TileWidth: tileWidth, TileHeight: tileHeight,
-			PixelSpacingX: spacingX, PixelSpacingY: spacingY,
-			Origin: origin, Orientation: orientation,
-			ImagedVolumeDepth: firstFloat(root, tagImagedVolumeDepth),
-			Tiles:             tiles, Source: ref,
-			FrameCount: frameCount, ImplicitTiling: len(perFrame) == 0,
-			OpticalPathIDs: pathIDs, FocalPlaneOffsets: append([]float64(nil), focalPlanes...),
-		},
+	if err := placeSlideTiles(root, &level); err != nil {
+		return Instance{}, err
+	}
+	return Instance{
+		ColorPixels:  derivedio.Int(root, core.NewTag(0x0028, 0x0002)) >= 3 || strings.EqualFold(derivedio.CleanString(root, core.NewTag(0x0028, 0x0004)), "PALETTE COLOR"),
+		Level:        level,
 		OpticalPaths: opticalPaths,
-		FocalPlanes:  focalPlanes,
+		FocalPlanes:  append([]float64(nil), level.FocalPlaneOffsets...),
 		Specimen:     readSpecimen(root),
-	}
-	return instance, nil
-}
-
-func readTiles(
-	root *object.Object,
-	ref InstanceRef,
-	matrixWidth, matrixHeight, tileWidth, tileHeight, frameCount int,
-	opticalPaths []OpticalPath,
-	focalPlanes []float64,
-) ([]Tile, error) {
-	perFrame := derivedio.Sequence(root, tagPerFrameFunctionalGroups)
-	if len(perFrame) != 0 && len(perFrame) != frameCount {
-		return nil, fmt.Errorf("%w: %d per-frame groups for %d frames", ErrInvalidSlide, len(perFrame), frameCount)
-	}
-	tilesAcross := ceilDiv(matrixWidth, tileWidth)
-	tilesDown := ceilDiv(matrixHeight, tileHeight)
-	tilesPerPlanePath := tilesAcross * tilesDown
-	expected := tilesPerPlanePath * max(1, len(opticalPaths)) * max(1, len(focalPlanes))
-	if len(perFrame) == 0 && frameCount > expected {
-		return nil, fmt.Errorf("%w: %d implicit frames exceed %d tile positions", ErrInvalidSlide, frameCount, expected)
-	}
-	tiles := make([]Tile, frameCount)
-	for index := range tiles {
-		pathIndex := (index / tilesPerPlanePath) % max(1, len(opticalPaths))
-		planeIndex := (index / (tilesPerPlanePath * max(1, len(opticalPaths)))) % max(1, len(focalPlanes))
-		tileOrdinal := index % tilesPerPlanePath
-		row := (tileOrdinal / tilesAcross) * tileHeight
-		column := (tileOrdinal % tilesAcross) * tileWidth
-		pathID := opticalPaths[pathIndex].Identifier
-		z := focalPlanes[planeIndex]
-		if index < len(perFrame) {
-			item := perFrame[index]
-			position := firstNestedSequenceItem(item, tagPlanePositionSlideSequence)
-			if position != nil {
-				columnPosition := derivedio.Int(position, tagColumnPositionTotalMatrix)
-				rowPosition := derivedio.Int(position, tagRowPositionTotalMatrix)
-				if columnPosition <= 0 || rowPosition <= 0 {
-					return nil, fmt.Errorf("%w: frame %d has invalid one-based tile position", ErrInvalidSlide, index+1)
-				}
-				column, row = columnPosition-1, rowPosition-1
-				if values := derivedio.Floats(position, tagZOffsetSlide); len(values) > 0 {
-					z = values[0]
-					planeIndex = nearestFloatIndex(focalPlanes, z)
-				}
-			}
-			pathItem := firstNestedSequenceItem(item, tagOpticalPathIdentificationSequence)
-			if pathItem != nil {
-				if identifier := derivedio.CleanString(pathItem, tagOpticalPathIdentifier); identifier != "" {
-					pathID = identifier
-				}
-			}
-		}
-		if column < 0 || row < 0 || column >= matrixWidth || row >= matrixHeight {
-			return nil, fmt.Errorf("%w: frame %d tile origin (%d,%d) outside matrix", ErrInvalidSlide, index+1, column, row)
-		}
-		tiles[index] = Tile{
-			Source: ref, FrameNumber: index + 1,
-			Row: row, Column: column,
-			Width:       min(tileWidth, matrixWidth-column),
-			Height:      min(tileHeight, matrixHeight-row),
-			OpticalPath: pathID, FocalPlane: planeIndex,
-			ZOffsetMillimeter: z,
-		}
-	}
-	return tiles, nil
+	}, nil
 }
 
 func slidePixelSpacing(root *object.Object, matrixWidth, matrixHeight int) (float64, float64) {
-	var spacing []float64
+	var measures *object.Object
 	if shared := derivedio.Sequence(root, tagSharedFunctionalGroups); len(shared) > 0 {
-		if measures := firstNestedSequenceItem(shared[0], tagPixelMeasuresSequence); measures != nil {
-			spacing = derivedio.Floats(measures, tagPixelSpacing)
+		measures = firstNestedSequenceItem(shared[0], tagPixelMeasuresSequence)
+	}
+	for _, source := range []*object.Object{measures, root} {
+		if row, column, values, err := source.SpacingPair(tagPixelSpacing); err == nil && values != object.SpacingValuesAbsent {
+			return column, row
 		}
-	}
-	if len(spacing) < 2 {
-		spacing = derivedio.Floats(root, tagPixelSpacing)
-	}
-	if len(spacing) >= 2 && finitePositive(spacing[0]) && finitePositive(spacing[1]) {
-		return spacing[1], spacing[0]
 	}
 	width := firstFloat(root, tagImagedVolumeWidth)
 	height := firstFloat(root, tagImagedVolumeHeight)
@@ -579,16 +538,20 @@ func slidePixelSpacing(root *object.Object, matrixWidth, matrixHeight int) (floa
 	return 0, 0
 }
 
-func slideOrigin(root *object.Object) SlidePoint {
+func slideOrigin(root *object.Object) (SlidePoint, error) {
 	items := derivedio.Sequence(root, tagTotalPixelMatrixOriginSequence)
 	if len(items) == 0 {
-		return SlidePoint{}
+		return SlidePoint{}, nil
+	}
+	z, err := slideZ(items[0], 0)
+	if err != nil {
+		return SlidePoint{}, err
 	}
 	return SlidePoint{
 		X: firstFloat(items[0], tagXOffsetSlide),
 		Y: firstFloat(items[0], tagYOffsetSlide),
-		Z: firstFloat(items[0], tagZOffsetSlide),
-	}
+		Z: z,
+	}, nil
 }
 
 func slideOrientation(root *object.Object) (out [6]float64) {
@@ -599,36 +562,38 @@ func slideOrientation(root *object.Object) (out [6]float64) {
 	return out
 }
 
-func readOpticalPaths(root *object.Object) []OpticalPath {
+func readOpticalPaths(root *object.Object) ([]OpticalPath, error) {
 	items := derivedio.Sequence(root, tagOpticalPathSequence)
+	if len(items) > MaxOpticalPaths {
+		return nil, ErrColorResourceLimit
+	}
 	out := make([]OpticalPath, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	bytes := 0
 	for _, item := range items {
 		identifier := derivedio.CleanString(item, tagOpticalPathIdentifier)
-		if identifier == "" {
-			continue
+		if len(identifier) > 64 {
+			return nil, ErrColorResourceLimit
 		}
+		if identifier == "" || seen[identifier] {
+			return nil, fmt.Errorf("%w: missing or duplicate optical path identifier", ErrInvalidSlide)
+		}
+		seen[identifier] = true
+		var data []byte
+		if element, ok := item.Get(tagICCProfile); ok {
+			data, _ = element.RawBytes()
+		}
+		if len(data) > MaxOpticalPathProfileBytes || len(data) > MaxInstanceProfileBytes-bytes {
+			return nil, ErrColorResourceLimit
+		}
+		bytes += len(data)
 		out = append(out, OpticalPath{
+			ICCProfile:  append([]byte(nil), data...),
 			Identifier:  identifier,
 			Description: derivedio.CleanString(item, tagOpticalPathDescription),
 		})
 	}
-	return out
-}
-
-func readFocalPlanes(root *object.Object, originZ float64) []float64 {
-	count := derivedio.Int(root, tagTotalPixelMatrixFocalPlanes)
-	if count <= 0 {
-		count = derivedio.Int(root, tagNumberOfFocalPlanes)
-	}
-	if count <= 0 {
-		count = 1
-	}
-	distance := firstFloat(root, tagDistanceBetweenFocalPlanes)
-	out := make([]float64, count)
-	for index := range out {
-		out[index] = originZ + float64(index)*distance
-	}
-	return out
+	return out, nil
 }
 
 func readSpecimen(root *object.Object) Specimen {
@@ -721,19 +686,6 @@ func appendUniqueSpecimens(existing []Specimen, value Specimen) []Specimen {
 	return append(existing, value)
 }
 
-func nearestFloatIndex(values []float64, target float64) int {
-	if len(values) == 0 {
-		return defaultMicroscopyFocalPlaneIndex
-	}
-	best, distance := 0, math.Abs(values[0]-target)
-	for index := 1; index < len(values); index++ {
-		if current := math.Abs(values[index] - target); current < distance {
-			best, distance = index, current
-		}
-	}
-	return best
-}
-
 func squaredDistance(bounds image.Rectangle, point image.Point) int64 {
 	centerX := int64(bounds.Min.X+bounds.Max.X) / 2
 	centerY := int64(bounds.Min.Y+bounds.Max.Y) / 2
@@ -743,7 +695,11 @@ func squaredDistance(bounds image.Rectangle, point image.Point) int64 {
 }
 
 func ceilDiv(value, divisor int) int {
-	return (value + divisor - 1) / divisor
+	quotient := value / divisor
+	if value%divisor > 0 {
+		quotient++
+	}
+	return quotient
 }
 
 func finitePositive(value float64) bool {

@@ -51,6 +51,11 @@ type Sidecar struct {
 	TemporalOffsetsSeconds   []float64
 	TemporalDurationsSeconds []float64
 	Warnings                 []string
+	// SliceSpacingSource names where the through-plane pixdim came from
+	// (object.SliceSpacingSource) and PixelSpacingSemantic what an
+	// image-grid in-plane pixdim measures; both are omitted when empty.
+	SliceSpacingSource   string
+	PixelSpacingSemantic string
 }
 
 // Marshal returns the deterministic JSON representation of s, provided it is
@@ -73,6 +78,8 @@ func (s Sidecar) Marshal(maxBytes int) ([]byte, error) {
 		TemporalOffsetsSeconds   []float64  `json:"temporal_offsets_seconds"`
 		TemporalDurationsSeconds []float64  `json:"temporal_durations_seconds"`
 		Warnings                 []string   `json:"warnings"`
+		SliceSpacingSource       string     `json:"slice_spacing_source,omitempty"`
+		PixelSpacingSemantic     string     `json:"pixel_spacing_semantic,omitempty"`
 	}{
 		Schema:                   SidecarSchema,
 		Dimensions:               s.Dimensions,
@@ -86,6 +93,8 @@ func (s Sidecar) Marshal(maxBytes int) ([]byte, error) {
 		TemporalOffsetsSeconds:   s.TemporalOffsetsSeconds,
 		TemporalDurationsSeconds: s.TemporalDurationsSeconds,
 		Warnings:                 s.Warnings,
+		SliceSpacingSource:       s.SliceSpacingSource,
+		PixelSpacingSemantic:     s.PixelSpacingSemantic,
 	})
 	if err != nil {
 		return nil, err

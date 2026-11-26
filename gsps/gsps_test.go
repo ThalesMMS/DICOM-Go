@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ThalesMMS/dicom-go/internal/commontest"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ThalesMMS/dicom-go/core"
@@ -41,6 +43,13 @@ func TestGSPSRoundTripsAndAppliesDisplayState(t *testing.T) {
 	file, err := Write(&state)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
+	}
+	withCommon := state
+	withCommon.Common = object.DerivedCommon{Source: commontest.Source()}
+	if common, err := Write(&withCommon); err != nil {
+		t.Fatalf("Write with common modules: %v", err)
+	} else {
+		commontest.Check(t, common.Dataset, false)
 	}
 	var encoded bytes.Buffer
 	if err := object.WriteFile(&encoded, file); err != nil {
@@ -646,6 +655,56 @@ func TestGSPSReadWriteApplyPreservesVoiLut(t *testing.T) {
 	}
 }
 
+func TestGSPSWritesVOILUTDataInItsStandardEncoding(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		bits     int
+		entries  []uint16
+		dataSize int
+	}{
+		{"8 bits packed", 8, []uint16{0, 100, 200}, 4},
+		{"16 bits", 16, []uint16{0, 32768, 65535}, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &State{
+				SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.308.1",
+				DisplayedArea:  DisplayedArea{TopLeftX: 1, TopLeftY: 1, BottomRightX: 512, BottomRightY: 512},
+				SoftcopyVOI:    SoftcopyVOI{LUT: &display.LUT{FirstMapped: 10, BitsPerEntry: tc.bits, Entries: tc.entries}},
+			}
+			file, err := Write(state)
+			if err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			voi, _ := file.Dataset.GetSequence(tagSoftcopyVOILUTSequence)
+			luts, _ := voi[0].GetSequence(tagVOILUTSequence)
+			if data, _ := luts[0].GetRaw(tagLUTData); len(data) != tc.dataSize {
+				t.Fatalf("LUT Data has %d bytes, want %d", len(data), tc.dataSize)
+			}
+			read, err := Read(file.Dataset)
+			if err != nil {
+				t.Fatalf("Read: %v", err)
+			}
+			lut := read.SoftcopyVOI.LUT
+			if lut == nil || lut.BitsPerEntry != tc.bits || len(lut.Adjustments) != 0 || !slices.Equal(lut.Entries, tc.entries) {
+				t.Fatalf("read LUT = %+v, want %d bits %v without adjustments", lut, tc.bits, tc.entries)
+			}
+		})
+	}
+}
+
+// A VOI LUT has 8 or 16 bits per entry (PS3.3 C.11.2.1.1); dciodvfy rejects
+// other depths, which the display pipeline still reads from legacy files.
+func TestGSPSWriteRejectsVOILUTDepthsOtherThan8Or16(t *testing.T) {
+	state := &State{
+		SOPInstanceUID: "1.2.826.0.1.3680043.9.7433.308.2",
+		DisplayedArea:  DisplayedArea{TopLeftX: 1, TopLeftY: 1, BottomRightX: 512, BottomRightY: 512},
+		SoftcopyVOI:    SoftcopyVOI{LUT: &display.LUT{BitsPerEntry: 12, Entries: []uint16{0, 2048, 4095}}},
+	}
+	if _, err := Write(state); !errors.Is(err, ErrInvalidObject) {
+		t.Fatalf("Write accepted a 12-bit VOI LUT: %v", err)
+	}
+}
+
 func TestGSPSApplyRejectsNilState(t *testing.T) {
 	_, err := Apply(nil, ImageState{SOPInstanceUID: "1.2.3.4.1"})
 	if !errors.Is(err, ErrInvalidObject) {
@@ -1024,7 +1083,10 @@ func TestGSPSWriteOutputIsDeterministic(t *testing.T) {
 
 func writeGSPSTestBytes(t *testing.T) []byte {
 	t.Helper()
+	// The creation date and time default to now; fix them.
 	file, err := Write(&State{
+		CreationDate:      "20260926",
+		CreationTime:      "120000",
 		SOPInstanceUID:    "1.2.826.0.1.3680043.9.7433.11.32",
 		StudyInstanceUID:  "1.2.826.0.1.3680043.9.7433.11.10",
 		SeriesInstanceUID: "1.2.826.0.1.3680043.9.7433.11.11",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/internal/derivedio"
@@ -146,16 +147,52 @@ type GraphicAnnotation struct {
 	GraphicType  string
 	GraphicUnits string
 	Polyline     []Point2D
+	// BoundingBox places the text in a box; a text object needs a bounding
+	// box, an anchor or both. With a bounding box, the anchor is written
+	// only when it is visible or not at the origin (see hasAnchor).
+	BoundingBox *BoundingBox
+	// AnchorVisible is Anchor Point Visibility: whether the anchor is drawn
+	// and joined to the text.
+	AnchorVisible bool
+	// Filled is Graphic Filled, allowed for closed graphics only (circles,
+	// ellipses and closed polylines).
+	Filled bool
+	// Compound holds one geometry and its style from the Compound Graphic
+	// Sequence. The alternatives are separate annotations in the same group.
+	Compound *CompoundGraphic
+	// CompoundGraphicID links a Compound Graphic and its text or graphic
+	// alternatives within this presentation state. HasCompoundGraphicID
+	// distinguishes an explicit UL zero from an absent identifier.
+	CompoundGraphicID    uint32
+	HasCompoundGraphicID bool
+	GraphicGroupID       uint32
+	HasGraphicGroupID    bool
 	// ReferencedImages scopes this Graphic Annotation Sequence item to images
 	// or frames. Empty means the annotation applies to every referenced image.
-	ReferencedImages []ReferencedImage
+	ReferencedImages      []ReferencedImage
+	malformedCompoundLink bool
 }
 
 type State struct {
-	SOPClassUID          string
-	SOPInstanceUID       string
-	StudyInstanceUID     string
-	SeriesInstanceUID    string
+	// Common fills the Patient, Study and equipment modules from a source
+	// instance of the same patient (object.InheritCommonModules).
+	Common            object.DerivedCommon
+	SOPClassUID       string
+	SOPInstanceUID    string
+	StudyInstanceUID  string
+	SeriesInstanceUID string
+	// Presentation Series and Presentation State Identification. Write
+	// defaults InstanceNumber to 1, ContentLabel to UNNAMED and the
+	// creation date and time to now; SeriesNumber 0 writes an empty
+	// Series Number and Laterality is written when set.
+	SeriesNumber         int
+	Laterality           string
+	InstanceNumber       int
+	ContentLabel         string
+	ContentDescription   string
+	ContentCreatorName   string
+	CreationDate         string
+	CreationTime         string
 	ReferencedImages     []ReferencedImage
 	DisplayedArea        DisplayedArea
 	DisplayedAreas       []DisplayedArea
@@ -164,7 +201,23 @@ type State struct {
 	SoftcopyVOI          SoftcopyVOI
 	SoftcopyVOIs         []SoftcopyVOI
 	PresentationLUTShape string
-	GraphicAnnotations   []GraphicAnnotation
+	// PresentationLUT is a Presentation LUT Sequence table, written instead
+	// of PresentationLUTShape, with PresentationLUTExplanation.
+	PresentationLUT            *display.LUT
+	PresentationLUTExplanation string
+	// ModalityLUT replaces the referenced images' modality transform; nil
+	// keeps theirs.
+	ModalityLUT *ModalityLUT
+	// GraphicLayers defines layers with their order, recommended display
+	// values and descriptions. Layers only named by GraphicAnnotations or
+	// OverlayActivations are added after them by Write.
+	GraphicLayers      []GraphicLayer
+	GraphicGroups      []GraphicGroup
+	GraphicAnnotations []GraphicAnnotation
+	// OverlayActivations lists the overlay groups the state displays and
+	// Overlays the planes it defines itself; see ActiveOverlays.
+	OverlayActivations []OverlayActivation
+	Overlays           []display.Overlay
 }
 
 type ImageState struct {
@@ -175,14 +228,20 @@ type ImageState struct {
 }
 
 type AppliedState struct {
-	DisplayedArea      DisplayedArea
-	Shutter            *display.Shutter
-	RotationDegrees    int
-	FlipHorizontal     bool
-	WindowCenter       float64
-	WindowWidth        float64
-	VOI                display.VOILUT
-	PresentationLUT    string
+	DisplayedArea   DisplayedArea
+	Shutter         *display.Shutter
+	RotationDegrees int
+	FlipHorizontal  bool
+	WindowCenter    float64
+	WindowWidth     float64
+	VOI             display.VOILUT
+	PresentationLUT string
+	// PresentationLUTTable is the Presentation LUT Sequence table, which
+	// takes precedence over the PresentationLUT shape.
+	PresentationLUTTable *display.LUT
+	// ModalityLUT is the state's modality transform; nil keeps the image's.
+	ModalityLUT        *display.ModalityLUT
+	GraphicLayers      []GraphicLayer
 	GraphicAnnotations []GraphicAnnotation
 }
 
@@ -216,8 +275,27 @@ func Write(state *State) (*object.File, error) {
 	if err := validateGraphicAnnotations(state.GraphicAnnotations); err != nil {
 		return nil, err
 	}
-	if state.SpatialTransform.RotationDegrees < 0 || state.SpatialTransform.RotationDegrees > 1<<16-1 {
-		return nil, fmt.Errorf("%w: image rotation %d is outside US", ErrInvalidObject, state.SpatialTransform.RotationDegrees)
+	if err := validateCompoundLinks(state.GraphicAnnotations); err != nil {
+		return nil, err
+	}
+	switch state.SpatialTransform.RotationDegrees {
+	case 0, 90, 180, 270:
+	default:
+		return nil, fmt.Errorf("%w: image rotation %d is not 0, 90, 180 or 270", ErrInvalidObject, state.SpatialTransform.RotationDegrees)
+	}
+	if err := validateModalityLUT(state.ModalityLUT); err != nil {
+		return nil, err
+	}
+	if err := validatePresentationLUT(state.PresentationLUT); err != nil {
+		return nil, err
+	}
+	layers, err := resolvedGraphicLayers(state)
+	if err != nil {
+		return nil, err
+	}
+	identification, err := identificationElements(state, time.Now())
+	if err != nil {
+		return nil, err
 	}
 	elements := []core.Element{
 		derivedio.UI(derivedio.TagSOPClassUID, sopClassUID),
@@ -230,16 +308,35 @@ func Write(state *State) (*object.File, error) {
 		derivedio.US(tagImageRotation, uint16(state.SpatialTransform.RotationDegrees)),
 		derivedio.CS(tagImageHorizontalFlip, flipValue(state.SpatialTransform.FlipHorizontal)),
 	}
+	elements = append(elements, identification...)
+	elements = append(elements, modalityLUTElements(state.ModalityLUT)...)
 	elements = append(elements, shutterElements(state.Shutter)...)
 	if voiSequence, ok := softcopyVOISequence(state); ok {
 		elements = append(elements, voiSequence)
 	}
-	elements = append(elements,
-		derivedio.CS(tagPresentationLUTShape, presentationLUTShape(state.PresentationLUTShape)),
-		graphicLayerSequence(state.GraphicAnnotations),
-		graphicAnnotationSequence(state.GraphicAnnotations),
-	)
+	if state.PresentationLUT != nil {
+		elements = append(elements, presentationLUTSequence(state.PresentationLUT, state.PresentationLUTExplanation))
+	} else {
+		elements = append(elements, derivedio.CS(tagPresentationLUTShape, presentationLUTShape(state.PresentationLUTShape)))
+	}
+	elements = append(elements, graphicLayerSequence(layers))
+	if groups, ok, err := graphicGroupSequence(state); err != nil {
+		return nil, err
+	} else if ok {
+		elements = append(elements, groups)
+	}
+	if len(state.GraphicAnnotations) > 0 {
+		elements = append(elements, graphicAnnotationSequence(state.GraphicAnnotations))
+	}
+	overlayElements, err := overlayActivationElements(state)
+	if err != nil {
+		return nil, err
+	}
+	elements = append(elements, overlayElements...)
 	dataset := derivedio.Object(elements...)
+	if err := state.Common.Apply(dataset, object.InheritWithoutFrameOfReference); err != nil {
+		return nil, err
+	}
 	return derivedio.File(sopClassUID, state.SOPInstanceUID, dataset)
 }
 
@@ -266,6 +363,14 @@ func Read(obj *object.Object) (*State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dicom/gsps: %w", err)
 	}
+	modality, err := readModalityLUT(obj)
+	if err != nil {
+		return nil, err
+	}
+	plut, plutExplanation, err := readPresentationLUT(obj)
+	if err != nil {
+		return nil, err
+	}
 	state := &State{
 		SOPClassUID:          sopClassUID,
 		SOPInstanceUID:       derivedio.CleanUID(obj, derivedio.TagSOPInstanceUID),
@@ -277,8 +382,16 @@ func Read(obj *object.Object) (*State, error) {
 		SpatialTransform:     readSpatialTransform(obj),
 		SoftcopyVOIs:         vois,
 		PresentationLUTShape: derivedio.CleanString(obj, tagPresentationLUTShape),
+		PresentationLUT:      plut,
+		ModalityLUT:          modality,
+		GraphicLayers:        readGraphicLayers(obj),
+		GraphicGroups:        readGraphicGroups(obj),
 		GraphicAnnotations:   readGraphicAnnotations(obj),
+		OverlayActivations:   readOverlayActivations(obj),
+		Overlays:             readStateOverlays(obj, shutter),
 	}
+	state.PresentationLUTExplanation = plutExplanation
+	readIdentification(obj, state)
 	if len(displayedAreas) > 0 {
 		state.DisplayedArea = displayedAreas[0]
 	}
@@ -317,16 +430,28 @@ func Apply(state *State, image ImageState) (AppliedState, error) {
 		Center: softcopyVOI.WindowCenter, Width: softcopyVOI.WindowWidth,
 		Function: softcopyVOI.Function, LUT: softcopyVOI.LUT,
 	}
+	layers, err := resolvedGraphicLayers(state)
+	if err != nil {
+		return AppliedState{}, err
+	}
+	var modality *display.ModalityLUT
+	if state.ModalityLUT != nil {
+		transform := state.ModalityLUT.Transform()
+		modality = &transform
+	}
 	return AppliedState{
-		DisplayedArea:      displayedArea,
-		Shutter:            cloneShutter(state.Shutter),
-		RotationDegrees:    state.SpatialTransform.RotationDegrees,
-		FlipHorizontal:     state.SpatialTransform.FlipHorizontal,
-		WindowCenter:       softcopyVOI.WindowCenter,
-		WindowWidth:        softcopyVOI.WindowWidth,
-		VOI:                voi,
-		PresentationLUT:    presentationLUTShape(state.PresentationLUTShape),
-		GraphicAnnotations: annotations,
+		PresentationLUTTable: state.PresentationLUT,
+		ModalityLUT:          modality,
+		GraphicLayers:        layers,
+		DisplayedArea:        displayedArea,
+		Shutter:              cloneShutter(state.Shutter),
+		RotationDegrees:      state.SpatialTransform.RotationDegrees,
+		FlipHorizontal:       state.SpatialTransform.FlipHorizontal,
+		WindowCenter:         softcopyVOI.WindowCenter,
+		WindowWidth:          softcopyVOI.WindowWidth,
+		VOI:                  voi,
+		PresentationLUT:      presentationLUTShape(state.PresentationLUTShape),
+		GraphicAnnotations:   annotations,
 	}, nil
 }
 
@@ -398,15 +523,26 @@ func referencesApply(refs []ReferencedImage, image ImageState) bool {
 }
 
 func applyGraphicAnnotations(state *State, displayedArea DisplayedArea, image ImageState) ([]GraphicAnnotation, error) {
-	annotations := make([]GraphicAnnotation, 0, len(state.GraphicAnnotations))
-	for i, source := range state.GraphicAnnotations {
-		if len(source.ReferencedImages) > 0 && !referencesApply(source.ReferencedImages, image) {
-			continue
-		}
+	selected := selectGraphicAnnotations(state, image)
+	annotations := make([]GraphicAnnotation, 0, len(selected))
+	for i, source := range selected {
 		annotation := source
 		annotation.Polyline = append([]Point2D(nil), source.Polyline...)
-		if source.Text != "" {
-			anchor, err := annotationPointInPixelUnits(source.Anchor, source.AnchorUnits, displayedArea, image)
+		annotation.Compound = cloneCompoundGraphic(source.Compound)
+		if box := source.BoundingBox; box != nil {
+			converted := *box
+			var err error
+			if converted.TopLeft, err = annotationPointInPixelUnits(box.TopLeft, box.Units, displayedArea, image, state.SpatialTransform); err != nil {
+				return nil, fmt.Errorf("annotation %d bounding box: %w", i, err)
+			}
+			if converted.BottomRight, err = annotationPointInPixelUnits(box.BottomRight, box.Units, displayedArea, image, state.SpatialTransform); err != nil {
+				return nil, fmt.Errorf("annotation %d bounding box: %w", i, err)
+			}
+			converted.Units = AnnotationUnitsPixel
+			annotation.BoundingBox = &converted
+		}
+		if source.Text != "" && hasAnchor(source) {
+			anchor, err := annotationPointInPixelUnits(source.Anchor, source.AnchorUnits, displayedArea, image, state.SpatialTransform)
 			if err != nil {
 				return nil, fmt.Errorf("annotation %d anchor: %w", i, err)
 			}
@@ -415,7 +551,7 @@ func applyGraphicAnnotations(state *State, displayedArea DisplayedArea, image Im
 		}
 		if len(source.Polyline) > 0 {
 			for pointIndex, point := range source.Polyline {
-				converted, err := annotationPointInPixelUnits(point, source.GraphicUnits, displayedArea, image)
+				converted, err := annotationPointInPixelUnits(point, source.GraphicUnits, displayedArea, image, state.SpatialTransform)
 				if err != nil {
 					return nil, fmt.Errorf("annotation %d graphic point %d: %w", i, pointIndex, err)
 				}
@@ -428,7 +564,11 @@ func applyGraphicAnnotations(state *State, displayedArea DisplayedArea, image Im
 	return annotations, nil
 }
 
-func annotationPointInPixelUnits(point Point2D, units string, area DisplayedArea, image ImageState) (Point2D, error) {
+// annotationPointInPixelUnits converts a point to image pixel coordinates.
+// A DISPLAY point is placed on the displayed area as shown, after the
+// rotation and flip, and mapped back to the image pixel under it, so that it
+// keeps its place on the screen once the image is transformed.
+func annotationPointInPixelUnits(point Point2D, units string, area DisplayedArea, image ImageState, transform SpatialTransform) (Point2D, error) {
 	switch normalizedAnnotationUnits(units) {
 	case AnnotationUnitsPixel:
 		return point, nil
@@ -440,10 +580,13 @@ func annotationPointInPixelUnits(point Point2D, units string, area DisplayedArea
 		if err != nil {
 			return Point2D{}, err
 		}
-		return Point2D{
-			X: left + point.X*(right-left),
-			Y: top + point.Y*(bottom-top),
-		}, nil
+		g := newSpatialGeometry(image.Columns, image.Rows, transform)
+		a, b := g.rotate(Point2D{X: left, Y: top}), g.rotate(Point2D{X: right, Y: bottom})
+		shown := Point2D{
+			X: math.Min(a.X, b.X) + point.X*math.Abs(b.X-a.X),
+			Y: math.Min(a.Y, b.Y) + point.Y*math.Abs(b.Y-a.Y),
+		}
+		return g.unrotate(shown), nil
 	default:
 		return Point2D{}, fmt.Errorf("%w: %q", ErrUnsupportedUnits, units)
 	}
@@ -456,10 +599,53 @@ func displayedAreaPixelEdges(area DisplayedArea, image ImageState) (left, top, r
 		}
 		return 0, 0, float64(image.Columns), float64(image.Rows), nil
 	}
-	if area.BottomRightX < area.TopLeftX || area.BottomRightY < area.TopLeftY {
-		return 0, 0, 0, 0, fmt.Errorf("%w: invalid displayed area %+v", ErrInvalidObject, area)
+	l, t, r, b := area.ImageRegion()
+	return float64(l - 1), float64(t - 1), float64(r), float64(b), nil
+}
+
+// ImageRegion returns the image region the displayed area selects, as
+// 1-based inclusive pixel columns left..right and rows top..bottom. The
+// corners are the pixels shown at the top left and bottom right after the
+// spatial transformation (PS3.3 C.10.4), so a rotated or flipped state may
+// list them in either order.
+func (a DisplayedArea) ImageRegion() (left, top, right, bottom int) {
+	return min(a.TopLeftX, a.BottomRightX), min(a.TopLeftY, a.BottomRightY), max(a.TopLeftX, a.BottomRightX), max(a.TopLeftY, a.BottomRightY)
+}
+
+// Corners returns the Displayed Area corners that select the 1-based
+// inclusive image region left..right, top..bottom under the transform: the
+// top left hand corner is the image pixel displayed at the top left after
+// the rotation and flip, and the bottom right hand corner the one displayed
+// at the bottom right (PS3.3 C.10.4).
+func (t SpatialTransform) Corners(left, top, right, bottom int) (topLeftX, topLeftY, bottomRightX, bottomRightY int) {
+	left, right = min(left, right), max(left, right)
+	top, bottom = min(top, bottom), max(top, bottom)
+	// Where each corner lands, up to a translation.
+	place := func(x, y int) (int, int) {
+		switch t.RotationDegrees {
+		case 90:
+			x, y = -y, x
+		case 180:
+			x, y = -x, -y
+		case 270:
+			x, y = y, -x
+		}
+		if t.FlipHorizontal {
+			x = -x
+		}
+		return x, y
 	}
-	return float64(area.TopLeftX - 1), float64(area.TopLeftY - 1), float64(area.BottomRightX), float64(area.BottomRightY), nil
+	corners := [4][2]int{{left, top}, {right, top}, {left, bottom}, {right, bottom}}
+	best := 0
+	for i, corner := range corners {
+		x, y := place(corner[0], corner[1])
+		bx, by := place(corners[best][0], corners[best][1])
+		if x+y < bx+by {
+			best = i
+		}
+	}
+	opposite := corners[3-best]
+	return corners[best][0], corners[best][1], opposite[0], opposite[1]
 }
 
 func unitInterval(value float64) bool {
@@ -514,9 +700,6 @@ func validateReferencedSeries(refs []ReferencedImage) error {
 func validateDisplayedArea(area DisplayedArea) error {
 	if !displayedAreaDefined(area) {
 		return fmt.Errorf("%w: Displayed Area is required", ErrInvalidObject)
-	}
-	if area.BottomRightX < area.TopLeftX || area.BottomRightY < area.TopLeftY {
-		return fmt.Errorf("%w: invalid Displayed Area %+v", ErrInvalidObject, area)
 	}
 	for _, value := range []int{area.TopLeftX, area.TopLeftY, area.BottomRightX, area.BottomRightY} {
 		if int64(value) < -(1<<31) || int64(value) > 1<<31-1 {
@@ -660,11 +843,7 @@ func shutterElements(shutter *display.Shutter) []core.Element {
 }
 
 func signedShorts(tag core.Tag, values ...int16) core.Element {
-	raw := make([]byte, len(values)*2)
-	for i, value := range values {
-		binary.LittleEndian.PutUint16(raw[i*2:], uint16(value))
-	}
-	return derivedio.Raw(tag, core.VRSS, raw)
+	return object.SSElement(tag, binary.LittleEndian, values...)
 }
 
 func cloneShutter(source *display.Shutter) *display.Shutter {
@@ -690,10 +869,30 @@ func validateGraphicAnnotations(items []GraphicAnnotation) error {
 			}
 			groupRefs[key] = item.ReferencedImages
 		}
-		if item.Text != "" {
-			if err := validateAnnotationPoint(item.Anchor, item.AnchorUnits); err != nil {
-				return fmt.Errorf("dicom/gsps: annotation %d anchor: %w", i, err)
+		if !validCS(graphicLayerName(item.LayerName)) {
+			return fmt.Errorf("%w: annotation %d layer %q is not a CS value", ErrInvalidObject, i, item.LayerName)
+		}
+		if item.Compound != nil {
+			if item.Text != "" || item.BoundingBox != nil || item.AnchorVisible || len(item.Polyline) != 0 || item.Filled {
+				return fmt.Errorf("%w: annotation %d mixes Compound Graphic and simple object attributes", ErrInvalidObject, i)
 			}
+			if len(item.Compound.Points) > maxWrittenCompoundPoints {
+				return fmt.Errorf("%w: annotation %d Compound Graphic exceeds Explicit VR Graphic Data length", ErrInvalidObject, i)
+			}
+			if err := validateCompoundGraphic(item.Compound); err != nil {
+				return fmt.Errorf("dicom/gsps: annotation %d: %w", i, err)
+			}
+			continue
+		}
+		if item.Text != "" {
+			if err := validateTextObject(item); err != nil {
+				return fmt.Errorf("dicom/gsps: annotation %d text: %w", i, err)
+			}
+		} else if item.BoundingBox != nil || item.AnchorVisible {
+			return fmt.Errorf("%w: annotation %d has a bounding box or visible anchor without text", ErrInvalidObject, i)
+		}
+		if item.Filled && !graphicNeedsFilledAttribute(normalizedGraphicTypeOrPolyline(item.GraphicType), item.Polyline) {
+			return fmt.Errorf("%w: annotation %d is filled but not a closed graphic", ErrInvalidObject, i)
 		}
 		if len(item.Polyline) > 1<<16-1 {
 			return fmt.Errorf("%w: annotation %d has %d graphic points, maximum is 65535", ErrInvalidObject, i, len(item.Polyline))
@@ -762,6 +961,9 @@ func validateSoftcopyVOIs(state *State) error {
 			}
 			continue
 		}
+		if item.LUT.BitsPerEntry != 8 && item.LUT.BitsPerEntry != 16 {
+			return fmt.Errorf("%w: Softcopy VOI item %d LUT has %d bits per entry, not 8 or 16", ErrInvalidObject, i, item.LUT.BitsPerEntry)
+		}
 		if item.LUT.FirstMapped < -(1<<15) || item.LUT.FirstMapped > 1<<16-1 {
 			return fmt.Errorf("%w: Softcopy VOI item %d LUT first mapped value %d is outside SS/US", ErrInvalidObject, i, item.LUT.FirstMapped)
 		}
@@ -816,6 +1018,9 @@ func displayedAreaSequence(state *State) core.Element {
 		}
 		if len(area.PixelAspectRatio) == 2 {
 			elements = append(elements, derivedio.IS(tagPresentationPixelAspectRatio, area.PixelAspectRatio...))
+		} else if len(area.PixelSpacing) != 2 {
+			// Presentation Pixel Aspect Ratio is required without a spacing.
+			elements = append(elements, derivedio.IS(tagPresentationPixelAspectRatio, 1, 1))
 		}
 		if area.MagnificationRatio != 0 {
 			elements = append(elements, derivedio.DS(tagPresentationPixelMagnify, area.MagnificationRatio))
@@ -868,25 +1073,7 @@ func voiReferencedImageSequence(refs []ReferencedImage) core.Element {
 }
 
 func voiLUTSequence(voi SoftcopyVOI) core.Element {
-	lut := voi.LUT
-	count := len(lut.Entries)
-	encodedCount := count
-	if count == 1<<16 {
-		encodedCount = 0
-	}
-	descriptorVR := core.VRUS
-	if lut.FirstMapped < 0 {
-		descriptorVR = core.VRSS
-	}
-	var descriptor [6]byte
-	binary.LittleEndian.PutUint16(descriptor[0:2], uint16(encodedCount))
-	binary.LittleEndian.PutUint16(descriptor[2:4], uint16(lut.FirstMapped))
-	binary.LittleEndian.PutUint16(descriptor[4:6], uint16(lut.BitsPerEntry))
-	return derivedio.Seq(tagVOILUTSequence, derivedio.DataSet(
-		core.NewRawElement(tagLUTDescriptor, descriptorVR, descriptor[:]),
-		derivedio.LO(tagLUTExplanation, voi.Explanation),
-		derivedio.Raw(tagLUTData, core.VROW, derivedio.Uint16Bytes(lut.Entries)),
-	))
+	return derivedio.Seq(tagVOILUTSequence, derivedio.DataSet(lutItemElements(voi.LUT, voi.Explanation)...))
 }
 
 func voiFunctionValue(function display.VOIFunction) string {
@@ -904,8 +1091,9 @@ func voiFunctionValue(function display.VOIFunction) string {
 // while preserving objects that were grouped in the same source item.
 func graphicAnnotationSequence(items []GraphicAnnotation) core.Element {
 	type groupKey struct {
-		index int
-		layer string
+		index    int
+		layer    string
+		compound bool
 	}
 	type annotationGroup struct {
 		layer string
@@ -915,13 +1103,19 @@ func graphicAnnotationSequence(items []GraphicAnnotation) core.Element {
 
 	groups := make([]annotationGroup, 0, len(items))
 	groupIndexes := map[groupKey]int{}
+	compoundIndexes := compoundIndexByID(items)
 	for _, item := range items {
 		layer := graphicLayerName(item.LayerName)
-		if item.GroupIndex <= 0 {
+		var key groupKey
+		switch {
+		case item.GroupIndex > 0:
+			key = groupKey{index: item.GroupIndex, layer: layer}
+		case item.compoundGraphicIDPresent():
+			key = groupKey{index: compoundIndexes[item.CompoundGraphicID], layer: layer, compound: true}
+		default:
 			groups = append(groups, annotationGroup{layer: layer, items: []GraphicAnnotation{item}, refs: item.ReferencedImages})
 			continue
 		}
-		key := groupKey{index: item.GroupIndex, layer: layer}
 		if groupIndex, ok := groupIndexes[key]; ok {
 			groups[groupIndex].items = append(groups[groupIndex].items, item)
 			continue
@@ -932,26 +1126,23 @@ func graphicAnnotationSequence(items []GraphicAnnotation) core.Element {
 
 	sets := make([]core.DataSet, 0, len(groups))
 	for _, group := range groups {
-		elements := []core.Element{derivedio.SH(tagGraphicLayer, group.layer)}
+		elements := []core.Element{derivedio.CS(tagGraphicLayer, group.layer)}
 		if len(group.refs) > 0 {
 			elements = append(elements, voiReferencedImageSequence(group.refs))
 		}
 		texts := make([]core.DataSet, 0, len(group.items))
 		graphics := make([]core.DataSet, 0, len(group.items))
+		var compounds []core.DataSet
 		for _, item := range group.items {
+			if item.Compound != nil {
+				compounds = append(compounds, compoundGraphicItem(item))
+				continue
+			}
 			if item.Text != "" {
-				texts = append(texts, derivedio.DataSet(
-					derivedio.CS(tagAnchorPointAnnotationUnits, normalizedAnnotationUnits(item.AnchorUnits)),
-					derivedio.Str(tagUnformattedTextValue, core.VRUT, item.Text),
-					derivedio.FL(tagAnchorPoint, item.Anchor.X, item.Anchor.Y),
-					derivedio.CS(tagAnchorPointVisibility, "N"),
-				))
+				texts = append(texts, textObjectItem(item))
 			}
 			if len(item.Polyline) > 0 {
-				graphicType := normalizedGraphicType(item.GraphicType)
-				if graphicType == "" {
-					graphicType = GraphicTypePolyline
-				}
+				graphicType := normalizedGraphicTypeOrPolyline(item.GraphicType)
 				graphicElements := []core.Element{
 					derivedio.CS(tagGraphicAnnotationUnits, normalizedAnnotationUnits(item.GraphicUnits)),
 					derivedio.US(tagGraphicDimensions, 2),
@@ -960,9 +1151,9 @@ func graphicAnnotationSequence(items []GraphicAnnotation) core.Element {
 					derivedio.CS(tagGraphicType, graphicType),
 				}
 				if graphicNeedsFilledAttribute(graphicType, item.Polyline) {
-					graphicElements = append(graphicElements, derivedio.CS(tagGraphicFilled, "N"))
+					graphicElements = append(graphicElements, derivedio.CS(tagGraphicFilled, flipValue(item.Filled)))
 				}
-				graphics = append(graphics, derivedio.DataSet(graphicElements...))
+				graphics = append(graphics, derivedio.DataSet(append(graphicElements, compoundLinkElements(item)...)...))
 			}
 		}
 		if len(texts) > 0 {
@@ -971,26 +1162,12 @@ func graphicAnnotationSequence(items []GraphicAnnotation) core.Element {
 		if len(graphics) > 0 {
 			elements = append(elements, derivedio.Seq(tagGraphicObjectSequence, graphics...))
 		}
+		if len(compounds) > 0 {
+			elements = append(elements, derivedio.Seq(tagCompoundGraphicSequence, compounds...))
+		}
 		sets = append(sets, derivedio.DataSet(elements...))
 	}
 	return derivedio.Seq(tagGraphicAnnotationSequence, sets...)
-}
-
-func graphicLayerSequence(items []GraphicAnnotation) core.Element {
-	seen := map[string]bool{}
-	layers := make([]core.DataSet, 0, len(items))
-	for _, item := range items {
-		name := graphicLayerName(item.LayerName)
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		layers = append(layers, derivedio.DataSet(
-			derivedio.SH(tagGraphicLayer, name),
-			derivedio.IS(tagGraphicLayerOrder, len(layers)+1),
-		))
-	}
-	return derivedio.Seq(tagGraphicLayerSequence, layers...)
 }
 
 // readReferences extracts referenced image identifiers and frame numbers from a DICOM object.
@@ -1129,17 +1306,15 @@ func readGraphicAnnotations(obj *object.Object) []GraphicAnnotation {
 		references := readDirectImageReferences(item)
 		texts := readTextObjects(item, layer)
 		graphics := readGraphicObjects(item, layer)
-		for i := range texts {
-			texts[i].GroupIndex = groupIndex + 1
-			texts[i].ReferencedImages = cloneReferences(references)
+		compounds := readCompoundGraphics(item, layer)
+		for _, annotations := range [][]GraphicAnnotation{texts, graphics, compounds} {
+			for i := range annotations {
+				annotations[i].GroupIndex = groupIndex + 1
+				annotations[i].ReferencedImages = cloneReferences(references)
+			}
+			out = append(out, annotations...)
 		}
-		for i := range graphics {
-			graphics[i].GroupIndex = groupIndex + 1
-			graphics[i].ReferencedImages = cloneReferences(references)
-		}
-		out = append(out, texts...)
-		out = append(out, graphics...)
-		if len(texts) == 0 && len(graphics) == 0 {
+		if len(texts) == 0 && len(graphics) == 0 && len(compounds) == 0 {
 			out = append(out, GraphicAnnotation{
 				LayerName: layer, GroupIndex: groupIndex + 1,
 				ReferencedImages: cloneReferences(references),
@@ -1162,10 +1337,13 @@ func readTextObjects(item *object.Object, layer string) []GraphicAnnotation {
 	var out []GraphicAnnotation
 	for _, textItem := range derivedio.Sequence(item, tagTextObjectSequence) {
 		annotation := GraphicAnnotation{
-			LayerName:   layer,
-			Text:        derivedio.CleanString(textItem, tagUnformattedTextValue),
-			AnchorUnits: normalizedAnnotationUnits(derivedio.CleanString(textItem, tagAnchorPointAnnotationUnits)),
+			LayerName:     layer,
+			Text:          derivedio.CleanString(textItem, tagUnformattedTextValue),
+			AnchorUnits:   normalizedAnnotationUnits(derivedio.CleanString(textItem, tagAnchorPointAnnotationUnits)),
+			BoundingBox:   readBoundingBox(textItem),
+			AnchorVisible: derivedio.CleanString(textItem, tagAnchorPointVisibility) == "Y",
 		}
+		annotation.malformedCompoundLink = !readCompoundLink(textItem, &annotation)
 		anchor := derivedio.Floats(textItem, tagAnchorPoint)
 		if len(anchor) >= 2 {
 			annotation.Anchor = Point2D{X: anchor[0], Y: anchor[1]}
@@ -1180,12 +1358,11 @@ func readGraphicObjects(item *object.Object, layer string) []GraphicAnnotation {
 	for _, graphicItem := range derivedio.Sequence(item, tagGraphicObjectSequence) {
 		annotation := GraphicAnnotation{
 			LayerName:    layer,
-			GraphicType:  normalizedGraphicType(derivedio.CleanString(graphicItem, tagGraphicType)),
+			GraphicType:  normalizedGraphicTypeOrPolyline(derivedio.CleanString(graphicItem, tagGraphicType)),
 			GraphicUnits: normalizedAnnotationUnits(derivedio.CleanString(graphicItem, tagGraphicAnnotationUnits)),
+			Filled:       derivedio.CleanString(graphicItem, tagGraphicFilled) == "Y",
 		}
-		if annotation.GraphicType == "" {
-			annotation.GraphicType = GraphicTypePolyline
-		}
+		annotation.malformedCompoundLink = !readCompoundLink(graphicItem, &annotation)
 		values := derivedio.Floats(graphicItem, tagGraphicData)
 		for i := 0; i+1 < len(values); i += 2 {
 			annotation.Polyline = append(annotation.Polyline, Point2D{X: values[i], Y: values[i+1]})
@@ -1197,6 +1374,13 @@ func readGraphicObjects(item *object.Object, layer string) []GraphicAnnotation {
 
 func normalizedGraphicType(value string) string {
 	return strings.ToUpper(strings.TrimSpace(value))
+}
+
+func normalizedGraphicTypeOrPolyline(value string) string {
+	if value = normalizedGraphicType(value); value == "" {
+		return GraphicTypePolyline
+	}
+	return value
 }
 
 func normalizedAnnotationUnits(value string) string {

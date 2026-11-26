@@ -27,7 +27,7 @@ func Test_FromVectorROIs_builds_patient_space_multislice_references(t *testing.T
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if roundTrip.FrameOfReferenceUID != "1.2.3.frame" {
+	if roundTrip.FrameOfReferenceUID != "1.2.3.9107" {
 		t.Fatalf("FrameOfReferenceUID = %q, want source frame", roundTrip.FrameOfReferenceUID)
 	}
 	if len(roundTrip.ROIs) != 2 {
@@ -43,20 +43,20 @@ func Test_FromVectorROIs_builds_patient_space_multislice_references(t *testing.T
 	if got := first.Points[1]; got.X != 1.5 || got.Y != 0 || got.Z != 10 {
 		t.Fatalf("patient point = %+v, want pixel (2,0) mapped by column spacing", got)
 	}
-	if got := roundTrip.ROIs[1].Contours[0].ReferencedImages[0].SOPInstanceUID; got != "1.2.3.sop.2" {
+	if got := roundTrip.ROIs[1].Contours[0].ReferencedImages[0].SOPInstanceUID; got != "1.2.3.9101.2" {
 		t.Fatalf("second ROI referenced SOP = %q, want 1.2.3.sop.2", got)
 	}
-	if got := roundTrip.ROIs[1].Contours[0].ReferencedImages[0].StudyInstanceUID; got != "1.2.3.study" {
+	if got := roundTrip.ROIs[1].Contours[0].ReferencedImages[0].StudyInstanceUID; got != "1.2.3.9102" {
 		t.Fatalf("second ROI referenced study = %q, want 1.2.3.study", got)
 	}
-	if got := roundTrip.ROIs[1].Contours[0].ReferencedImages[0].SeriesInstanceUID; got != "1.2.3.series" {
+	if got := roundTrip.ROIs[1].Contours[0].ReferencedImages[0].SeriesInstanceUID; got != "1.2.3.9103" {
 		t.Fatalf("second ROI referenced series = %q, want 1.2.3.series", got)
 	}
 	refs, ok := file.Dataset.GetSequence(tagReferencedFrameOfReferenceSeq)
 	if !ok || len(refs) != 1 {
 		t.Fatalf("ReferencedFrameOfReferenceSequence ok=%v len=%d, want one item", ok, len(refs))
 	}
-	if got, _ := refs[0].GetUID(core.NewTag(0x0020, 0x0052)); got != "1.2.3.frame" {
+	if got, _ := refs[0].GetUID(core.NewTag(0x0020, 0x0052)); got != "1.2.3.9107" {
 		t.Fatalf("ReferencedFrameOfReferenceSequence FrameOfReferenceUID = %q, want 1.2.3.frame", got)
 	}
 	studies, ok := refs[0].GetSequence(tagRTReferencedStudySequence)
@@ -76,7 +76,7 @@ func Test_FromVectorROIs_builds_patient_space_multislice_references(t *testing.T
 		t.Fatalf("StructureSetROISequence ok=%v len=%d, want two ROI items", ok, len(roiItems))
 	}
 	for i, item := range roiItems {
-		if got, _ := item.GetUID(tagReferencedFrameOfReferenceUID); got != "1.2.3.frame" {
+		if got, _ := item.GetUID(tagReferencedFrameOfReferenceUID); got != "1.2.3.9107" {
 			t.Fatalf("StructureSetROISequence[%d] ReferencedFrameOfReferenceUID = %q, want 1.2.3.frame", i, got)
 		}
 	}
@@ -209,10 +209,10 @@ func writeVectorOptions(t *testing.T, opts FromVectorROIsOptions) []byte {
 
 func testVectorOptions() FromVectorROIsOptions {
 	return FromVectorROIsOptions{
-		SOPInstanceUID:      "1.2.3.rt",
-		StudyInstanceUID:    "1.2.3.study",
-		SeriesInstanceUID:   "1.2.3.rtseries",
-		FrameOfReferenceUID: "1.2.3.frame",
+		SOPInstanceUID:      "1.2.3.9109",
+		StudyInstanceUID:    "1.2.3.9102",
+		SeriesInstanceUID:   "1.2.3.9114",
+		FrameOfReferenceUID: "1.2.3.9107",
 		Label:               "TWIN_ROIS",
 		ROIs: []VectorROI{
 			{
@@ -223,10 +223,10 @@ func testVectorOptions() FromVectorROIsOptions {
 					ROI:      dicomroi.VectorROI{Shape: dicomroi.ROIRectangle, Points: []image.Point{{X: 1, Y: 1}, {X: 3, Y: 2}}},
 					Geometry: testVectorGeometry(12),
 					ReferencedImages: []ReferencedImage{{
-						StudyInstanceUID:  "1.2.3.study",
-						SeriesInstanceUID: "1.2.3.series",
+						StudyInstanceUID:  "1.2.3.9102",
+						SeriesInstanceUID: "1.2.3.9103",
 						SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-						SOPInstanceUID:    "1.2.3.sop.2",
+						SOPInstanceUID:    "1.2.3.9101.2",
 					}},
 				}},
 			},
@@ -243,10 +243,10 @@ func testVectorOptions() FromVectorROIsOptions {
 					}},
 					Geometry: testVectorGeometry(10),
 					ReferencedImages: []ReferencedImage{{
-						StudyInstanceUID:  "1.2.3.study",
-						SeriesInstanceUID: "1.2.3.series",
+						StudyInstanceUID:  "1.2.3.9102",
+						SeriesInstanceUID: "1.2.3.9103",
 						SOPClassUID:       "1.2.840.10008.5.1.4.1.1.2",
-						SOPInstanceUID:    "1.2.3.sop.1",
+						SOPInstanceUID:    "1.2.3.9101.1",
 					}},
 				}},
 			},

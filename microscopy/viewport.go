@@ -64,24 +64,28 @@ func (v Viewport) VisibleTiles(level Level) []Tile {
 	return v.VisibleTilesLimit(level, 0)
 }
 
+// VisibleTilesLimit applies a single center-priority cap across the selected
+// optical paths. A non-positive limit returns all visible tiles.
 func (v Viewport) VisibleTilesLimit(level Level, limit int) []Tile {
 	bounds := v.Bounds(level)
 	if len(v.OpticalPaths) == 0 {
 		return level.TilesForViewportLimit(bounds, "", v.FocalPlane, limit)
 	}
-	var out []Tile
-	perChannelLimit := 0
 	if limit > 0 {
-		perChannelLimit = max(1, limit/len(v.OpticalPaths))
+		paths := make(map[string]bool, len(v.OpticalPaths))
+		for _, channel := range v.OpticalPaths {
+			paths[channel.OpticalPath] = true
+		}
+		allPaths := paths[""]
+		return level.tilesForViewportLimit(bounds, v.FocalPlane, limit, func(path string) bool {
+			return allPaths || paths[path]
+		}, true)
 	}
+	var out []Tile
 	for _, channel := range v.OpticalPaths {
-		out = append(out, level.TilesForViewportLimit(bounds, channel.OpticalPath, v.FocalPlane, perChannelLimit)...)
+		out = append(out, level.TilesForViewport(bounds, channel.OpticalPath, v.FocalPlane)...)
 	}
-	out = deduplicateTiles(out)
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
+	return deduplicateTiles(out, 0)
 }
 
 func (v Viewport) ScaleBar(level Level) (ScaleBar, error) {

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"image"
+	"github.com/ThalesMMS/dicom-go/internal/commontest"
 	"math"
 	"strings"
 	"testing"
@@ -14,15 +14,16 @@ import (
 	"github.com/ThalesMMS/dicom-go/internal/derivedio"
 	"github.com/ThalesMMS/dicom-go/object"
 	"github.com/ThalesMMS/dicom-go/render"
+	dicomroi "github.com/ThalesMMS/dicom-go/roi"
 )
 
 func TestRTStructureSetRoundTripsAndRasterizesClosedContour(t *testing.T) {
 	// Given: an RTSTRUCT with one closed planar ROI in patient coordinates.
 	set := StructureSet{
 		SOPInstanceUID:      "1.2.826.0.1.3680043.9.7433.481.1",
-		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.481.study",
-		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.481.series",
-		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.481.frame",
+		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.481.9102",
+		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.481.9103",
+		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.481.9107",
 		ROIs: []ROI{{
 			Number: 1,
 			Name:   "PTV",
@@ -36,7 +37,7 @@ func TestRTStructureSetRoundTripsAndRasterizesClosedContour(t *testing.T) {
 				},
 				ReferencedImages: []ReferencedImage{{
 					SOPClassUID:    "1.2.840.10008.5.1.4.1.1.2",
-					SOPInstanceUID: "1.2.3.ct.1",
+					SOPInstanceUID: "1.2.3.9108.1",
 				}},
 			}},
 		}},
@@ -44,6 +45,13 @@ func TestRTStructureSetRoundTripsAndRasterizesClosedContour(t *testing.T) {
 	file, err := Write(&set)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
+	}
+	withCommon := set
+	withCommon.Common = object.DerivedCommon{Source: commontest.Source()}
+	if common, err := Write(&withCommon); err != nil {
+		t.Fatalf("Write with common modules: %v", err)
+	} else {
+		commontest.Check(t, common.Dataset, true)
 	}
 	var encoded bytes.Buffer
 	if err := object.WriteFile(&encoded, file); err != nil {
@@ -172,7 +180,7 @@ func TestRTStructureSetWriteRejectsNilSet(t *testing.T) {
 func TestRTStructureSetWriteRejectsWrongSopClass(t *testing.T) {
 	set := &StructureSet{
 		SOPClassUID:    "1.2.840.10008.5.1.4.1.1.2", // CT
-		SOPInstanceUID: "1.2.3.rt.1",
+		SOPInstanceUID: "1.2.3.9109.1",
 	}
 	_, err := Write(set)
 	if !errors.Is(err, ErrUnsupportedSOPClass) {
@@ -190,7 +198,7 @@ func TestRTStructureSetReadRejectsNilDataset(t *testing.T) {
 func TestRTStructureSetReadRejectsWrongSopClass(t *testing.T) {
 	dataset := object.FromElements([]core.Element{
 		{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0016), VR: core.VRUI}, Value: core.StringValue{"1.2.840.10008.5.1.4.1.1.2"}},
-		{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0018), VR: core.VRUI}, Value: core.StringValue{"1.2.3.not.rt"}},
+		{Header: core.ElementHeader{Tag: core.NewTag(0x0008, 0x0018), VR: core.VRUI}, Value: core.StringValue{"1.2.3.9110.9109"}},
 	}, std.Dictionary)
 	_, err := Read(dataset)
 	if !errors.Is(err, ErrUnsupportedSOPClass) {
@@ -207,10 +215,10 @@ func TestRTStructureSetRasterizeRejectsNilSet(t *testing.T) {
 
 func TestRTStructureSetRasterizeReturnsErrorForMissingRoi(t *testing.T) {
 	set := &StructureSet{
-		SOPInstanceUID:      "1.2.3.rt.missing",
-		StudyInstanceUID:    "1.2.3.study",
-		SeriesInstanceUID:   "1.2.3.rt.series",
-		FrameOfReferenceUID: "1.2.3.frame",
+		SOPInstanceUID:      "1.2.3.9109.9111",
+		StudyInstanceUID:    "1.2.3.9102",
+		SeriesInstanceUID:   "1.2.3.9109.9103",
+		FrameOfReferenceUID: "1.2.3.9107",
 		ROIs: []ROI{{
 			Number: 1,
 			Name:   "PTV",
@@ -327,10 +335,10 @@ func TestRTStructureSetRasterizeRejectsMixedXORAndNonXORContours(t *testing.T) {
 
 func TestRTStructureSetWriteUsesDefaultSopClassWhenEmpty(t *testing.T) {
 	set := &StructureSet{
-		SOPInstanceUID:      "1.2.3.rt.default",
-		StudyInstanceUID:    "1.2.3.study",
-		SeriesInstanceUID:   "1.2.3.rt.series",
-		FrameOfReferenceUID: "1.2.3.frame",
+		SOPInstanceUID:      "1.2.3.9109.9112",
+		StudyInstanceUID:    "1.2.3.9102",
+		SeriesInstanceUID:   "1.2.3.9109.9103",
+		FrameOfReferenceUID: "1.2.3.9107",
 	}
 	file, err := Write(set)
 	if err != nil {
@@ -348,10 +356,10 @@ func TestRTStructureSetWriteUsesDefaultSopClassWhenEmpty(t *testing.T) {
 func TestRTStructureSetWritePreservesMultipleROIs(t *testing.T) {
 	// Given: an RTSTRUCT with two ROIs.
 	set := StructureSet{
-		SOPInstanceUID:      "1.2.826.0.1.3680043.9.7433.481.multi",
-		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.481.study",
-		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.481.series",
-		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.481.frame",
+		SOPInstanceUID:      "1.2.826.0.1.3680043.9.7433.481.9113",
+		StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.481.9102",
+		SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.481.9103",
+		FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.481.9107",
 		ROIs: []ROI{
 			{Number: 1, Name: "PTV", Contours: []Contour{{GeometricType: ContourClosedPlanar, Points: []Point3D{{X: 0}, {X: 5}, {X: 5, Y: 5}, {X: 0, Y: 5}}}}},
 			{Number: 2, Name: "GTV", Contours: []Contour{{GeometricType: ContourClosedPlanar, Points: []Point3D{{X: 1}, {X: 3}, {X: 3, Y: 3}, {X: 1, Y: 3}}}}},
@@ -426,11 +434,11 @@ func TestContourToImageUsesColumnAndRowSpacingForAnisotropicPixels(t *testing.T)
 	if sliceIndex != 0 {
 		t.Fatalf("slice index = %d, want 0", sliceIndex)
 	}
-	want := []image.Point{
-		image.Pt(10, 10),
-		image.Pt(12, 10),
-		image.Pt(12, 12),
-		image.Pt(10, 12),
+	want := []dicomroi.Point2D{
+		{X: 10, Y: 10},
+		{X: 12, Y: 10},
+		{X: 12, Y: 12},
+		{X: 10, Y: 12},
 	}
 	if len(points) != len(want) {
 		t.Fatalf("points = %v, want %v", points, want)
@@ -494,4 +502,72 @@ func testRTGeometry() render.VolumeGeometry {
 		Columns:    8,
 	}}
 	return render.BuildVolumeGeometry(slices, render.DefaultGeometryTolerances())
+}
+
+// TestRTStructureSetWritesType2Attributes checks the Type 2 Attributes of
+// the RT Series and Structure Set Modules and of their Sequence Items: empty
+// when unknown, the value when set.
+func TestRTStructureSetWritesType2Attributes(t *testing.T) {
+	set := func(seriesNumber int, algorithm string) *StructureSet {
+		return &StructureSet{
+			SOPInstanceUID:      "1.2.826.0.1.3680043.9.7433.481.401",
+			StudyInstanceUID:    "1.2.826.0.1.3680043.9.7433.481.401.1",
+			SeriesInstanceUID:   "1.2.826.0.1.3680043.9.7433.481.401.2",
+			FrameOfReferenceUID: "1.2.826.0.1.3680043.9.7433.481.401.3",
+			SeriesNumber:        seriesNumber,
+			Date:                "20260926",
+			Time:                "120000",
+			ROIs: []ROI{{Number: 1, Name: "PTV", GenerationAlgorithm: algorithm, Contours: []Contour{{
+				GeometricType: ContourPoint, Points: []Point3D{{X: 1, Y: 2, Z: 3}},
+			}}}},
+		}
+	}
+	unset, err := Write(set(0, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	given, err := Write(set(7, "MANUAL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := func(obj *object.Object, sequence core.Tag) *object.Object {
+		items, ok := obj.GetSequence(sequence)
+		if !ok || len(items) != 1 {
+			t.Fatalf("%s: %d items", sequence, len(items))
+		}
+		return items[0]
+	}
+	cases := []struct {
+		name     string
+		sequence core.Tag // zero for a top-level Attribute
+		tag      core.Tag
+		unset    string
+		given    string
+	}{
+		{"Series Number", core.Tag{}, derivedio.TagSeriesNumber, "", "7"},
+		{"Operators' Name", core.Tag{}, tagOperatorsName, "", ""},
+		{"Structure Set Date", core.Tag{}, tagStructureSetDate, "20260926", "20260926"},
+		{"Structure Set Time", core.Tag{}, tagStructureSetTime, "120000", "120000"},
+		{"ROI Generation Algorithm", tagStructureSetROISequence, tagROIGenerationAlgorithm, "", "MANUAL"},
+		{"ROI Interpreter", tagRTROIObservationsSequence, tagROIInterpreter, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, check := range []struct {
+				file *object.File
+				want string
+			}{{unset, tc.unset}, {given, tc.given}} {
+				obj := check.file.Dataset
+				if tc.sequence != (core.Tag{}) {
+					obj = item(obj, tc.sequence)
+				}
+				if _, ok := obj.Get(tc.tag); !ok {
+					t.Fatalf("%s missing", tc.tag)
+				}
+				if got := derivedio.CleanString(obj, tc.tag); got != check.want {
+					t.Fatalf("%s = %q, want %q", tc.tag, got, check.want)
+				}
+			}
+		})
+	}
 }

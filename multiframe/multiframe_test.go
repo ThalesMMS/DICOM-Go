@@ -16,15 +16,6 @@ import (
 	"github.com/ThalesMMS/dicom-go/transfer"
 )
 
-var (
-	tagFrameVOILUTSequence  = core.NewTag(0x0028, 0x9132)
-	tagFrameAnatomySequence = core.NewTag(0x0020, 0x9071)
-	tagSliceThickness       = core.NewTag(0x0018, 0x0050)
-	tagRescaleType          = core.NewTag(0x0028, 0x1054)
-	tagWindowCenter         = core.NewTag(0x0028, 0x1050)
-	tagWindowWidth          = core.NewTag(0x0028, 0x1051)
-)
-
 func TestConvertToClassicEnhancedCT(t *testing.T) {
 	source := enhancedTestFile(t, EnhancedCTImageStorageUID, false)
 	outputs, report, err := ConvertToClassic(context.Background(), source, Options{
@@ -51,6 +42,7 @@ func TestConvertToClassicEnhancedCT(t *testing.T) {
 	wantPositions := []string{"10", "0"}
 	wantPixels := [][]byte{{9, 0, 10, 0, 11, 0, 12, 0}, {1, 0, 2, 0, 3, 0, 4, 0}}
 	for i, file := range outputs {
+		checkIOD(t, fmt.Sprintf("classic CT %d", i), file.Dataset)
 		if file.TransferSyntax.UID != transfer.ExplicitVRLittleEndian.UID {
 			t.Fatalf("output %d syntax = %s", i, file.TransferSyntax.UID)
 		}
@@ -117,6 +109,7 @@ func TestConvertToClassicEnhancedMR(t *testing.T) {
 		t.Fatalf("unexpected MR result report=%+v files=%d", report, len(outputs))
 	}
 	for i, file := range outputs {
+		checkIOD(t, fmt.Sprintf("classic MR %d", i), file.Dataset)
 		if got, _ := file.Dataset.GetString(tagSOPClassUID); got != MRImageStorageUID {
 			t.Fatalf("output %d SOP class = %q", i, got)
 		}
@@ -154,6 +147,7 @@ func TestConvertToClassicLegacyConvertedCTAndMR(t *testing.T) {
 				t.Fatalf("outputs=%d report=%+v", len(outputs), report)
 			}
 			for _, output := range outputs {
+				checkIOD(t, "classic "+test.name, output.Dataset)
 				if got, _ := output.Dataset.GetString(tagSOPClassUID); got != test.target {
 					t.Fatalf("target SOP Class UID = %q, want %q", got, test.target)
 				}

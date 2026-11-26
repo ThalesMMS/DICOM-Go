@@ -38,7 +38,7 @@ func TestReadPixelDataViewPreservesSourceAndDecodedPayload(t *testing.T) {
 				Rows:             2,
 				Columns:          3,
 				SegmentationType: SegmentationTypeLabelMap,
-				Segments:         []Segment{{Number: 7, Label: "Label map", AlgorithmType: AlgorithmManual}},
+				Segments:         []Segment{{Number: 0, Label: "Background"}, {Number: 3, Label: "Other"}, {Number: 7, Label: "Label map", AlgorithmType: AlgorithmManual}},
 				Frames:           []Frame{{SegmentNumber: 7, LabelMap: []uint16{0, 7, 0, 3, 0, 7}}},
 			},
 		},

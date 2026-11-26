@@ -91,6 +91,8 @@ func TestSidecarMarshalIsDeterministicAndClosedToPHIFields(t *testing.T) {
 		TemporalOffsetsSeconds:   []float64{0, 2.25},
 		TemporalDurationsSeconds: []float64{2.25, 2.25},
 		Warnings:                 []string{"frames_reordered", "temporal_spacing_explicit"},
+		SliceSpacingSource:       "spacing-between-slices",
+		PixelSpacingSemantic:     "detector",
 	}
 
 	first, err := sidecar.Marshal(4096)
@@ -112,6 +114,7 @@ func TestSidecarMarshalIsDeterministicAndClosedToPHIFields(t *testing.T) {
 		"Reordered": {}, "Resampled": {}, "Interpolation": {},
 		"Units": {}, "Quantity": {}, "TemporalOffsetsSeconds": {},
 		"TemporalDurationsSeconds": {}, "Warnings": {},
+		"SliceSpacingSource": {}, "PixelSpacingSemantic": {},
 	}
 	typ := reflect.TypeOf(Sidecar{})
 	if typ.NumField() != len(wantFields) {
@@ -142,6 +145,7 @@ func TestSidecarMarshalIsDeterministicAndClosedToPHIFields(t *testing.T) {
 		"schema": {}, "dimensions": {}, "datatype": {}, "scaling_policy": {},
 		"reordered": {}, "resampled": {}, "interpolation": {}, "units": {}, "quantity": {},
 		"temporal_offsets_seconds": {}, "temporal_durations_seconds": {}, "warnings": {},
+		"slice_spacing_source": {}, "pixel_spacing_semantic": {},
 	}
 	if len(document) != len(wantKeys) {
 		t.Fatalf("sidecar has %d JSON keys, want %d: %s", len(document), len(wantKeys), first)

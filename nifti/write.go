@@ -58,8 +58,62 @@ func WriteFiles(ctx context.Context, destination io.Writer, files []*object.File
 	return Write(ctx, destination, NewFilesSource(files), options)
 }
 
+// PlanLayout is the voxel grid a Plan writes, for writers of other volume
+// formats (NRRD, MetaImage) that serialize the same validated volume.
+type PlanLayout struct {
+	// Dimensions are nx, ny, nz, nt.
+	Dimensions [4]int
+	// Datatype is the NIfTI datatype of the voxel stream WriteVoxels writes.
+	Datatype int16
+	// IndexToLPS maps a zero-based (i, j, k) voxel index to DICOM patient
+	// (LPS) millimetres in full float64 precision; the NIfTI header stores
+	// the same affine converted to RAS and rounded to float32.
+	IndexToLPS render.GeometryAffine
+	// Spacing holds the spatial spacings (mm) and, for a temporal volume,
+	// the time step (seconds).
+	Spacing [4]float64
+	// ScalingSlope and ScalingIntercept are the uniform value transform
+	// (scl_slope/scl_inter) of ScalingPreserveUniform; 1 and 0 otherwise.
+	ScalingSlope, ScalingIntercept float64
+	ScalingPolicy                  ScalingPolicy
+	// NoSpatialTransform reports an image-grid single slice, whose grid has
+	// no patient position (see SingleSliceImageGrid).
+	NoSpatialTransform bool
+	Resampled          bool
+}
+
+// IdentityScaling reports a layout whose stored values need no transform.
+func (l PlanLayout) IdentityScaling() bool {
+	return l.ScalingSlope == 1 && l.ScalingIntercept == 0
+}
+
+// Layout describes the volume the plan writes.
+func (p *Plan) Layout() PlanLayout {
+	if p == nil || p.value == nil {
+		return PlanLayout{}
+	}
+	return PlanLayout{
+		Dimensions: p.value.dimensions, Datatype: p.value.datatype, IndexToLPS: p.value.affineLPS,
+		Spacing: p.value.spacing, ScalingSlope: p.value.headerSlope, ScalingIntercept: p.value.headerIntercept,
+		ScalingPolicy: p.value.scalingPolicy, NoSpatialTransform: p.value.imageGrid.used, Resampled: p.value.resampled,
+	}
+}
+
+// WriteVoxels performs the pixel/data pass of an existing plan and writes
+// only the voxel stream (i fastest, then j, k, t; little-endian), with the
+// same validation as Write, so other formats can frame the volume with their
+// own header. The report describes the volume as Write would, with
+// VoxelOffset zero, no compression and BytesWritten counting voxel bytes.
+func (p *Plan) WriteVoxels(ctx context.Context, destination io.Writer) (Report, error) {
+	return p.dataPass(ctx, destination, true)
+}
+
 // Write performs the pixel/data pass and serialization for an existing plan.
 func (p *Plan) Write(ctx context.Context, destination io.Writer) (report Report, retErr error) {
+	return p.dataPass(ctx, destination, false)
+}
+
+func (p *Plan) dataPass(ctx context.Context, destination io.Writer, voxelsOnly bool) (report Report, retErr error) {
 	if p == nil || p.value == nil || p.source == nil || destination == nil {
 		return Report{}, exportError(CodeWrite, -1, -1, ErrInvalidSource, nil)
 	}
@@ -87,7 +141,7 @@ func (p *Plan) Write(ctx context.Context, destination io.Writer) (report Report,
 	if _, err := spool.Seek(0, io.SeekStart); err != nil {
 		return Report{}, exportError(CodeWrite, -1, -1, ErrInvalidSource, err)
 	}
-	return working.writeFromSpool(ctx, destination, spool)
+	return working.writeFromSpool(ctx, destination, spool, voxelsOnly)
 }
 
 func (p *Plan) cloneForWrite() *Plan {
@@ -243,7 +297,8 @@ func (s *nativeSpoolSink) Close() error { return nil }
 
 func validateSourceFrames(file *object.File, expected []*framePlan) error {
 	for frameIndex, expect := range expected {
-		geometry, geometryErr := strictSliceGeometry(file.FrameGeometryAt(frameIndex), int(expect.metadata.Rows), int(expect.metadata.Columns))
+		geometry, _, geometryErr := planFrameGeometry(file, file.FrameGeometryAt(frameIndex), frameIndex,
+			int(expect.metadata.Rows), int(expect.metadata.Columns), expect.grid.used)
 		rescale, rescaleErr := frameLinearTransform(file.Dataset, frameIndex)
 		if geometryErr != nil || !sliceGeometryClose(geometry, expect.geometry) || rescaleErr != nil || rescale != expect.rescale {
 			return exportError(CodeSource, expect.sourceIndex, frameIndex, ErrInvalidSource, errors.Join(geometryErr, rescaleErr))
@@ -364,9 +419,17 @@ func (p *Plan) spoolParametric(ctx context.Context, spool *os.File, file *object
 		if !sliceGeometryClose(pm.Frames[frameIndex].Geometry, expect.geometry) {
 			return exportError(CodeSource, expect.sourceIndex, frameIndex, ErrInvalidSource, nil)
 		}
-		if valuesErr := pm.FrameValuesInto(frameIndex, values); valuesErr != nil {
+		// The float64 payload carries NaN and ±Inf and the report counts
+		// the original reasons for those unmeasured values.
+		counts, valuesErr := pm.DecodeFrameInto(frameIndex, values, nil)
+		if valuesErr != nil {
 			return exportError(CodePixels, expect.sourceIndex, frameIndex, ErrUnsupportedPixels, valuesErr)
 		}
+		p.value.unmeasured.Padding += int64(counts.Padding)
+		p.value.unmeasured.NaN += int64(counts.NaN)
+		p.value.unmeasured.Infinite += int64(counts.Infinite)
+		p.value.unmeasured.OutsideMapping += int64(counts.OutsideMapping)
+		p.value.unmeasured.MappingOverflow += int64(counts.MappingOverflow)
 		if encodeErr := encodeFloat64ValuesInto(ctx, encoded, values); encodeErr != nil {
 			return exportError(CodePixels, expect.sourceIndex, frameIndex, ErrUnsupportedPixels, encodeErr)
 		}
@@ -394,17 +457,23 @@ func (p *Plan) appendSpool(spool *os.File, frame *framePlan, encoded []byte, tot
 	return nil
 }
 
-func (p *Plan) writeFromSpool(ctx context.Context, destination io.Writer, spool *os.File) (report Report, err error) {
+func (p *Plan) writeFromSpool(ctx context.Context, destination io.Writer, spool *os.File, voxelsOnly bool) (report Report, err error) {
 	affineRAS := affineLPS2RAS(p.value.affineLPS)
+	if p.value.imageGrid.used {
+		// NIfTI method 1: world coordinates are only index times pixdim.
+		spacing := p.value.spacing
+		affineRAS = render.GeometryAffine{spacing[0], 0, 0, 0, 0, spacing[1], 0, 0, 0, 0, spacing[2], 0, 0, 0, 0, 1}
+	}
 	header, err := buildHeader(headerSpec{
-		Dimensions:  p.value.dimensions,
-		Datatype:    p.value.datatype,
-		BitPix:      p.value.bitpix,
-		Spacing:     p.value.spacing,
-		VoxelOffset: 352,
-		Slope:       p.value.headerSlope,
-		Intercept:   p.value.headerIntercept,
-		AffineRAS:   affineRAS,
+		Dimensions:         p.value.dimensions,
+		Datatype:           p.value.datatype,
+		BitPix:             p.value.bitpix,
+		Spacing:            p.value.spacing,
+		VoxelOffset:        352,
+		Slope:              p.value.headerSlope,
+		Intercept:          p.value.headerIntercept,
+		AffineRAS:          affineRAS,
+		NoSpatialTransform: p.value.imageGrid.used,
 	})
 	if err != nil {
 		return Report{}, err
@@ -412,13 +481,20 @@ func (p *Plan) writeFromSpool(ctx context.Context, destination io.Writer, spool 
 	counter := &countingWriter{destination: destination}
 	var output io.Writer = counter
 	var zipper *gzip.Writer
-	if p.options.Compression == CompressionGZIP {
+	compression, voxelOffset := p.options.Compression, int64(352)
+	if voxelsOnly {
+		compression, voxelOffset = CompressionNone, 0
+	}
+	if compression == CompressionGZIP {
 		zipper = gzip.NewWriter(counter)
 		output = zipper
 	}
-	writeErr := writeExact(output, header)
-	if writeErr == nil {
-		writeErr = writeExact(output, []byte{0, 0, 0, 0})
+	var writeErr error
+	if !voxelsOnly {
+		writeErr = writeExact(output, header)
+		if writeErr == nil {
+			writeErr = writeExact(output, []byte{0, 0, 0, 0})
+		}
 	}
 	if writeErr == nil {
 		if p.value.resampled {
@@ -437,15 +513,34 @@ func (p *Plan) writeFromSpool(ctx context.Context, destination io.Writer, spool 
 		}
 		return Report{}, exportError(code, -1, -1, writeErr, writeErr)
 	}
+	warnings := append([]string(nil), p.value.warnings...)
+	if p.value.unmeasured.Padding > 0 {
+		warnings = append(warnings, WarningParametricPaddingAsNaN)
+	}
+	if p.value.unmeasured.NaN > 0 {
+		warnings = append(warnings, WarningParametricNaNPreserved)
+	}
+	if p.value.unmeasured.Infinite > 0 {
+		warnings = append(warnings, WarningParametricInfinitePreserved)
+	}
+	if p.value.unmeasured.OutsideMapping > 0 {
+		warnings = append(warnings, WarningParametricOutsideMappingAsNaN)
+	}
+	if p.value.unmeasured.MappingOverflow > 0 {
+		warnings = append(warnings, WarningParametricMappingOverflowAsNaN)
+	}
 	report = Report{
 		Dimensions: p.value.dimensions, Datatype: p.value.datatype, BitPix: p.value.bitpix,
-		VoxelOffset: 352, IndexToRAS: affineRAS,
+		VoxelOffset: voxelOffset, IndexToRAS: affineRAS,
 		ScalingPolicy: p.value.scalingPolicy, ScalingSlope: p.value.headerSlope, ScalingIntercept: p.value.headerIntercept,
-		Compression: p.options.Compression, InputReordered: p.value.reordered,
-		Resampled: p.value.resampled, Warnings: append([]string(nil), p.value.warnings...), BytesWritten: counter.count,
+		Compression: compression, InputReordered: p.value.reordered,
+		Resampled: p.value.resampled, Warnings: warnings, BytesWritten: counter.count,
+		UnmeasuredVoxels: p.value.unmeasured,
+		SingleSlice:      p.value.singleSlice, SliceSpacingSource: p.value.sliceSpacingSource,
+		NoSpatialTransform: p.value.imageGrid.used, PixelSpacingSemantic: p.value.imageGrid.semantic,
 	}
 	if p.value.resampled {
-		report.Interpolation = "linear"
+		_, report.Interpolation = p.options.Geometry.interpolation()
 	}
 	report.Sidecar = reportSidecar(report, p.value)
 	return report, nil
@@ -481,6 +576,8 @@ func reportSidecar(report Report, plan *exportPlan) Sidecar {
 		TemporalOffsetsSeconds:   offsets,
 		TemporalDurationsSeconds: durations,
 		Warnings:                 append([]string(nil), report.Warnings...),
+		SliceSpacingSource:       string(report.SliceSpacingSource),
+		PixelSpacingSemantic:     string(report.PixelSpacingSemantic),
 	}
 }
 
@@ -539,6 +636,13 @@ func (p *Plan) writeResampled(ctx context.Context, output io.Writer, spool *os.F
 		if err != nil {
 			return fmt.Errorf("resample time point %d: %w", timeIndex+1, err)
 		}
+		if interpolation, _ := p.options.Geometry.interpolation(); interpolation != render.RegularGridLinear {
+			err := p.writeInterpolated(ctx, output, volume, interpolation)
+			if err = errors.Join(err, volume.Close()); err != nil {
+				return fmt.Errorf("resample time point %d: %w", timeIndex+1, err)
+			}
+			continue
+		}
 		lease, acquireErr := volume.AcquireSnapshotContext(ctx)
 		if acquireErr != nil {
 			_ = volume.Close()
@@ -559,6 +663,33 @@ func (p *Plan) writeResampled(ctx context.Context, output io.Writer, spool *os.F
 		releaseErr := lease.Release()
 		closeErr := volume.Close()
 		if err := errors.Join(snapshotErr, releaseErr, closeErr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeInterpolated writes one time point resampled onto the planned
+// regular grid with a non-linear export kernel (#1190), as little-endian
+// float32 modality values.
+func (p *Plan) writeInterpolated(ctx context.Context, output io.Writer, volume *render.Volume, interpolation render.RegularGridInterpolation) error {
+	values, grid, err := volume.ResampleRegularGridContext(ctx, interpolation)
+	if err != nil {
+		return err
+	}
+	if grid.Dimensions != [3]int{p.value.dimensions[0], p.value.dimensions[1], p.value.dimensions[2]} ||
+		!affineClose(grid.VoxelToPatientAffine, p.value.affineLPS, 1e-5) {
+		return ErrInvalidGeometry
+	}
+	row := make([]byte, 4*grid.Dimensions[0])
+	for offset := 0; offset < len(values); offset += grid.Dimensions[0] {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for x, value := range values[offset : offset+grid.Dimensions[0]] {
+			binary.LittleEndian.PutUint32(row[4*x:], math.Float32bits(value))
+		}
+		if err := writeExact(output, row); err != nil {
 			return err
 		}
 	}

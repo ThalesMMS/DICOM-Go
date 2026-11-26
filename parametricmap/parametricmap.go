@@ -7,8 +7,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -26,12 +28,20 @@ var (
 	ErrUnsupportedSOPClass   = errors.New("dicom/parametricmap: unsupported SOP class")
 	ErrInvalidObject         = errors.New("dicom/parametricmap: invalid object")
 	ErrMissingMapping        = errors.New("dicom/parametricmap: missing real world value mapping")
+	ErrAmbiguousMapping      = errors.New("dicom/parametricmap: ambiguous real world value mapping")
+	ErrOutsideMapping        = errors.New("dicom/parametricmap: outside real world value mapping domain")
 	ErrUnsupportedDimensions = errors.New("dicom/parametricmap: unsupported dimensions")
 	ErrGeometryMismatch      = errors.New("dicom/parametricmap: geometry mismatch")
 	ErrNonFinite             = errors.New("dicom/parametricmap: non-finite quantitative value")
 	ErrMemoryLimit           = errors.New("dicom/parametricmap: memory limit exceeded")
 	ErrPayloadUnavailable    = errors.New("dicom/parametricmap: pixel payload was not retained")
+	// ErrInvalidPadding reports inconsistent Pixel Padding attributes for the
+	// active payload, such as a missing required endpoint, wrong VR or value
+	// count, or a value outside the stored sample range.
+	ErrInvalidPadding = errors.New("dicom/parametricmap: invalid pixel padding")
 )
+
+var errMappingOverflow = fmt.Errorf("%w: mapping overflow", ErrNonFinite)
 
 var (
 	tagFloatPixelData           = core.NewTag(0x7FE0, 0x0008)
@@ -52,6 +62,7 @@ var (
 	tagConceptCodeSeq           = core.NewTag(0x0040, 0xA168)
 	tagCodeValue                = core.NewTag(0x0008, 0x0100)
 	tagCodingSchemeDesignator   = core.NewTag(0x0008, 0x0102)
+	tagCodingSchemeVersion      = core.NewTag(0x0008, 0x0103)
 	tagCodeMeaning              = core.NewTag(0x0008, 0x0104)
 	tagDimensionIndexSeq        = core.NewTag(0x0020, 0x9222)
 	tagDimensionIndexPointer    = core.NewTag(0x0020, 0x9165)
@@ -61,6 +72,17 @@ var (
 	tagImagePositionPatient     = core.NewTag(0x0020, 0x0032)
 	tagReferencedSOPClassUID    = core.NewTag(0x0008, 0x1150)
 	tagReferencedSOPInstanceUID = core.NewTag(0x0008, 0x1155)
+
+	// General Equipment and Image Pixel Modules (PS3.3 C.7.5.1 and C.7.6.3):
+	// US or SS determined by Pixel Representation.
+	tagIntegerPixelPaddingValue      = core.NewTag(0x0028, 0x0120)
+	tagIntegerPixelPaddingRangeLimit = core.NewTag(0x0028, 0x0121)
+	// Floating Point Image Pixel Module (PS3.3 C.7.6.24): FL pair.
+	tagFloatPixelPaddingValue      = core.NewTag(0x0028, 0x0122)
+	tagFloatPixelPaddingRangeLimit = core.NewTag(0x0028, 0x0124)
+	// Double Floating Point Image Pixel Module (PS3.3 C.7.6.25): FD pair.
+	tagDoubleFloatPixelPaddingValue      = core.NewTag(0x0028, 0x0123)
+	tagDoubleFloatPixelPaddingRangeLimit = core.NewTag(0x0028, 0x0125)
 )
 
 type PayloadKind string
@@ -94,40 +116,127 @@ func (c Code) String() string {
 type Reference struct {
 	SOPClassUID    string
 	SOPInstanceUID string
+	// Frames are optional one-based Referenced Frame Numbers. Empty means the
+	// whole source instance, not implicitly its first frame.
+	Frames []int
 }
 
 // Mapping converts a stored sample to its calibrated real-world value.
 type Mapping struct {
 	FirstValue float64
 	LastValue  float64
-	Slope      float64
-	Intercept  float64
-	LUT        []float64
-	Units      Code
-	Quantity   Code
+	// HasRange makes FirstValue and LastValue inclusive stored-value bounds.
+	// Parsed mappings with an explicit range set it, including [0, 0].
+	HasRange     bool
+	Label        string
+	Slope        float64
+	Intercept    float64
+	LUT          []float64
+	Units        Code
+	Quantity     Code
+	unitsVersion string
 }
 
+// Apply maps one stored sample to its real-world value.
+//
+// Float Pixel Data and Double Float Pixel Data are IEEE 754 streams (PS3.5
+// 6.2, VR OF/OD), so a stored sample may be NaN or ±Inf; producers use them
+// for voxels without a measurement (for example outside a fitting mask). A
+// stored NaN maps to NaN and a stored ±Inf maps through the linear transform;
+// neither is an error. A LUT mapping has no entry for ±Inf and reports
+// ErrMissingMapping. A finite stored value whose mapping is non-finite (an
+// overflowing transform or a non-finite LUT entry) is invalid and reports
+// ErrNonFinite. A finite sample outside an explicit range reports
+// ErrOutsideMapping.
 func (m Mapping) Apply(stored float64) (float64, error) {
+	if math.IsNaN(stored) {
+		return math.NaN(), nil
+	}
+	if m.HasRange && finite(stored) && (stored < m.FirstValue || stored > m.LastValue) {
+		return 0, ErrOutsideMapping
+	}
 	var value float64
 	if len(m.LUT) > 0 {
-		index := int(math.Round(stored - m.FirstValue))
-		if index < 0 || index >= len(m.LUT) {
+		// Canonical nearest entry (#1115): math.Round sent an offset of
+		// exactly -0.5 to -1 and failed a value the range accepts.
+		index, ok := render.NearestIndexInside(stored-m.FirstValue, len(m.LUT))
+		if !ok {
 			return 0, fmt.Errorf("%w: stored value %.8g outside mapping [%.8g, %.8g]", ErrMissingMapping, stored, m.FirstValue, m.LastValue)
 		}
 		value = m.LUT[index]
 	} else {
 		value = stored*m.Slope + m.Intercept
+		if math.IsInf(stored, 0) {
+			return value, nil
+		}
 	}
 	if !finite(value) {
+		if len(m.LUT) == 0 && finite(m.Slope) && finite(m.Intercept) {
+			return 0, fmt.Errorf("%w: mapped value %.8g", errMappingOverflow, value)
+		}
 		return 0, fmt.Errorf("%w: mapped value %.8g", ErrNonFinite, value)
 	}
 	return value, nil
 }
 
+// Padding is the closed stored-value range marked by the payload's Pixel
+// Padding Value and Pixel Padding Range Limit (PS3.3 C.7.5.1.1.2, C.7.6.24
+// and C.7.6.25). A single integer padding value uses equal endpoints.
+// A NaN pair designates stored NaN samples.
+type Padding struct {
+	Value      float64
+	RangeLimit float64
+}
+
+// Contains reports whether a stored sample is padding.
+func (p Padding) Contains(stored float64) bool {
+	if math.IsNaN(p.Value) {
+		return math.IsNaN(stored)
+	}
+	return stored >= min(p.Value, p.RangeLimit) && stored <= max(p.Value, p.RangeLimit)
+}
+
+// VoxelCounts classifies the voxels of decoded frames. Only Valid voxels carry
+// a quantitative value. Padding voxels decode to NaN, stored NaN voxels stay
+// NaN, and stored ±Inf voxels decode to the linearly mapped infinity; none of
+// them contributes to MaskStatistics, Resample or SamplePatient. Finite
+// samples outside all applicable mapping domains and samples whose calibrated
+// values overflow are counted separately and also decode to NaN.
+type VoxelCounts struct {
+	Valid           int
+	Padding         int
+	NaN             int
+	Infinite        int
+	OutsideMapping  int
+	MappingOverflow int
+}
+
+// Unmeasured returns the number of voxels without a quantitative value.
+func (c VoxelCounts) Unmeasured() int {
+	return c.Padding + c.NaN + c.Infinite + c.OutsideMapping + c.MappingOverflow
+}
+
+// Add accumulates other into c.
+func (c *VoxelCounts) Add(other VoxelCounts) {
+	c.Valid += other.Valid
+	c.Padding += other.Padding
+	c.NaN += other.NaN
+	c.Infinite += other.Infinite
+	c.OutsideMapping += other.OutsideMapping
+	c.MappingOverflow += other.MappingOverflow
+}
+
+// Measured reports whether a decoded calibrated value is a quantitative
+// measurement rather than padding, NaN or ±Inf.
+func Measured(value float64) bool { return finite(value) }
+
 type Frame struct {
 	Geometry             render.SliceGeometry
 	DimensionIndexValues []int
 	Mapping              Mapping
+	// AdditionalMappings, when present, follow Mapping in ascending order
+	// of the disjoint stored-value intervals for this scalar frame.
+	AdditionalMappings []Mapping
 }
 
 // Map retains encoded frames and decodes calibrated values only when requested.
@@ -147,6 +256,10 @@ type Map struct {
 	References          []Reference
 	Units               Code
 	Quantity            Code
+	// Padding is the stored-value padding range of the active pixel payload,
+	// or nil when the object declares none. Padding voxels decode to NaN;
+	// DecodeFrameInto can report them as an explicit mask.
+	Padding *Padding
 
 	order           binary.ByteOrder
 	floatRaw        []byte
@@ -159,17 +272,35 @@ type Map struct {
 	payloadRetained bool
 }
 
-// Read parses metadata and encoded frame boundaries without decoding the
-// quantitative payload.
+// ReadOptions selects the real-world representation of a scalar map.
+type ReadOptions struct {
+	// MappingLabel selects exactly one LUT Label (0040,9210) per frame,
+	// with case-sensitive matching. An empty label admits compatible,
+	// disjoint domains automatically. The selected units and quantity must
+	// still agree across all frames.
+	MappingLabel string
+}
+
+// Read parses metadata and encoded frame boundaries without decoding the quantitative payload.
 func Read(file *object.File) (*Map, error) {
+	return ReadWithOptions(file, ReadOptions{})
+}
+
+// ReadWithOptions permits explicit selection of a mapping alternative.
+func ReadWithOptions(file *object.File, options ReadOptions) (*Map, error) {
 	if file == nil || file.Dataset == nil {
 		return nil, fmt.Errorf("%w: dataset is nil", ErrInvalidObject)
 	}
-	return readDataset(file.Dataset, true)
+	return ReadDatasetWithOptions(file.Dataset, options)
 }
 
 func ReadDataset(obj *object.Object) (*Map, error) {
-	return readDataset(obj, true)
+	return ReadDatasetWithOptions(obj, ReadOptions{})
+}
+
+// ReadDatasetWithOptions interprets the dataset using the selected mapping policy.
+func ReadDatasetWithOptions(obj *object.Object, options ReadOptions) (*Map, error) {
+	return readDataset(obj, true, options)
 }
 
 // ReadMetadata parses geometry, dimensions, mappings, units, and encoded
@@ -177,13 +308,19 @@ func ReadDataset(obj *object.Object) (*Map, error) {
 // FrameValues returns ErrPayloadUnavailable on the resulting Map. This lets
 // two-pass consumers plan large exports with DeferPixelData enabled.
 func ReadMetadata(file *object.File) (*Map, error) {
+	return ReadMetadataWithOptions(file, ReadOptions{})
+}
+
+// ReadMetadataWithOptions uses the same mapping selection as ReadWithOptions
+// and leaves the source payload untouched.
+func ReadMetadataWithOptions(file *object.File, options ReadOptions) (*Map, error) {
 	if file == nil || file.Dataset == nil {
 		return nil, fmt.Errorf("%w: dataset is nil", ErrInvalidObject)
 	}
-	return readDataset(file.Dataset, false)
+	return readDataset(file.Dataset, false, options)
 }
 
-func readDataset(obj *object.Object, retainPayload bool) (*Map, error) {
+func readDataset(obj *object.Object, retainPayload bool, options ReadOptions) (*Map, error) {
 	if obj == nil {
 		return nil, fmt.Errorf("%w: dataset is nil", ErrInvalidObject)
 	}
@@ -221,24 +358,30 @@ func readDataset(obj *object.Object, retainPayload bool) (*Map, error) {
 	}
 
 	if element, found := obj.Get(tagFloatPixelData); found {
-		raw, rawOK := element.RawBytes()
 		length := int(element.Length())
-		if (retainPayload && !rawOK) || length != voxels*4 {
+		if length != voxels*4 {
 			return nil, fmt.Errorf("%w: Float Pixel Data length %d, want %d", ErrInvalidObject, length, voxels*4)
 		}
 		out.Payload = PayloadFloat32
 		if retainPayload {
-			out.floatRaw = raw
+			var err error
+			out.floatRaw, err = readPixelPayload(obj, element, length)
+			if err != nil {
+				return nil, err
+			}
 		}
 	} else if element, found := obj.Get(tagDoubleFloatPixelData); found {
-		raw, rawOK := element.RawBytes()
 		length := int(element.Length())
-		if (retainPayload && !rawOK) || length != voxels*8 {
+		if length != voxels*8 {
 			return nil, fmt.Errorf("%w: Double Float Pixel Data length %d, want %d", ErrInvalidObject, length, voxels*8)
 		}
 		out.Payload = PayloadFloat64
 		if retainPayload {
-			out.floatRaw = raw
+			var err error
+			out.floatRaw, err = readPixelPayload(obj, element, length)
+			if err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		metadata, err := pixeldata.ExtractMetadata(obj)
@@ -265,10 +408,14 @@ func readDataset(obj *object.Object, retainPayload bool) (*Map, error) {
 			return nil, fmt.Errorf("%w: integer Pixel Data length %d, want %d", ErrInvalidObject, length, wantBytes)
 		}
 		out.Payload = PayloadInteger
+		out.Padding, err = readIntegerPadding(obj, metadata.SampleFormat(out.order))
+		if err != nil {
+			return nil, err
+		}
 		if retainPayload {
-			native, nativeErr := pixeldata.ExtractNativeFramesView(obj)
+			native, nativeErr := readNativeFrames(obj, element, length)
 			if nativeErr != nil {
-				return nil, fmt.Errorf("%w: integer Pixel Data: %v", ErrInvalidObject, nativeErr)
+				return nil, fmt.Errorf("%w: integer Pixel Data: %w", ErrInvalidObject, nativeErr)
 			}
 			if len(native.Data) != frames {
 				return nil, fmt.Errorf("%w: %d encoded frames for %d frames", ErrInvalidObject, len(native.Data), frames)
@@ -282,42 +429,33 @@ func readDataset(obj *object.Object, retainPayload bool) (*Map, error) {
 		}
 	}
 
-	topMapping, topOK := mappingFromContainer(obj)
-	shared := firstItem(obj, tagSharedFunctionalGroups)
-	sharedMapping, sharedOK := mappingFromContainer(shared)
+	if out.Payload != PayloadInteger {
+		padding, err := readFloatPadding(obj, out.Payload)
+		if err != nil {
+			return nil, err
+		}
+		out.Padding = padding
+	}
+
 	perFrame := sequence(obj, tagPerFrameFunctionalGroups)
 	if len(perFrame) != 0 && len(perFrame) != frames {
 		return nil, fmt.Errorf("%w: %d per-frame groups for %d frames", ErrInvalidObject, len(perFrame), frames)
 	}
 	out.Frames = make([]Frame, frames)
+	if err := readFrameMappings(obj, perFrame, out, options); err != nil {
+		return nil, err
+	}
 	for index := 0; index < frames; index++ {
-		mapping, mappingOK := topMapping, topOK
-		if sharedOK {
-			mapping, mappingOK = sharedMapping, true
-		}
-		if index < len(perFrame) {
-			if perMapping, ok := mappingFromContainer(perFrame[index]); ok {
-				mapping, mappingOK = perMapping, true
-			}
-		}
-		if !mappingOK || mapping.Units.String() == "" {
-			return nil, fmt.Errorf("%w: frame %d", ErrMissingMapping, index+1)
-		}
 		geometry, err := frameGeometry(obj.FrameGeometryAt(index), rows, columns)
 		if err != nil {
 			return nil, fmt.Errorf("frame %d: %w", index+1, err)
 		}
-		out.Frames[index] = Frame{Geometry: geometry, Mapping: mapping}
+		out.Frames[index].Geometry = geometry
 	}
 	if err := readDimensions(obj, perFrame, out.Frames); err != nil {
 		return nil, err
 	}
-	out.Units = out.Frames[0].Mapping.Units
-	out.Quantity = out.Frames[0].Mapping.Quantity
 	for index := 1; index < len(out.Frames); index++ {
-		if out.Frames[index].Mapping.Units != out.Units || out.Frames[index].Mapping.Quantity != out.Quantity {
-			return nil, fmt.Errorf("%w: units or quantity vary across frames", ErrUnsupportedDimensions)
-		}
 		if out.Frames[index].Geometry.RowDir.Dot(out.Frames[0].Geometry.RowDir) <
 			render.DefaultGeometryTolerances().OrientationCos ||
 			out.Frames[index].Geometry.ColDir.Dot(out.Frames[0].Geometry.ColDir) <
@@ -325,44 +463,82 @@ func readDataset(obj *object.Object, retainPayload bool) (*Map, error) {
 			return nil, fmt.Errorf("%w: frame orientation varies", ErrUnsupportedDimensions)
 		}
 	}
-	out.References = readReferences(obj)
+	references, err := readReferences(obj)
+	if err != nil {
+		return nil, err
+	}
+	out.References = references
 	return out, nil
 }
 
-func mappingFromContainer(container *object.Object) (Mapping, bool) {
-	if container == nil {
-		return Mapping{}, false
+func readIntegerPadding(obj *object.Object, format pixeldata.SampleFormat) (*Padding, error) {
+	padding, err := pixeldata.PixelPaddingFromObject(obj, format)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidPadding, err)
 	}
-	items := sequence(container, tagRealWorldValueMappingSeq)
-	if len(items) == 0 {
-		return Mapping{}, false
-	}
-	item := items[0]
-	mapping := Mapping{
-		Slope:     firstFloat(item, tagRWVSlope, 1),
-		Intercept: firstFloat(item, tagRWVIntercept, 0),
-		Units:     readCode(firstItem(item, tagMeasurementUnitsCodeSeq)),
-		Quantity:  readQuantity(item),
-	}
-	if values := derivedio.Floats(item, tagDoubleRWVFirstMapped); len(values) > 0 {
-		mapping.FirstValue = values[0]
-	} else if values := derivedio.Ints(item, tagRWVFirstMapped); len(values) > 0 {
-		mapping.FirstValue = float64(values[0])
-	}
-	if values := derivedio.Floats(item, tagDoubleRWVLastMapped); len(values) > 0 {
-		mapping.LastValue = values[0]
-	} else if values := derivedio.Ints(item, tagRWVLastMapped); len(values) > 0 {
-		mapping.LastValue = float64(values[0])
-	}
-	mapping.LUT = derivedio.Floats(item, tagRWVLUTData)
-	if len(mapping.LUT) > 0 {
-		if mapping.LastValue < mapping.FirstValue || int(math.Round(mapping.LastValue-mapping.FirstValue))+1 != len(mapping.LUT) {
-			return Mapping{}, false
+	if padding == nil {
+		if _, hasLimit := obj.Get(tagIntegerPixelPaddingRangeLimit); hasLimit {
+			return nil, fmt.Errorf("%w: %s present without %s", ErrInvalidPadding, tagIntegerPixelPaddingRangeLimit, tagIntegerPixelPaddingValue)
 		}
-	} else if !finite(mapping.Slope) || !finite(mapping.Intercept) {
-		return Mapping{}, false
+		return nil, nil
 	}
-	return mapping, true
+	limit := padding.Value
+	if padding.HasRange {
+		limit = padding.RangeLimit
+	}
+	return &Padding{Value: float64(padding.Value), RangeLimit: float64(limit)}, nil
+}
+
+// readFloatPadding reads the padding pair of the floating point pixel module that
+// matches payload: the FL pair of the Floating Point Image Pixel Module for
+// Float Pixel Data and the FD pair of the Double Floating Point Image Pixel
+// Module for Double Float Pixel Data. Range Limit is Type 1C (required when
+// the value is present), so a half-specified pair returns ErrInvalidPadding.
+func readFloatPadding(obj *object.Object, payload PayloadKind) (*Padding, error) {
+	var valueTag, limitTag core.Tag
+	var vr core.VR
+	switch payload {
+	case PayloadFloat32:
+		valueTag, limitTag, vr = tagFloatPixelPaddingValue, tagFloatPixelPaddingRangeLimit, core.VRFL
+	case PayloadFloat64:
+		valueTag, limitTag, vr = tagDoubleFloatPixelPaddingValue, tagDoubleFloatPixelPaddingRangeLimit, core.VRFD
+	default:
+		return nil, nil
+	}
+	value, valueOK, err := paddingFloat(obj, valueTag, vr)
+	if err != nil {
+		return nil, err
+	}
+	limit, limitOK, err := paddingFloat(obj, limitTag, vr)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !valueOK && !limitOK:
+		return nil, nil
+	case !valueOK:
+		return nil, fmt.Errorf("%w: %s present without %s", ErrInvalidPadding, limitTag, valueTag)
+	case !limitOK:
+		return nil, fmt.Errorf("%w: %s present without the Type 1C %s", ErrInvalidPadding, valueTag, limitTag)
+	case math.IsNaN(value) != math.IsNaN(limit):
+		return nil, fmt.Errorf("%w: NaN %s paired with a number", ErrInvalidPadding, valueTag)
+	}
+	return &Padding{Value: value, RangeLimit: limit}, nil
+}
+
+func paddingFloat(obj *object.Object, tag core.Tag, vr core.VR) (float64, bool, error) {
+	element, found := obj.Get(tag)
+	if !found {
+		return 0, false, nil
+	}
+	if element.VR() != vr {
+		return 0, false, fmt.Errorf("%w: %s has VR %s, want %s", ErrInvalidPadding, tag, element.VR(), vr)
+	}
+	values, err := derivedio.LookupFloats(obj, tag)
+	if err != nil || len(values) != 1 {
+		return 0, false, fmt.Errorf("%w: %s must hold one value", ErrInvalidPadding, tag)
+	}
+	return values[0], true, nil
 }
 
 func frameGeometry(g object.FrameGeometry, rows, columns int) (render.SliceGeometry, error) {
@@ -425,35 +601,76 @@ func (m *Map) FrameValues(index int) ([]float64, error) {
 
 // FrameValuesInto decodes one calibrated frame into destination without
 // populating the Map cache or allocating a defensive copy. It is intended for
-// bounded streaming consumers that own their per-frame buffer.
+// bounded streaming consumers that own their per-frame buffer. Padding,
+// stored NaN, out-of-domain voxels and mapping overflows decode to NaN.
+// Stored ±Inf voxels decode to ±Inf. Use DecodeFrameInto for their counts
+// and an explicit padding mask.
 func (m *Map) FrameValuesInto(index int, destination []float64) error {
+	_, err := m.DecodeFrameInto(index, destination, nil)
+	return err
+}
+
+// DecodeFrameInto decodes one calibrated frame into values and classifies
+// every voxel. When padding is non-nil it must hold Rows*Columns entries and
+// receives true exactly for pixel padding voxels, which lets a consumer
+// distinguish padding from stored NaN although both decode to NaN.
+func (m *Map) DecodeFrameInto(index int, values []float64, padding []bool) (VoxelCounts, error) {
 	if m == nil || index < 0 || index >= m.NumberOfFrames {
-		return fmt.Errorf("%w: frame %d", ErrInvalidObject, index)
+		return VoxelCounts{}, fmt.Errorf("%w: frame %d", ErrInvalidObject, index)
 	}
 	if !m.payloadRetained {
-		return ErrPayloadUnavailable
+		return VoxelCounts{}, ErrPayloadUnavailable
 	}
 	count := m.Rows * m.Columns
-	if len(destination) < count {
-		return fmt.Errorf("%w: destination has %d values, want %d", ErrInvalidObject, len(destination), count)
+	if len(values) < count {
+		return VoxelCounts{}, fmt.Errorf("%w: destination has %d values, want %d", ErrInvalidObject, len(values), count)
 	}
-	destination = destination[:count]
-	mapping := m.Frames[index].Mapping
+	if padding != nil && len(padding) < count {
+		return VoxelCounts{}, fmt.Errorf("%w: padding mask has %d entries, want %d", ErrInvalidObject, len(padding), count)
+	}
+	values = values[:count]
+	frame := m.Frames[index]
+	var counts VoxelCounts
 	for pixel := 0; pixel < count; pixel++ {
 		stored, err := m.storedValue(index, pixel)
 		if err != nil {
-			return err
+			return VoxelCounts{}, err
 		}
-		if !finite(stored) {
-			return fmt.Errorf("%w: frame %d pixel %d", ErrNonFinite, index+1, pixel)
+		isPadding := m.Padding != nil && m.Padding.Contains(stored)
+		if padding != nil {
+			padding[pixel] = isPadding
 		}
-		value, err := mapping.Apply(stored)
+		switch {
+		case isPadding:
+			values[pixel] = math.NaN()
+			counts.Padding++
+			continue
+		case math.IsNaN(stored):
+			values[pixel] = math.NaN()
+			counts.NaN++
+			continue
+		}
+		value, err := frame.applyMapping(stored)
 		if err != nil {
-			return fmt.Errorf("frame %d pixel %d: %w", index+1, pixel, err)
+			switch {
+			case errors.Is(err, ErrOutsideMapping):
+				counts.OutsideMapping++
+			case errors.Is(err, errMappingOverflow):
+				counts.MappingOverflow++
+			default:
+				return VoxelCounts{}, fmt.Errorf("frame %d pixel %d: %w", index+1, pixel, err)
+			}
+			values[pixel] = math.NaN()
+			continue
 		}
-		destination[pixel] = value
+		values[pixel] = value
+		if math.IsInf(stored, 0) {
+			counts.Infinite++
+		} else {
+			counts.Valid++
+		}
 	}
-	return nil
+	return counts, nil
 }
 
 func (m *Map) decodeFrame(index int) ([]float64, error) {
@@ -537,22 +754,55 @@ func (m *Map) SamplePatient(point render.Vec3) (float64, bool, error) {
 	}
 	g := m.Frames[best].Geometry
 	delta := point.Sub(g.Origin)
-	column := delta.Dot(g.RowDir) / g.ColSpacing
-	row := delta.Dot(g.ColDir) / g.RowSpacing
-	if column < 0 || row < 0 || column > float64(m.Columns-1) || row > float64(m.Rows-1) {
+	// Pixel boxes (#1115): the outer half pixel repeats the edge pixels.
+	column, okColumn := render.ClampContinuousIndex(delta.Dot(g.RowDir)/g.ColSpacing, m.Columns, 0)
+	row, okRow := render.ClampContinuousIndex(delta.Dot(g.ColDir)/g.RowSpacing, m.Rows, 0)
+	if !okColumn || !okRow {
 		return 0, false, nil
 	}
 	values, err := m.FrameValues(best)
 	if err != nil {
 		return 0, false, err
 	}
-	x0, y0 := int(math.Floor(column)), int(math.Floor(row))
-	x1, y1 := min(x0+1, m.Columns-1), min(y0+1, m.Rows-1)
-	fx, fy := column-float64(x0), row-float64(y0)
-	at := func(x, y int) float64 { return values[y*m.Columns+x] }
-	top := at(x0, y0) + (at(x1, y0)-at(x0, y0))*fx
-	bottom := at(x0, y1) + (at(x1, y1)-at(x0, y1))*fx
-	return top + (bottom-top)*fy, true, nil
+	value, ok := bilinear(values, m.Columns, m.Rows, column, row)
+	if !ok {
+		return 0, false, nil
+	}
+	return value, true, nil
+}
+
+// bilinear interpolates values at fractional pixel (x, y) inside the frame.
+// It returns false when a neighbour with non-zero weight carries no
+// quantitative value (padding, NaN or ±Inf), so unmeasured voxels never bleed
+// into measured ones; a neighbour with zero weight is ignored.
+func bilinear(values []float64, columns, rows int, x, y float64) (float64, bool) {
+	x0, y0 := int(math.Floor(x)), int(math.Floor(y))
+	x1, y1 := min(x0+1, columns-1), min(y0+1, rows-1)
+	fx, fy := x-float64(x0), y-float64(y0)
+	if fx == 0 {
+		x1 = x0
+	}
+	if fy == 0 {
+		y1 = y0
+	}
+	a, b := values[y0*columns+x0], values[y0*columns+x1]
+	c, d := values[y1*columns+x0], values[y1*columns+x1]
+	if !finite(a) || !finite(b) || !finite(c) || !finite(d) {
+		return 0, false
+	}
+	top := interpolateFinite(a, b, fx)
+	bottom := interpolateFinite(c, d, fx)
+	return interpolateFinite(top, bottom, fy), true
+}
+
+// Opposite-sign finite values can have an infinite difference. Their weighted
+// sum stays finite because each term has a weight in [0, 1].
+func interpolateFinite(a, b, weight float64) float64 {
+	delta := b - a
+	if math.IsInf(delta, 0) {
+		return (1-weight)*a + weight*b
+	}
+	return a + delta*weight
 }
 
 type Statistics struct {
@@ -561,11 +811,17 @@ type Statistics struct {
 	Max    float64
 	Mean   float64
 	StdDev float64
+	// Unmeasured counts mask pixels excluded because the map has no
+	// quantitative value there (padding, NaN or ±Inf).
+	Unmeasured int
 }
 
 // Resample aligns the nearest compatible map frame to a target slice geometry
-// and returns calibrated values plus a validity mask. Unsupported orientation
-// or non-overlapping planes fail explicitly.
+// and returns calibrated values plus a validity mask. A target pixel is valid
+// only when it lies inside the frame and every interpolation neighbour with
+// non-zero weight is measured; padding, NaN and ±Inf voxels are invalid and
+// therefore transparent to overlays and excluded from statistics.
+// Unsupported orientation or non-overlapping planes fail explicitly.
 func (m *Map) Resample(target render.SliceGeometry) ([]float64, []bool, error) {
 	if m == nil || target.Rows <= 0 || target.Columns <= 0 ||
 		!finiteVec(target.Origin) || !finiteVec(target.RowDir) || !finiteVec(target.ColDir) ||
@@ -619,19 +875,17 @@ func (m *Map) Resample(target render.SliceGeometry) ([]float64, []bool, error) {
 				Add(target.RowDir.Scale(float64(column) * target.ColSpacing)).
 				Add(target.ColDir.Scale(float64(row) * target.RowSpacing))
 			delta := point.Sub(source.Origin)
-			x := delta.Dot(source.RowDir) / source.ColSpacing
-			y := delta.Dot(source.ColDir) / source.RowSpacing
-			if x < 0 || y < 0 || x > float64(m.Columns-1) || y > float64(m.Rows-1) {
+			x, okX := render.ClampContinuousIndex(delta.Dot(source.RowDir)/source.ColSpacing, m.Columns, 0)
+			y, okY := render.ClampContinuousIndex(delta.Dot(source.ColDir)/source.RowSpacing, m.Rows, 0)
+			if !okX || !okY {
 				continue
 			}
-			x0, y0 := int(math.Floor(x)), int(math.Floor(y))
-			x1, y1 := min(x0+1, m.Columns-1), min(y0+1, m.Rows-1)
-			fx, fy := x-float64(x0), y-float64(y0)
-			at := func(px, py int) float64 { return sourceValues[py*m.Columns+px] }
-			top := at(x0, y0) + (at(x1, y0)-at(x0, y0))*fx
-			bottom := at(x0, y1) + (at(x1, y1)-at(x0, y1))*fx
+			value, ok := bilinear(sourceValues, m.Columns, m.Rows, x, y)
+			if !ok {
+				continue
+			}
 			index := row*target.Columns + column
-			values[index] = top + (bottom-top)*fy
+			values[index] = value
 			valid[index] = true
 		}
 	}
@@ -639,6 +893,7 @@ func (m *Map) Resample(target render.SliceGeometry) ([]float64, []bool, error) {
 }
 
 // MaskStatistics computes calibrated ROI statistics without VOI transforms.
+// Padding, NaN and ±Inf voxels are excluded and counted in Unmeasured.
 func (m *Map) MaskStatistics(frame int, mask *roi.RasterMask) (Statistics, error) {
 	if mask == nil || mask.Rows != m.Rows || mask.Columns != m.Columns {
 		return Statistics{}, fmt.Errorf("%w: ROI mask dimensions", ErrGeometryMismatch)
@@ -647,10 +902,16 @@ func (m *Map) MaskStatistics(frame int, mask *roi.RasterMask) (Statistics, error
 	if err != nil {
 		return Statistics{}, err
 	}
+	unmeasured := 0
 	stats := roi.Stats2D(mask, func(x, y int) (float64, bool) {
-		return values[y*m.Columns+x], true
+		value := values[y*m.Columns+x]
+		if !finite(value) {
+			unmeasured++
+			return 0, false
+		}
+		return value, true
 	})
-	return Statistics{Count: stats.Count, Min: stats.Min, Max: stats.Max, Mean: stats.Mean, StdDev: stats.StdDev}, nil
+	return Statistics{Count: stats.Count, Min: stats.Min, Max: stats.Max, Mean: stats.Mean, StdDev: stats.StdDev, Unmeasured: unmeasured}, nil
 }
 
 func (m *Map) SetCacheLimitBytes(limit int64) {
@@ -749,18 +1010,37 @@ func readDimensions(obj *object.Object, perFrame []*object.Object, frames []Fram
 	return nil
 }
 
-func readReferences(obj *object.Object) []Reference {
+func readReferences(obj *object.Object) ([]Reference, error) {
 	seen := map[string]Reference{}
+	var failure error
 	var walk func(*object.Object)
 	walk = func(current *object.Object) {
 		if current == nil {
 			return
 		}
 		if uid := derivedio.CleanUID(current, tagReferencedSOPInstanceUID); uid != "" {
-			seen[uid] = Reference{
+			ref := Reference{
 				SOPClassUID:    derivedio.CleanUID(current, tagReferencedSOPClassUID),
 				SOPInstanceUID: uid,
 			}
+			frameTag := core.NewTag(0x0008, 0x1160)
+			if current.Has(frameTag) {
+				parts, ok := current.GetStrings(frameTag)
+				if !ok || len(parts) == 0 {
+					failure = fmt.Errorf("%w: invalid referenced frame number", ErrInvalidObject)
+					return
+				}
+				for _, part := range parts {
+					n, err := strconv.Atoi(strings.TrimSpace(part))
+					if err != nil || n <= 0 {
+						failure = fmt.Errorf("%w: invalid referenced frame number", ErrInvalidObject)
+						return
+					}
+					ref.Frames = append(ref.Frames, n)
+				}
+			}
+			key := fmt.Sprintf("%s|%v", uid, ref.Frames)
+			seen[key] = ref
 		}
 		for _, element := range current.Elements() {
 			if element.VR() != core.VRSQ {
@@ -778,8 +1058,63 @@ func readReferences(obj *object.Object) []Reference {
 	for _, ref := range seen {
 		out = append(out, ref)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].SOPInstanceUID < out[j].SOPInstanceUID })
-	return out
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SOPInstanceUID != out[j].SOPInstanceUID {
+			return out[i].SOPInstanceUID < out[j].SOPInstanceUID
+		}
+		return fmt.Sprint(out[i].Frames) < fmt.Sprint(out[j].Frames)
+	})
+	return out, failure
+}
+
+func readNativeFrames(obj *object.Object, element core.Element, length int) (*pixeldata.NativeFrames, error) {
+	if _, incomplete := obj.IncompletePixelData(); incomplete {
+		return nil, object.ErrPartialFile
+	}
+	if element.Value == nil {
+		raw, err := readPixelPayload(obj, element, length)
+		if err != nil {
+			return nil, err
+		}
+		// Keep the caller's element deferred. The temporary object shares
+		// metadata element storage and owns the admitted pixel buffer.
+		view := object.FromElements(obj.Elements(), nil)
+		view.SetValueByteOrder(obj.ValueByteOrder())
+		element.Value = core.RawValue(raw)
+		view.Put(element)
+		obj = view
+	}
+	return pixeldata.ExtractNativeFramesView(obj)
+}
+
+// Dimensions and encoded length must be admitted before calling this helper.
+// CopyValueTo replays deferred bytes in the object's normalized value order.
+// The fixed writer prevents a malformed provider from growing the reservation.
+func readPixelPayload(obj *object.Object, element core.Element, length int) ([]byte, error) {
+	if raw, ok := element.RawBytes(); ok {
+		if len(raw) != length {
+			return nil, fmt.Errorf("%w: inconsistent pixel payload length", ErrInvalidObject)
+		}
+		return raw, nil
+	}
+	raw := make([]byte, length)
+	w := &pixelPayloadWriter{remaining: raw}
+	n, err := obj.CopyValueTo(element.Tag(), w)
+	if err != nil || n != int64(length) || len(w.remaining) != 0 {
+		return nil, fmt.Errorf("%w: read deferred pixel payload: copied %d of %d bytes: %v", ErrInvalidObject, n, length, err)
+	}
+	return raw, nil
+}
+
+type pixelPayloadWriter struct{ remaining []byte }
+
+func (w *pixelPayloadWriter) Write(p []byte) (int, error) {
+	n := copy(w.remaining, p)
+	w.remaining = w.remaining[n:]
+	if n != len(p) {
+		return n, io.ErrShortWrite
+	}
+	return n, nil
 }
 
 func readQuantity(item *object.Object) Code {
@@ -817,14 +1152,6 @@ func sequence(obj *object.Object, tag core.Tag) []*object.Object {
 		return nil
 	}
 	return derivedio.Sequence(obj, tag)
-}
-
-func firstFloat(obj *object.Object, tag core.Tag, fallback float64) float64 {
-	values := derivedio.Floats(obj, tag)
-	if len(values) == 0 {
-		return fallback
-	}
-	return values[0]
 }
 
 func readTag(obj *object.Object, tag core.Tag) (core.Tag, bool) {

@@ -48,6 +48,7 @@ var (
 	tagDoseSummationType         = core.NewTag(0x3004, 0x000A)
 	tagGridFrameOffsetVector     = core.NewTag(0x3004, 0x000C)
 	tagDoseGridScaling           = core.NewTag(0x3004, 0x000E)
+	tagDVHType                   = core.NewTag(0x3004, 0x0001)
 	tagDVHSequence               = core.NewTag(0x3004, 0x0050)
 	tagDVHDoseScaling            = core.NewTag(0x3004, 0x0052)
 	tagDVHVolumeUnits            = core.NewTag(0x3004, 0x0054)
@@ -74,12 +75,14 @@ type Reference struct {
 type EmbeddedDVH struct {
 	Type             string
 	DoseUnits        string
+	DoseType         string
 	DoseScaling      float64
 	VolumeUnits      string
 	NumberOfBins     int
 	Data             []float64
 	ReferencedROIs   []int
 	ContributionType string
+	ROIContributions []DVHROIContribution
 	MinimumDose      float64
 	MaximumDose      float64
 	MeanDose         float64
@@ -100,14 +103,15 @@ type Dose struct {
 	GridScaling    float64
 	SliceThickness float64
 
-	Rows         int
-	Columns      int
-	Frames       int
-	Geometry     render.VolumeGeometry
-	Values       []float64
-	Maximum      float64
-	References   []Reference
-	EmbeddedDVHs []EmbeddedDVH
+	Rows           int
+	Columns        int
+	Frames         int
+	Geometry       render.VolumeGeometry
+	Values         []float64
+	Maximum        float64
+	References     []Reference
+	EmbeddedDVHs   []EmbeddedDVH
+	DVHDiagnostics []DVHItemDiagnostic
 }
 
 // Read parses and validates an RT Dose file. Only native integer dose grids are
@@ -162,10 +166,15 @@ func ReadDataset(obj *object.Object) (*Dose, error) {
 	}
 	meta := native.Metadata
 	out.Rows, out.Columns, out.Frames = int(meta.Rows), int(meta.Columns), meta.NumberOfFrames
+	// PS3.3 C.8.8.3.4.6 requires two's complement samples for ERROR dose.
+	var representation uint16
+	if out.Type == DoseTypeError {
+		representation = 1
+	}
 	if out.Rows <= 0 || out.Columns <= 0 || out.Frames <= 0 ||
 		meta.SamplesPerPixel != 1 || (meta.BitsAllocated != 16 && meta.BitsAllocated != 32) ||
 		meta.BitsStored == 0 || meta.BitsStored > meta.BitsAllocated ||
-		meta.HighBit+1 < meta.BitsStored || meta.PixelRepresentation != 0 {
+		meta.HighBit+1 < meta.BitsStored || meta.PixelRepresentation != representation {
 		return nil, fmt.Errorf("%w: unsupported RT Dose pixel metadata %+v", ErrInvalidObject, meta)
 	}
 	voxelCount, ok := checkedProduct(out.Rows, out.Columns, out.Frames)
@@ -190,7 +199,9 @@ func ReadDataset(obj *object.Object) (*Dose, error) {
 		return nil, fmt.Errorf("%w: decoded %d values, expected %d", ErrInvalidObject, len(out.Values), voxelCount)
 	}
 	out.References = readReferences(obj)
-	out.EmbeddedDVHs = readEmbeddedDVHs(obj, out.Units)
+	out.EmbeddedDVHs, out.DVHDiagnostics = readEmbeddedDVHItems(
+		derivedio.Sequence(obj, tagDVHSequence), out.Units, out.Type,
+	)
 	return out, nil
 }
 
@@ -218,10 +229,10 @@ func validateSemantics(dose *Dose) error {
 func doseGeometries(obj *object.Object, rows, columns, frames int) ([]render.SliceGeometry, bool, error) {
 	position := derivedio.Floats(obj, tagImagePositionPatient)
 	orientation := derivedio.Floats(obj, tagImageOrientationPatient)
-	spacing := derivedio.Floats(obj, tagPixelSpacing)
+	rowSpacing, columnSpacing, spacingValues, spacingErr := obj.SpacingPair(tagPixelSpacing)
+	spacing := []float64{rowSpacing, columnSpacing}
 	offsets := derivedio.Floats(obj, tagGridFrameOffsetVector)
-	if len(position) != 3 || len(orientation) != 6 || len(spacing) != 2 ||
-		!finitePositive(spacing[0]) || !finitePositive(spacing[1]) {
+	if len(position) != 3 || len(orientation) != 6 || spacingErr != nil || spacingValues == object.SpacingValuesAbsent {
 		return nil, false, fmt.Errorf("%w: incomplete RT Dose patient geometry", ErrGeometryMismatch)
 	}
 	if frames == 1 && len(offsets) == 0 {
@@ -307,7 +318,7 @@ func decodeValues(native *pixeldata.NativeFrames, order binary.ByteOrder, scalin
 		return nil, 0, ErrMemoryLimit
 	}
 	out := make([]float64, perFrame*len(native.Data))
-	maximum := 0.0
+	maximum := math.Inf(-1)
 	for sourceIndex, frame := range native.Data {
 		targetIndex := sourceIndex
 		if reverse {
@@ -378,41 +389,6 @@ func readReferences(obj *object.Object) []Reference {
 	return out
 }
 
-func readEmbeddedDVHs(obj *object.Object, doseUnits string) []EmbeddedDVH {
-	items := derivedio.Sequence(obj, tagDVHSequence)
-	out := make([]EmbeddedDVH, 0, len(items))
-	for _, item := range items {
-		data := derivedio.Floats(item, tagDVHData)
-		bins := derivedio.Int(item, tagDVHNumberOfBins)
-		scaling := firstFloat(item, tagDVHDoseScaling)
-		if bins <= 0 || len(data) != bins*2 || !finitePositive(scaling) {
-			continue
-		}
-		entry := EmbeddedDVH{
-			Type:         upper(derivedio.CleanString(item, core.NewTag(0x3004, 0x0001))),
-			DoseUnits:    doseUnits,
-			DoseScaling:  scaling,
-			VolumeUnits:  upper(derivedio.CleanString(item, tagDVHVolumeUnits)),
-			NumberOfBins: bins,
-			Data:         append([]float64(nil), data...),
-			MinimumDose:  firstFloat(item, tagDVHMinimumDose),
-			MaximumDose:  firstFloat(item, tagDVHMaximumDose),
-			MeanDose:     firstFloat(item, tagDVHMeanDose),
-		}
-		for _, ref := range derivedio.Sequence(item, tagDVHReferencedROISequence) {
-			number := derivedio.Int(ref, tagReferencedROINumber)
-			if number != 0 {
-				entry.ReferencedROIs = append(entry.ReferencedROIs, number)
-			}
-			if entry.ContributionType == "" {
-				entry.ContributionType = upper(derivedio.CleanString(ref, tagDVHROIContributionType))
-			}
-		}
-		out = append(out, entry)
-	}
-	return out
-}
-
 // ValueAt returns a dose-grid value at an integer voxel coordinate.
 func (d *Dose) ValueAt(column, row, frame int) (float64, bool) {
 	if d == nil || column < 0 || column >= d.Columns || row < 0 || row >= d.Rows ||
@@ -426,20 +402,25 @@ func (d *Dose) ValueAt(column, row, frame int) (float64, bool) {
 	return d.Values[index], true
 }
 
-// SamplePatient trilinearly samples a patient-space point. Points outside the
-// dose grid return ok=false; no nearest-grid extrapolation is performed.
+// SamplePatient trilinearly samples a patient-space point. The dose covers
+// the boxes of its voxels (#1115), as the DVH does: in plane -0.5 <= index <
+// n-0.5, through the plane half a slice spacing beyond the first and last
+// planes, where the edge values repeat. Points farther out return ok=false.
 func (d *Dose) SamplePatient(point render.Vec3) (value float64, ok bool) {
 	if d == nil || len(d.Geometry.Slices) != d.Frames || len(d.Geometry.Positions) != d.Frames || d.Frames == 0 {
 		return 0, false
 	}
 	first := d.Geometry.Slices[0]
 	delta := point.Sub(first.Origin)
-	column := delta.Dot(first.RowDir) / first.ColSpacing
-	row := delta.Dot(first.ColDir) / first.RowSpacing
-	if column < 0 || row < 0 || column > float64(d.Columns-1) || row > float64(d.Rows-1) {
+	column, okColumn := render.ClampContinuousIndex(delta.Dot(first.RowDir)/first.ColSpacing, d.Columns, 0)
+	row, okRow := render.ClampContinuousIndex(delta.Dot(first.ColDir)/first.RowSpacing, d.Rows, 0)
+	if !okColumn || !okRow {
 		return 0, false
 	}
-	position := point.Dot(d.Geometry.Normal)
+	position, ok := d.clampPosition(point.Dot(d.Geometry.Normal))
+	if !ok {
+		return 0, false
+	}
 	frame0, frame1, fraction, ok := bracket(d.Geometry.Positions, position)
 	if !ok {
 		return 0, false
@@ -455,16 +436,24 @@ func (d *Dose) SamplePatient(point render.Vec3) (value float64, ok bool) {
 		if !(a && b && c && e) {
 			return 0, false
 		}
-		top := v00 + (v10-v00)*columnFraction
-		bottom := v01 + (v11-v01)*columnFraction
-		return top + (bottom-top)*rowFraction, true
+		top := interpolateDose(v00, v10, columnFraction)
+		bottom := interpolateDose(v01, v11, columnFraction)
+		return interpolateDose(top, bottom, rowFraction), true
 	}
 	v0, ok0 := sampleFrame(frame0)
 	v1, ok1 := sampleFrame(frame1)
 	if !ok0 || !ok1 {
 		return 0, false
 	}
-	return v0 + (v1-v0)*fraction, true
+	return interpolateDose(v0, v1, fraction), true
+}
+
+func interpolateDose(a, b, fraction float64) float64 {
+	if (a < 0) != (b < 0) {
+		// The difference between two finite doses of opposite signs can overflow.
+		return a*(1-fraction) + b*fraction
+	}
+	return a + (b-a)*fraction
 }
 
 // DisplayUnit returns a semantics-safe unit label. Only physical GY is labelled
@@ -496,6 +485,24 @@ func (d *Dose) ProvenanceLabel() string {
 	return fmt.Sprintf("RTDOSE %s · %s · %s", d.SummationType, d.Type, d.DisplayUnit())
 }
 
+// clampPosition clamps a position along the normal onto the planes when it
+// lies within half a slice beyond the first or last one (the half-open box
+// [first-t/2, last+t/2) of the DVH).
+func (d *Dose) clampPosition(position float64) (float64, bool) {
+	positions := d.Geometry.Positions
+	first, last := positions[0], positions[len(positions)-1]
+	if position >= first && position <= last {
+		return position, true
+	}
+	if half := doseSliceThickness(d, 0) / 2; position < first && position >= first-half {
+		return first, true
+	}
+	if half := doseSliceThickness(d, len(positions)-1) / 2; position > last && position < last+half {
+		return last, true
+	}
+	return position, true // bracket applies its own tolerance
+}
+
 func bracket(values []float64, target float64) (lower, upper int, fraction float64, ok bool) {
 	if len(values) == 0 || target < values[0]-1e-6 || target > values[len(values)-1]+1e-6 {
 		return 0, 0, 0, false
@@ -519,14 +526,6 @@ func bracket(values []float64, target float64) (lower, upper int, fraction float
 		return 0, 0, 0, false
 	}
 	return lower, upper, (target - values[lower]) / width, true
-}
-
-func firstFloat(obj *object.Object, tag core.Tag) float64 {
-	values := derivedio.Floats(obj, tag)
-	if len(values) == 0 || !isFinite(values[0]) {
-		return 0
-	}
-	return values[0]
 }
 
 func upper(value string) string         { return strings.ToUpper(strings.TrimSpace(value)) }

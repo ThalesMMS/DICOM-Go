@@ -1,6 +1,8 @@
 package microscopy
 
 import (
+	"github.com/ThalesMMS/dicom-go/internal/gridindex"
+
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -389,7 +391,7 @@ func clonePrimitives(values []Primitive) []Primitive {
 }
 
 func imagePoint(x, y float64) image.Point {
-	return image.Pt(int(math.Round(x)), int(math.Round(y)))
+	return image.Pt(gridindex.Nearest(x), gridindex.Nearest(y))
 }
 
 func commonZ(values []float64) float64 {

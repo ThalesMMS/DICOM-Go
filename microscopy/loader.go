@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/draw"
 	"sync"
 )
 
@@ -70,10 +71,31 @@ func (c *tileCache) put(key TileKey, value image.Image) {
 	if value == nil || c.maxBytes <= 0 {
 		return
 	}
-	bytes := imageBytes(value)
-	if bytes <= 0 || bytes > c.maxBytes {
+	bounds := value.Bounds()
+	width, height := int64(bounds.Dx()), int64(bounds.Dy())
+	bytesPerPixel := int64(4)
+	switch value.(type) {
+	case *image.RGBA64, *image.NRGBA64, *image.Gray16:
+		bytesPerPixel = 8
+	}
+	if width <= 0 || height <= 0 || width > c.maxBytes/bytesPerPixel/height {
 		return
 	}
+	// Own canonical storage: a tiny subimage can otherwise retain an arbitrarily
+	// large source backing buffer that rectangle-based accounting cannot see.
+	var owned image.Image
+	rectangle := image.Rect(0, 0, int(width), int(height))
+	if bytesPerPixel == 8 {
+		img := image.NewRGBA64(rectangle)
+		draw.Draw(img, rectangle, value, bounds.Min, draw.Src)
+		owned = img
+	} else {
+		img := image.NewNRGBA(rectangle)
+		draw.Draw(img, rectangle, value, bounds.Min, draw.Src)
+		owned = img
+	}
+	value = owned
+	bytes := imageBytes(value)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if element := c.entries[key]; element != nil {
@@ -126,6 +148,8 @@ type Loader struct {
 	generation uint64
 	cancel     context.CancelFunc
 	closed     bool
+	requests   sync.WaitGroup
+	admission  chan struct{}
 }
 
 func NewLoader(source TileSource, maxCacheBytes int64, workers int) *Loader {
@@ -134,7 +158,7 @@ func NewLoader(source TileSource, maxCacheBytes int64, workers int) *Loader {
 	}
 	return &Loader{
 		source: source, workers: workers,
-		cache: newTileCache(maxCacheBytes),
+		cache: newTileCache(maxCacheBytes), admission: make(chan struct{}, workers),
 	}
 }
 
@@ -159,11 +183,13 @@ func (l *Loader) Request(parent context.Context, tiles []Tile, publish func(Tile
 	generation := l.generation
 	ctx, cancel := context.WithCancel(parent)
 	l.cancel = cancel
+	l.requests.Add(1)
 	l.mu.Unlock()
 
-	tiles = deduplicateTiles(tiles)
+	tiles = deduplicateTiles(tiles, 0)
 	done := make(chan error, 1)
 	if len(tiles) == 0 {
+		l.requests.Done()
 		close(done)
 		return done, nil
 	}
@@ -182,7 +208,7 @@ func (l *Loader) Request(parent context.Context, tiles []Tile, publish func(Tile
 				result := TileResult{Tile: tile, Generation: generation}
 				result.Image, result.FromCache = l.cache.get(tile.Key())
 				if !result.FromCache {
-					result.Image, result.Err = l.source.FetchTile(ctx, tile)
+					result.Image, result.Err = l.fetchTile(ctx, tile)
 					if result.Err == nil && result.Image != nil {
 						l.cache.put(tile.Key(), result.Image)
 					}
@@ -207,10 +233,12 @@ func (l *Loader) Request(parent context.Context, tiles []Tile, publish func(Tile
 		}
 	}()
 	go func() {
+		defer l.requests.Done()
 		workers.Wait()
 		close(errs)
+		requestErr := ctx.Err()
 		cancel()
-		var combined error
+		var combined error = requestErr
 		for err := range errs {
 			combined = errors.Join(combined, err)
 		}
@@ -261,6 +289,7 @@ func (l *Loader) Close() {
 		}
 	}
 	l.mu.Unlock()
+	l.requests.Wait()
 	l.cache.clear()
 }
 
@@ -271,9 +300,12 @@ func (l *Loader) CacheStats() CacheStats {
 	return l.cache.stats()
 }
 
-func deduplicateTiles(tiles []Tile) []Tile {
-	seen := make(map[TileKey]bool, len(tiles))
-	out := make([]Tile, 0, len(tiles))
+func deduplicateTiles(tiles []Tile, limit int) []Tile {
+	if limit <= 0 || limit > len(tiles) {
+		limit = len(tiles)
+	}
+	seen := make(map[TileKey]bool, limit)
+	out := make([]Tile, 0, limit)
 	for _, tile := range tiles {
 		key := tile.Key()
 		if key.FrameNumber <= 0 || seen[key] {
@@ -281,18 +313,57 @@ func deduplicateTiles(tiles []Tile) []Tile {
 		}
 		seen[key] = true
 		out = append(out, tile)
+		if len(out) == limit {
+			break
+		}
 	}
 	return out
 }
 
+// Charge the retained backing buffer, including sub-images and padded strides.
 func imageBytes(value image.Image) int64 {
 	if value == nil {
 		return 0
 	}
+	switch img := value.(type) {
+	case *image.RGBA:
+		return int64(len(img.Pix))
+	case *image.NRGBA:
+		return int64(len(img.Pix))
+	case *image.RGBA64:
+		return int64(len(img.Pix))
+	case *image.NRGBA64:
+		return int64(len(img.Pix))
+	case *image.Gray:
+		return int64(len(img.Pix))
+	case *image.Gray16:
+		return int64(len(img.Pix))
+	case *image.Alpha:
+		return int64(len(img.Pix))
+	case *image.Alpha16:
+		return int64(len(img.Pix))
+	case *image.Paletted:
+		return int64(len(img.Pix)) + int64(len(img.Palette))*16
+	}
 	bounds := value.Bounds()
 	width, height := int64(bounds.Dx()), int64(bounds.Dy())
-	if width <= 0 || height <= 0 || width > (1<<62)/(height*4) {
+	if width <= 0 || height <= 0 || width > (1<<62)/8/height {
 		return 0
 	}
-	return width * height * 4
+	return width * height * 8
+}
+
+// Admission survives superseding viewports until the previous source has
+// physically returned. Cancellation never lends its occupied slot to new work.
+func (l *Loader) fetchTile(ctx context.Context, tile Tile) (image.Image, error) {
+	select {
+	case l.admission <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-l.admission }()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return l.source.FetchTile(ctx, tile)
 }

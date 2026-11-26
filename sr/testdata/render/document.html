@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Imaging Measurement Report</title>
+<style>body{font-family:sans-serif;margin:1.5em;line-height:1.4}table.header td{padding:0 1em 0 0;vertical-align:top}ul{list-style:none;padding-left:1.4em;margin:0}.rel{color:#666;font-size:smaller}.vt{color:#666;font-size:smaller}.concept{font-weight:bold}.value{white-space:pre-wrap}</style>
+</head>
+<body>
+<h1>Imaging Measurement Report</h1>
+<table class="header">
+<tr><td>Patient</td><td>Doe^Jane &lt;Synthetic&gt;</td></tr>
+<tr><td>Document type</td><td>Comprehensive 3D SR Storage</td></tr>
+<tr><td>Completion</td><td>COMPLETE</td></tr>
+<tr><td>Verification</td><td>UNVERIFIED</td></tr>
+<tr><td>Content date/time</td><td>2026-09-26 12:00:00</td></tr>
+<tr><td>SOP Instance UID</td><td>1.2.826.0.1.3680043.8.498.20260926.30</td></tr>
+</table>
+<ul>
+<li id="item-1.1"><span class="rel">has obs context</span> <span class="vt">PNAME</span> <span class="concept">Person Observer Name (121008, DCM)</span>: <span class="value">Doe Jane</span></li>
+<li id="item-1.2"><span class="rel">contains</span> <span class="vt">CONTAINER</span> <span class="concept">Measurement Group (125007, DCM)</span>
+<ul>
+<li id="item-1.2.1"><span class="rel">contains</span> <span class="vt">TEXT</span> <span class="concept">Comment (121106, DCM)</span>: <span class="value">&lt;script&gt;alert(1)&lt;/script&gt; &amp; &#34;quoted&#34;
+second line \x1b[31mred\x202e</span></li>
+<li id="item-1.2.2"><span class="rel">contains</span> <span class="vt">CODE</span> <span class="concept">Finding (121071, DCM)</span>: <span class="value">Lesion &lt;b&gt; (52988006, SCT)</span></li>
+<li id="item-1.2.3"><span class="rel">contains</span> <span class="vt">NUM</span> <span class="concept">Diameter (81827009, SCT)</span>: <span class="value">12.5 mm</span>
+<ul>
+<li id="item-1.2.3.1"><span class="rel">inferred from</span> <span class="vt">IMAGE</span> <span class="concept">Source of Measurement (121112, DCM)</span>: <span class="value">CT Image Storage 1.2.3.4, frames 2,3</span></li>
+<li id="item-1.2.3.2"><span class="rel">inferred from</span> <span class="vt">SCOORD</span>: <span class="value">POLYLINE (1,2) (3.5,4)</span></li>
+</ul>
+</li>
+<li id="item-1.2.4"><span class="rel">contains</span> <span class="vt">NUM</span> <span class="concept">Volume (118565006, SCT)</span>: <span class="value">Measurement failure (114006, DCM)</span></li>
+<li id="item-1.2.5"><span class="rel">contains</span> <span class="vt">SCOORD3D</span> <span class="concept">Image Region (111030, DCM)</span>: <span class="value">POINT (1,2,3) in 1.2.3.5</span></li>
+<li id="item-1.2.6"><span class="rel">contains</span> <span class="vt">DATETIME</span> <span class="concept">DateTime Started (111526, DCM)</span>: <span class="value">2026-09-26 12:30:45</span></li>
+<li id="item-1.2.7"><span class="rel">contains</span> <span class="vt">DATE</span> <span class="concept">Study Date (111060, DCM)</span>: <span class="value">2026-09-26</span></li>
+<li id="item-1.2.8"><span class="rel">contains</span> <span class="vt">TIME</span> <span class="concept">Study Time (111061, DCM)</span>: <span class="value">09:30</span></li>
+<li id="item-1.2.9"><span class="rel">contains</span> <span class="vt">UIDREF</span> <span class="concept">Tracking Unique Identifier (112040, DCM)</span>: <span class="value">1.2.3.6</span></li>
+<li id="item-1.2.10"><span class="rel">contains</span> <span class="vt">COMPOSITE</span> <span class="concept">Referenced Segment (121191, DCM)</span>: <span class="value">Segmentation Storage 1.2.3.7</span></li>
+<li id="item-1.2.11"><span class="rel">contains</span> <span class="vt">WAVEFORM</span> <span class="concept">ECG (109070, DCM)</span>: <span class="value">12-lead ECG Waveform Storage 1.2.3.8, 2 channels</span></li>
+<li id="item-1.2.12"><span class="rel">contains</span> <span class="vt">TCOORD</span> <span class="concept">Waveform Region (121213, DCM)</span>: <span class="value">SEGMENT 0.5 s 1.25 s</span></li>
+<li id="item-1.2.13"><span class="rel">inferred from</span> <a href="#item-1.2.1">1.2.1</a></li>
+</ul>
+</li>
+</ul>
+</body>
+</html>

@@ -119,6 +119,7 @@ func TestImplicitHugeSlideGeneratesOnlyViewportTiles(t *testing.T) {
 		derivedio.US(tagColumns, tileSize),
 		derivedio.US(tagRows, tileSize),
 		derivedio.IS(tagNumberOfFrames, frameCount),
+		derivedio.CS(tagDimensionOrganizationType, "TILED_FULL"),
 		derivedio.FL(tagImagedVolumeWidth, 500),
 		derivedio.FL(tagImagedVolumeHeight, 400),
 	)}
@@ -185,7 +186,14 @@ func TestLoaderCancelsStaleViewportAndBoundsSharedCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitLoader(t, done)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("superseded viewport result=%v, want cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("superseded viewport did not retire")
+	}
 	waitLoader(t, secondDone)
 	mu.Lock()
 	defer mu.Unlock()

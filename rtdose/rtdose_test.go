@@ -45,6 +45,86 @@ func TestReadScalesSamplesAndPreservesDoseSemantics(t *testing.T) {
 	if _, ok := dose.SamplePatient(testVec(100, 20, 30)); ok {
 		t.Fatal("SamplePatient accepted a point outside the dose grid")
 	}
+	// Voxel boxes (#1115), as the DVH: the outer half voxel and half slice
+	// repeat the edge values; beyond them nothing is sampled.
+	for _, test := range []struct {
+		x, y, z float64
+		want    float64
+		ok      bool
+	}{
+		{14.4, 20, 30, 1, true},  // column 1.467
+		{14.6, 20, 30, 0, false}, // column 1.533
+		{8.6, 19.1, 30, 0, true}, // column -0.467, row -0.45
+		{14.4, 20, 35.9, 5, true},
+		{14.4, 20, 36.1, 0, false},
+		{14.4, 20, 28.1, 1, true},
+		{14.4, 20, 27.9, 0, false},
+	} {
+		got, ok := dose.SamplePatient(testVec(test.x, test.y, test.z))
+		if ok != test.ok || (ok && math.Abs(got-test.want) > 1e-9) {
+			t.Errorf("SamplePatient(%v, %v, %v) = %v, %v, want %v, %v", test.x, test.y, test.z, got, ok, test.want, test.ok)
+		}
+	}
+}
+
+func TestSignedDoseErrorGridAndDVH(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		doseType string
+		repr     uint16
+		stored   []uint16
+		want     [2]float64
+	}{
+		{"signed error", "ERROR ", 1, []uint16{0xfffe, 2}, [2]float64{-0.25, 0.25}},
+		{"all-negative error", DoseTypeError, 1, []uint16{0xfffc, 0xfffe}, [2]float64{-0.5, -0.25}},
+		{"signed physical", DoseTypePhysical, 1, []uint16{0xfffe, 2}, [2]float64{}},
+		{"unsigned error", DoseTypeError, 0, []uint16{0xfffe, 2}, [2]float64{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			file := testDoseFile(t, testDoseOptions{
+				rows: 1, columns: 2, frames: 1, spacing: []float64{1, 1},
+				position: []float64{0, 0, 0}, orientation: []float64{1, 0, 0, 0, 1, 0},
+				scaling: 0.125, values: tt.stored, units: DoseUnitsGray, doseType: tt.doseType, summation: "PLAN",
+			})
+			file.Dataset.Put(derivedio.US(derivedio.TagPixelRepresentation, tt.repr))
+			dose, err := Read(file)
+			if tt.want == [2]float64{} {
+				if dose != nil || !errors.Is(err, ErrInvalidObject) {
+					t.Fatalf("Read = (%+v, %v), want invalid pixel representation", dose, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dose.Values[0] != tt.want[0] || dose.Values[1] != tt.want[1] ||
+				dose.Maximum != tt.want[1] || dose.DisplayUnit() != "Gy (error)" {
+				t.Fatalf("Read = %v, max = %g, unit = %q", dose.Values, dose.Maximum, dose.DisplayUnit())
+			}
+			midpoint := (tt.want[0] + tt.want[1]) / 2
+			if got, ok := dose.SamplePatient(testVec(0.5, 0, 0)); !ok || got != midpoint {
+				t.Fatalf("midpoint = (%g, %t), want %g", got, ok, midpoint)
+			}
+			set := &rtstruct.StructureSet{
+				FrameOfReferenceUID: dose.FrameOfReferenceUID,
+				ROIs: []rtstruct.ROI{{Number: 7, Name: "Test ROI", Contours: []rtstruct.Contour{
+					testContour(rtstruct.ContourClosedPlanar, [][3]float64{
+						{-0.5, -0.5, 0}, {1.5, -0.5, 0}, {1.5, 0.5, 0}, {-0.5, 0.5, 0},
+					}),
+				}}},
+			}
+			dvh, err := ComputeDVH(context.Background(), dose, set, 7, DVHOptions{Bins: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dvh.VoxelCount != 2 || dvh.Minimum != tt.want[0] || dvh.Maximum != tt.want[1] || dvh.Mean != midpoint ||
+				dvh.D95 != tt.want[0] || dvh.D50 != tt.want[1] || dvh.DoseUnit != "Gy (error)" ||
+				dvh.Bins[0].Dose != tt.want[0] || dvh.Bins[0].VolumePercent != 100 ||
+				dvh.Bins[1].VolumePercent != 50 {
+				t.Fatalf("signed DVH = %+v, want both dose errors represented", dvh)
+			}
+		})
+	}
 }
 
 func TestReadSupportsAbsoluteAxialOffsetsAndDescendingFrames(t *testing.T) {

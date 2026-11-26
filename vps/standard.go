@@ -1,13 +1,16 @@
 package vps
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/ThalesMMS/dicom-go/core"
 	"github.com/ThalesMMS/dicom-go/internal/derivedio"
 	"github.com/ThalesMMS/dicom-go/object"
+	"github.com/ThalesMMS/dicom-go/pixeldata/display"
 	"github.com/ThalesMMS/dicom-go/render"
 )
 
@@ -67,10 +70,16 @@ var (
 	tagComponentInputSequence                = core.NewTag(0x0070, 0x1803)
 	tagPresentationInputIndex                = core.NewTag(0x0070, 0x1804)
 	tagCompositorSequence                    = core.NewTag(0x0070, 0x1805)
+	tagPresentationCreationDate              = core.NewTag(0x0070, 0x0082)
+	tagPresentationCreationTime              = core.NewTag(0x0070, 0x0083)
+	tagAnatomicRegionSequence                = core.NewTag(0x0008, 0x2218)
+	tagViewCodeSequence                      = core.NewTag(0x0054, 0x0220)
+	tagImageLaterality                       = core.NewTag(0x0020, 0x0062)
 	tagVolumeStreamSequence                  = core.NewTag(0x0070, 0x1A08)
 	tagRGBATransferFunctionDescription       = core.NewTag(0x0070, 0x1A09)
 	tagWindowCenter                          = core.NewTag(0x0028, 0x1050)
 	tagWindowWidth                           = core.NewTag(0x0028, 0x1051)
+	tagVOILUTFunction                        = core.NewTag(0x0028, 0x1056)
 	tagVOILUTSequence                        = core.NewTag(0x0028, 0x3010)
 	tagPixelPresentation                     = core.NewTag(0x0008, 0x9205)
 	tagPresentationLUTShape                  = core.NewTag(0x2050, 0x0020)
@@ -79,6 +88,7 @@ var (
 	tagRedPaletteDescriptor                  = core.NewTag(0x0028, 0x1101)
 	tagGreenPaletteDescriptor                = core.NewTag(0x0028, 0x1102)
 	tagBluePaletteDescriptor                 = core.NewTag(0x0028, 0x1103)
+	tagAlphaPaletteDescriptor                = core.NewTag(0x0028, 0x1104)
 	tagRedPaletteData                        = core.NewTag(0x0028, 0x1201)
 	tagGreenPaletteData                      = core.NewTag(0x0028, 0x1202)
 	tagBluePaletteData                       = core.NewTag(0x0028, 0x1203)
@@ -110,6 +120,18 @@ func writeStandard(state *State) (*object.File, error) {
 	if err := validateStandardState(state); err != nil {
 		return nil, err
 	}
+	identification, err := state.Identification.Elements(DefaultContentLabel)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidObject, err)
+	}
+	now := time.Now()
+	date, clock := state.CreationDate, state.CreationTime
+	if date == "" {
+		date = now.Format("20060102")
+	}
+	if clock == "" {
+		clock = now.Format("150405")
+	}
 	elements := []core.Element{
 		derivedio.UI(derivedio.TagSOPClassUID, state.SOPClassUID),
 		derivedio.UI(derivedio.TagSOPInstanceUID, state.SOPInstanceUID),
@@ -119,6 +141,18 @@ func writeStandard(state *State) (*object.File, error) {
 		derivedio.UI(derivedio.TagFrameOfReferenceUID, state.FrameOfReferenceUID),
 		inputSetSequence(state.Inputs),
 		standardInputSequence(state.Inputs),
+		derivedio.Str(tagPresentationCreationDate, core.VRDA, date),
+		derivedio.Str(tagPresentationCreationTime, core.VRTM, clock),
+		// Presentation View Description: the Type 2 anatomy, view and
+		// laterality, unknown here.
+		derivedio.Seq(tagAnatomicRegionSequence),
+		derivedio.Seq(tagViewCodeSequence),
+		derivedio.CS(tagImageLaterality, ""),
+	}
+	elements = append(elements, identification...)
+	if !isMPRSOPClass(state.SOPClassUID) {
+		// Render Display: no compositing (Type 2, zero Items).
+		elements = append(elements, derivedio.Seq(tagCompositorSequence))
 	}
 	if len(state.GlobalCropSpecificationNumbers) == 0 {
 		elements = append(elements, derivedio.CS(tagGlobalCrop, "NO"))
@@ -142,10 +176,13 @@ func writeStandard(state *State) (*object.File, error) {
 		elements = append(elements, encodeShading(state.Shading)...)
 	}
 	dataset := derivedio.Object(elements...)
+	if err := state.Common.Apply(dataset, object.InheritAll); err != nil {
+		return nil, err
+	}
 	return derivedio.File(state.SOPClassUID, state.SOPInstanceUID, dataset)
 }
 
-func readStandard(obj *object.Object, sopClassUID string) (*State, error) {
+func readStandard(obj *object.Object, sopClassUID string, options ReadOptions) (*State, error) {
 	if obj.Has(tagReferencedSpatialRegistrationSequence) {
 		return nil, unsupported("Referenced Spatial Registration Sequence")
 	}
@@ -155,6 +192,9 @@ func readStandard(obj *object.Object, sopClassUID string) (*State, error) {
 		StudyInstanceUID:    derivedio.CleanUID(obj, derivedio.TagStudyInstanceUID),
 		SeriesInstanceUID:   derivedio.CleanUID(obj, derivedio.TagSeriesInstanceUID),
 		FrameOfReferenceUID: derivedio.CleanUID(obj, derivedio.TagFrameOfReferenceUID),
+		Identification:      derivedio.ReadIdentification(obj),
+		CreationDate:        derivedio.CleanString(obj, tagPresentationCreationDate),
+		CreationTime:        derivedio.CleanString(obj, tagPresentationCreationTime),
 	}
 	var err error
 	state.Inputs, err = readStandardInputs(obj)
@@ -165,7 +205,7 @@ func readStandard(obj *object.Object, sopClassUID string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	state.CroppingSpecifications, err = readCroppingSpecifications(obj)
+	state.CroppingSpecifications, err = readCroppingSpecifications(obj, options)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +218,7 @@ func readStandard(obj *object.Object, sopClassUID string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	state.Display, err = readDisplay(obj, sopClassUID, state.Inputs)
+	state.Display, err = readDisplay(obj, sopClassUID, state.Inputs, options)
 	if err != nil {
 		return nil, err
 	}
@@ -257,8 +297,14 @@ func validateStandardStateWithFrameRequirement(state *State, requireFrameOfRefer
 				return fail("input %d has an incomplete SOP instance reference", input.Number)
 			}
 		}
-		if input.VOI != nil && (!finite(input.VOI.WindowCenter) || !finite(input.VOI.WindowWidth) || input.VOI.WindowWidth <= 0) {
-			return fail("input %d has invalid Window Center/Width", input.Number)
+		if input.VOI != nil {
+			if !finite(input.VOI.WindowCenter) || !finite(input.VOI.WindowWidth) || input.VOI.WindowWidth <= 0 ||
+				input.VOI.Function == display.VOILinear && input.VOI.WindowWidth < 1 {
+				return fail("input %d has invalid Window Center/Width", input.Number)
+			}
+			if _, ok := voiFunctionName(input.VOI.Function); !ok {
+				return unsupported("input %d VOI LUT Function", input.Number)
+			}
 		}
 		if isMPRSOPClass(state.SOPClassUID) && state.MPRGeometry.ThicknessType == MPRThicknessSlab &&
 			!oneOf(input.RenderingMethod, RenderingAverageIP, RenderingMaximumIP, RenderingMinimumIP) {
@@ -348,8 +394,8 @@ func validateCrop(state *State) error {
 				return fmt.Errorf("%w: crop %d contains a non-finite bound", ErrInvalidObject, spec.Number)
 			}
 		}
-		if !(b[0] < b[1] && b[2] < b[3] && b[4] < b[5]) {
-			return fmt.Errorf("%w: crop %d bounding box is not ordered", ErrInvalidObject, spec.Number)
+		if b[0] == b[1] && b[2] == b[3] && b[4] == b[5] {
+			return fmt.Errorf("%w: crop %d bounding box has coincident corners", ErrInvalidObject, spec.Number)
 		}
 	}
 	check := func(scope string, values []int) error {
@@ -496,6 +542,10 @@ func standardInputSequence(inputs []Input) core.Element {
 				derivedio.DS(tagWindowCenter, input.VOI.WindowCenter),
 				derivedio.DS(tagWindowWidth, input.VOI.WindowWidth),
 			)
+			if input.VOI.Function != display.VOILinear {
+				name, _ := voiFunctionName(input.VOI.Function)
+				elements = append(elements, derivedio.CS(tagVOILUTFunction, name))
+			}
 		}
 		if input.RenderingMethod != "" {
 			elements = append(elements, derivedio.CS(tagRenderingMethod, input.RenderingMethod))
@@ -511,7 +561,9 @@ func croppingSequence(specs []CroppingSpecification) core.Element {
 		items = append(items, derivedio.DataSet(
 			derivedio.US(tagCroppingSpecificationNumber, uint16(spec.Number)),
 			derivedio.CS(tagVolumeCroppingMethod, spec.Method),
-			derivedio.FD(tagBoundingBoxCrop, spec.BoundingBox[:]...),
+			derivedio.FD(tagBoundingBoxCrop,
+				spec.BoundingBox[0], spec.BoundingBox[2], spec.BoundingBox[4],
+				spec.BoundingBox[1], spec.BoundingBox[3], spec.BoundingBox[5]),
 		))
 	}
 	return derivedio.Seq(tagVolumeCroppingSequence, items...)
@@ -578,7 +630,8 @@ func encodeDisplay(display *Display, sopClassUID string) []core.Element {
 		}
 		if component.AlphaTransferFunction == AlphaTransferTable {
 			componentElements = append(componentElements,
-				wordPalette(tagAlphaPaletteData, component.AlphaPalette),
+				derivedio.US(tagAlphaPaletteDescriptor, component.PaletteDescriptor[0], component.PaletteDescriptor[1], 8),
+				byteAlphaPalette(component.AlphaPalette),
 			)
 		}
 		componentItems = append(componentItems, derivedio.DataSet(componentElements...))
@@ -676,7 +729,13 @@ func readStandardInputs(obj *object.Object) ([]Input, error) {
 			if len(centers) != 1 || len(widths) != 1 {
 				return nil, unsupported("multi-valued or incomplete Window Center/Width on input %d", input.Number)
 			}
-			input.VOI = &VOI{WindowCenter: centers[0], WindowWidth: widths[0]}
+			function, err := readVOIFunction(item)
+			if err != nil {
+				return nil, err
+			}
+			input.VOI = &VOI{WindowCenter: centers[0], WindowWidth: widths[0], Function: function}
+		} else if item.Has(tagVOILUTFunction) {
+			return nil, fmt.Errorf("%w: VOI LUT Function without Window Center/Width", ErrInvalidObject)
 		}
 		input.RenderingMethod = cleanCS(item, tagRenderingMethod)
 		out = append(out, input)
@@ -707,7 +766,7 @@ func readCropSelection(obj *object.Object, flagTag, indexTag core.Tag, label str
 	}
 }
 
-func readCroppingSpecifications(obj *object.Object) ([]CroppingSpecification, error) {
+func readCroppingSpecifications(obj *object.Object, options ReadOptions) ([]CroppingSpecification, error) {
 	items := derivedio.Sequence(obj, tagVolumeCroppingSequence)
 	out := make([]CroppingSpecification, 0, len(items))
 	for _, item := range items {
@@ -723,7 +782,10 @@ func readCroppingSpecifications(obj *object.Object) ([]CroppingSpecification, er
 			return nil, fmt.Errorf("%w: BOUNDING_BOX crop must contain six values", ErrInvalidObject)
 		}
 		spec := CroppingSpecification{Number: derivedio.Int(item, tagCroppingSpecificationNumber), Method: method}
-		copy(spec.BoundingBox[:], values)
+		spec.BoundingBox = [6]float64{values[0], values[3], values[1], values[4], values[2], values[5]}
+		if options.LegacyInterleavedBoundingBox {
+			copy(spec.BoundingBox[:], values)
+		}
 		out = append(out, spec)
 	}
 	return out, nil
@@ -778,7 +840,7 @@ func readVolumeGeometry(obj *object.Object) (*VolumeRenderGeometry, error) {
 	return g, nil
 }
 
-func readDisplay(obj *object.Object, sopClassUID string, inputs []Input) (*Display, error) {
+func readDisplay(obj *object.Object, sopClassUID string, inputs []Input, options ReadOptions) (*Display, error) {
 	display := &Display{PixelPresentation: cleanCS(obj, tagPixelPresentation)}
 	if sopClassUID == GrayscalePlanarMPRVolumetricPresentationStateStorage {
 		display.PresentationLUTShape = cleanCS(obj, tagPresentationLUTShape)
@@ -793,7 +855,7 @@ func readDisplay(obj *object.Object, sopClassUID string, inputs []Input) (*Displ
 		classificationOwner = streams[0]
 		display.InputSetUID = derivedio.CleanUID(streams[0], tagVPSInputSetUID)
 	}
-	if obj.Has(tagCompositorSequence) {
+	if len(derivedio.Sequence(obj, tagCompositorSequence)) > 0 {
 		return nil, unsupported("Presentation State Compositor Component Sequence")
 	}
 	components := derivedio.Sequence(classificationOwner, tagClassificationSequence)
@@ -827,7 +889,7 @@ func readDisplay(obj *object.Object, sopClassUID string, inputs []Input) (*Displ
 		}
 		if component.AlphaTransferFunction == AlphaTransferTable {
 			var err error
-			component.AlphaPalette, err = readClassificationPalette(item, tagAlphaPaletteData, "alpha")
+			component.AlphaPalette, err = readClassificationAlpha(item, component.PaletteDescriptor, options)
 			if err != nil {
 				return nil, err
 			}
@@ -937,7 +999,7 @@ func appliedPreset(state *State) (render.VRPreset, error) {
 		if description := strings.TrimSpace(state.Display.Classification[0].Description); description != "" {
 			preset.Name = description
 		}
-		preset.GradientOpacityScale = 0
+		preset.GradientOpacityScale, preset.GradientOpacity = 0, nil
 	}
 	switch method {
 	case "", RenderingVolumeRendered:
@@ -1099,4 +1161,83 @@ func cloneShading(value *Shading) *Shading {
 	}
 	out := *value
 	return &out
+}
+
+func voiFunctionName(function display.VOIFunction) (string, bool) {
+	switch function {
+	case display.VOILinear:
+		return "LINEAR", true
+	case display.VOILinearExact:
+		return "LINEAR_EXACT", true
+	case display.VOISigmoid:
+		return "SIGMOID", true
+	default:
+		return "", false
+	}
+}
+
+func readVOIFunction(obj *object.Object) (display.VOIFunction, error) {
+	switch cleanCS(obj, tagVOILUTFunction) {
+	case "", "LINEAR":
+		return display.VOILinear, nil
+	case "LINEAR_EXACT":
+		return display.VOILinearExact, nil
+	case "SIGMOID":
+		return display.VOISigmoid, nil
+	default:
+		return 0, unsupported("VOI LUT Function")
+	}
+}
+
+// Alpha Palette Color LUT entries are eight bits (PS3.3 C.7.6.3.1.5).
+// The public model remains normalized to 16-bit units for caller compatibility.
+func byteAlphaPalette(values []uint16) core.Element {
+	data := make([]uint16, (len(values)+1)/2)
+	for i, value := range values {
+		data[i/2] |= uint16((uint32(value)+128)/257) << (8 * (i % 2))
+	}
+	return core.Element{Header: core.ElementHeader{Tag: tagAlphaPaletteData, VR: core.VROW}, Value: core.Uint16Value(data)}
+}
+
+func readClassificationAlpha(obj *object.Object, rgb [3]uint16, options ReadOptions) ([]uint16, error) {
+	descriptor := derivedio.Ints(obj, tagAlphaPaletteDescriptor)
+	missingLegacy := options.LegacyMissingAlphaDescriptor && !obj.Has(tagAlphaPaletteDescriptor)
+	if missingLegacy {
+		return readClassificationPalette(obj, tagAlphaPaletteData, "alpha")
+	}
+	if len(descriptor) != 3 || descriptor[0] != int64(rgb[0]) || descriptor[1] != int64(rgb[1]) {
+		return nil, fmt.Errorf("%w: alpha palette descriptor differs from RGB", ErrInvalidObject)
+	}
+	if descriptor[2] == 16 && options.LegacySixteenBitAlpha {
+		return readClassificationPalette(obj, tagAlphaPaletteData, "alpha")
+	}
+	if descriptor[2] != 8 {
+		return nil, fmt.Errorf("%w: alpha palette descriptor requires eight-bit entries", ErrInvalidObject)
+	}
+	element, ok := obj.Get(tagAlphaPaletteData)
+	if !ok {
+		return nil, fmt.Errorf("%w: TABLE classification is missing alpha palette data", ErrInvalidObject)
+	}
+	data, ok := element.RawBytes()
+	if words, typed := element.Value.(core.Uint16Value); typed {
+		data = make([]byte, 2*len(words))
+		for i, word := range words {
+			data[2*i], data[2*i+1] = byte(word), byte(word>>8)
+		}
+		ok = true
+	} else if ok && obj.ValueByteOrder() == binary.BigEndian {
+		data = append([]byte(nil), data...)
+		for i := 0; i+1 < len(data); i += 2 {
+			data[i], data[i+1] = data[i+1], data[i]
+		}
+	}
+	count := int(rgb[0])
+	if !ok || (len(data) != count && !(count%2 == 1 && len(data) == count+1 && data[count] == 0)) {
+		return nil, fmt.Errorf("%w: alpha palette length does not match descriptor", ErrInvalidObject)
+	}
+	out := make([]uint16, count)
+	for i := range out {
+		out[i] = uint16(data[i]) * 257
+	}
+	return out, nil
 }
