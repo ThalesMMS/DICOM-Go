@@ -57,6 +57,7 @@ type volumeRecord struct {
 	leases     uint64
 	pins       uint64
 	retired    bool
+	onReleased []func()
 }
 
 type trackedMemory struct {
@@ -93,6 +94,12 @@ type VolumeStore struct {
 // mutation APIs.
 type VolumeStoreIdentity struct {
 	id uint64
+}
+
+// ResidencyKey pairs this process-local store ordinal with a caller-owned
+// generation. It reads no voxels and does not acquire or install a snapshot.
+func (identity VolumeStoreIdentity) ResidencyKey(generation uint64) VolumeResidencyKey {
+	return VolumeResidencyKey{StoreIdentity: identity.id, Generation: generation}
 }
 
 var nextVolumeStoreIdentity atomic.Uint64
@@ -739,7 +746,7 @@ func (s *VolumeStore) removeGenerationLocked(generation uint64, countEviction bo
 		return 0, nil
 	}
 	bytes := record.payload.byteLen()
-	var callbacks []func()
+	callbacks := append([]func(){}, record.onReleased...)
 	for id, tracked := range s.tracked {
 		if tracked.generation != generation {
 			continue

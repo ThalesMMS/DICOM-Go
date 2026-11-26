@@ -23,6 +23,9 @@ const (
 	FrameFormatUnknown FrameFormat = iota
 	FrameFormatGrayF32TopLeft
 	FrameFormatRGBA8NRGBATopLeft
+	// Two little-endian float32 words per pixel: modality value then validity
+	// (exactly 0 or 1). Invalid samples are never inferred from a sentinel.
+	FrameFormatScalarValidityF32TopLeft
 )
 
 const (
@@ -32,6 +35,10 @@ const (
 	// FrameWarningInteractiveLOD means VR was rendered at one-half image
 	// resolution and nearest-upscaled for interactive parity.
 	FrameWarningInteractiveLOD
+	// FrameWarningMPRAntialias2x identifies sampling of the cached averaged level.
+	FrameWarningMPRAntialias2x
+	// FrameWarningVolumeFiltered identifies display-only filtered source sampling.
+	FrameWarningVolumeFiltered
 )
 
 // FrameOutput owns a Go byte slice at the process/worker boundary. WrittenBytes
@@ -70,6 +77,8 @@ func ValidateFrameOutput(output FrameOutput, expected ViewState) error {
 	switch output.Format {
 	case FrameFormatGrayF32TopLeft, FrameFormatRGBA8NRGBATopLeft:
 		bytesPerPixel = 4
+	case FrameFormatScalarValidityF32TopLeft:
+		bytesPerPixel = 8
 	default:
 		return fail("unsupported format %d", output.Format)
 	}
@@ -111,8 +120,15 @@ func ValidateFrameOutput(output FrameOutput, expected ViewState) error {
 			output.PresentationGeneration != expected.PresentationGeneration) {
 		return fail("output does not match requested dimensions/generations")
 	}
-	if expected.Kind == ViewKindMPR && output.Format != FrameFormatGrayF32TopLeft {
+	if expected.Kind == ViewKindMPR && expected.MPR.ScalarValidity && output.Format != FrameFormatScalarValidityF32TopLeft {
+		return fail("quantitative MPR output has no scalar validity")
+	}
+	componentRGBA := expected.Components.Mode != ComponentPresentationScalar
+	if expected.Kind == ViewKindMPR && !expected.MPR.ScalarValidity && !mprPresentationRGBA(expected.MPR) && !componentRGBA && output.Format != FrameFormatGrayF32TopLeft {
 		return fail("MPR output format %d is not GRAY_F32", output.Format)
+	}
+	if expected.Kind == ViewKindMPR && (mprPresentationRGBA(expected.MPR) || componentRGBA) && output.Format != FrameFormatRGBA8NRGBATopLeft {
+		return fail("presented MPR output format %d is not RGBA8_NRGBA", output.Format)
 	}
 	if expected.Kind == ViewKindVR && output.Format != FrameFormatRGBA8NRGBATopLeft {
 		return fail("VR output format %d is not RGBA8_NRGBA", output.Format)

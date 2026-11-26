@@ -5,9 +5,12 @@ import (
 	"strings"
 )
 
-// VRCamera is a turntable orbit camera for the 3D volume renderer
-// (3d-toolbar-plan.md §5.3). It orbits Target at Distance, with Yaw/Pitch/Roll in
-// radians and a vertical field of view. The renderer generates rays directly from
+// VRCamera is an arcball orbit camera for the 3D volume renderer
+// (3d-toolbar-plan.md §5.3). It orbits Target at Distance; its orientation is
+// stored as Yaw/Pitch/Roll in radians (Pitch in [-π/2, π/2], the form VPS
+// files serialize) with a vertical field of view. Rotate turns the view about
+// the screen axes without a pitch limit, so drags pass through the cranial and
+// caudal views continuously (#1227). The renderer generates rays directly from
 // the camera basis (Forward/Right/Up), which is equivalent to (and simpler than)
 // unprojecting through inverse(proj·view).
 type VRCamera struct {
@@ -24,10 +27,7 @@ type VRCamera struct {
 // worldUp is the turntable axis (patient superior/inferior in box space).
 var worldUp = Vec3{Z: 1}
 
-const (
-	vrPitchLimit = 1.35
-	vrDefaultFov = 45 * math.Pi / 180
-)
+const vrDefaultFov = 45 * math.Pi / 180
 
 // VRCameraProjection selects the camera ray geometry.
 type VRCameraProjection int
@@ -106,19 +106,61 @@ func (c VRCamera) Position() Vec3 {
 }
 
 // basis returns the orthonormal (right, up, forward) frame including roll.
+// Before roll, right is the horizontal (cos Yaw, -sin Yaw, 0): the turntable
+// right vector (forward × worldUp) away from the poles, and still defined at
+// them, so the frame is continuous for every pitch.
 func (c VRCamera) basis() (right, up, forward Vec3) {
 	forward = c.Forward()
-	right = forward.Cross(worldUp)
-	if right.Length() < 1e-6 {
-		right = Vec3{X: 1}
-	}
-	right = right.Normalize()
+	right = Vec3{X: math.Cos(c.Yaw), Y: -math.Sin(c.Yaw)}
 	up = right.Cross(forward).Normalize()
 	if c.Roll != 0 {
 		right = right.Rotate(forward, c.Roll)
 		up = up.Rotate(forward, c.Roll)
 	}
 	return right, up, forward
+}
+
+// Basis returns the camera's orthonormal right, up and forward vectors,
+// including roll.
+func (c VRCamera) Basis() (right, up, forward Vec3) { return c.basis() }
+
+// LookAlong orients the camera along forward and uses up, projected onto the
+// image plane, as the screen-up direction. Target, distance and projection are
+// unchanged.
+func (c *VRCamera) LookAlong(forward, up Vec3) {
+	forward = forward.Normalize()
+	c.Pitch = math.Asin(clampFloat(forward.Z, -1, 1))
+	switch {
+	case math.Hypot(forward.X, forward.Y) > 1e-9:
+		c.Yaw = math.Atan2(forward.X, forward.Y)
+	case forward.Z < 0:
+		c.Yaw = math.Atan2(up.X, up.Y)
+	default:
+		c.Yaw = math.Atan2(-up.X, -up.Y)
+	}
+	c.Roll = 0
+	right, screenUp, _ := c.basis()
+	c.Roll = math.Atan2(right.Dot(up), screenUp.Dot(up))
+}
+
+// SetBasis orients the camera to the frame (right, up, forward), which must
+// be orthonormal and right-handed as basis returns it; Yaw, Pitch and Roll
+// are derived from it with Pitch in [-π/2, π/2].
+func (c *VRCamera) SetBasis(right, up, forward Vec3) {
+	forward = forward.Normalize()
+	right = right.Sub(forward.Scale(right.Dot(forward))).Normalize()
+	if forward.Length() == 0 || right.Length() == 0 {
+		return
+	}
+	c.Pitch = math.Asin(clampFloat(forward.Z, -1, 1))
+	if math.Hypot(forward.X, forward.Y) > 1e-9 {
+		c.Yaw = math.Atan2(forward.X, forward.Y)
+	} else {
+		// At a pole every yaw looks the same way; keep the roll-free one.
+		c.Yaw = math.Atan2(-right.Y, right.X)
+	}
+	horizontal := Vec3{X: math.Cos(c.Yaw), Y: -math.Sin(c.Yaw)}
+	c.Roll = math.Atan2(horizontal.Cross(right).Dot(forward), horizontal.Dot(right))
 }
 
 func (c VRCamera) Right() Vec3 { r, _, _ := c.basis(); return r }
@@ -153,12 +195,20 @@ func (c VRCamera) Ray(px, py, w, h int) (origin, dir Vec3) {
 	}
 }
 
-// Rotate orbits the camera (drag): yaw/pitch decrease with dx/dy; pitch clamped.
+// Rotate orbits the camera (drag) as an arcball: dx turns the view about the
+// screen up axis and dy about the screen right axis, 0.008 rad per unit. With
+// no roll and a level view this is the turntable motion (yaw/pitch decrease
+// with dx/dy); there is no pitch limit.
 func (c *VRCamera) Rotate(dx, dy float64) {
 	const k = 0.008
-	c.Yaw -= dx * k
-	c.Pitch -= dy * k
-	c.Pitch = clampFloat(c.Pitch, -vrPitchLimit, vrPitchLimit)
+	right, up, forward := c.basis()
+	if dx != 0 {
+		forward, right = forward.Rotate(up, dx*k), right.Rotate(up, dx*k)
+	}
+	if dy != 0 {
+		forward, up = forward.Rotate(right, -dy*k), up.Rotate(right, -dy*k)
+	}
+	c.SetBasis(right, up, forward)
 }
 
 // RollBy rotates the image about the view axis.

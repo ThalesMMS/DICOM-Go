@@ -1,0 +1,9 @@
+goos: windows
+goarch: amd64
+pkg: github.com/ThalesMMS/dicom-go/imagefilter
+cpu: Intel(R) Core(TM) i7-14700K
+BenchmarkPhaseSymmetry2DResearch-4   	       3	  22749900 ns/op	   1.62 MB/s	   2626584 logical-working-B	 2643800 B/op	      19 allocs/op
+BenchmarkPhaseSymmetry2DResearch-4   	       3	  22415300 ns/op	   1.64 MB/s	   2626584 logical-working-B	 2643805 B/op	      19 allocs/op
+BenchmarkPhaseSymmetry2DResearch-4   	       3	  22338233 ns/op	   1.65 MB/s	   2626584 logical-working-B	 2643800 B/op	      19 allocs/op
+PASS
+ok  	github.com/ThalesMMS/dicom-go/imagefilter	0.596s

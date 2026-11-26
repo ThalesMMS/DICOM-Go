@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ThalesMMS/dicom-go/object"
 )
 
 // ErrNonCorrectableGeometry marks a stack whose available patient geometry is
@@ -93,6 +95,8 @@ type Volume struct {
 	ColSpacing   float64 // mm per column step
 	RowSpacing   float64 // mm per row step
 	SliceSpacing float64 // mean mm per slice step (through-plane)
+	// sliceSource tells where SliceSpacing came from (SliceSpacingSource).
+	sliceSource object.SliceSpacingSource
 
 	// positions holds each slice's real along-normal position (mm) relative to
 	// Origin (positions[0] == 0), ascending. regular reports whether the
@@ -108,7 +112,14 @@ type Volume struct {
 
 	regularizedOnce sync.Once
 	regularized     *Volume
-	regularizedErr  error
+	// regularizedReady is set once regularized holds the regular grid.
+	regularizedReady atomic.Bool
+
+	// uniformStep is the slice step when positions are uniform to rounding
+	// (0 otherwise), for voxelLine's linear z.
+	uniformOnce    sync.Once
+	uniformStep    float64
+	regularizedErr error
 
 	slices []*Frame // renderable slices sorted ascending along +Normal
 
@@ -133,6 +144,9 @@ type Volume struct {
 	vrPreparedMu     sync.Mutex
 	vrPrepared       map[vrPreparedCacheKey]*vrPreparedCacheEntry
 	vrPreparedClosed bool
+	// interactive is the 2× BinShrink level for interaction (#1066).
+	interactiveMu sync.Mutex
+	interactive   *Volume
 }
 
 // BuildVolume constructs the patient-space volume from a series. It requires a
@@ -215,6 +229,9 @@ func buildVolumeWithStoreAndTolerances(series *Stack, store *VolumeStore, tolera
 	coll := make([]geomSlice, len(collected))
 	for i := range collected {
 		entry := collected[i]
+		if frameVolumeComponents(entry.frame) != frameVolumeComponents(first) {
+			return nil, fmt.Errorf("%w: mixed scalar/color slices", ErrInvalidVolumeSnapshot)
+		}
 		coll[i] = geomSlice{
 			sl:       entry.frame,
 			geometry: entry.geometry,
@@ -250,15 +267,13 @@ func buildVolumeWithStoreAndTolerances(series *Stack, store *VolumeStore, tolera
 		}
 	}
 
-	sliceSp := 0.0
+	sliceSp, sliceSpSource := 0.0, object.SliceSpacingFromPositions
 	if len(coll) > 1 {
 		sliceSp = (coll[len(coll)-1].key - coll[0].key) / float64(len(coll)-1)
 	}
 	if sliceSp <= 0 || math.IsNaN(sliceSp) || math.IsInf(sliceSp, 0) {
-		sliceSp = seriesSliceThickness(series)
-	}
-	if sliceSp <= 0 || math.IsNaN(sliceSp) || math.IsInf(sliceSp, 0) {
-		sliceSp = 1
+		fallback := seriesFallbackSliceSpacing(series)
+		sliceSp, sliceSpSource = fallback.Value, fallback.Source
 	}
 
 	return &Volume{
@@ -272,6 +287,7 @@ func buildVolumeWithStoreAndTolerances(series *Stack, store *VolumeStore, tolera
 		ColSpacing:   colSp,
 		RowSpacing:   rowSp,
 		SliceSpacing: sliceSp,
+		sliceSource:  sliceSpSource,
 		positions:    positions,
 		sliceOrigins: sliceOrigins,
 		regular:      geometry.Regular,
@@ -297,6 +313,8 @@ func sliceGeometryFailureError(failure sliceGeometryFailure, failedIndex int) er
 		return &GeometryGuardrailError{Reason: GeometryIssueInvalidGeometry, FrameIndex: failedIndex + 1}
 	case sliceGeometryMixedPositionSource:
 		return &GeometryGuardrailError{Reason: GeometryIssueMixedPositionSource}
+	case sliceGeometryNonOrthonormal:
+		return &GeometryGuardrailError{Reason: GeometryIssueNonOrthonormalOrientation, FrameIndex: failedIndex + 1}
 	default:
 		return &GeometryGuardrailError{Reason: GeometryIssueInvalidGeometry}
 	}
@@ -325,6 +343,17 @@ func (s *Stack) Volume() (*Volume, error) {
 	}
 	s.mprVolume = vol
 	return vol, nil
+}
+
+// SliceSpacingSource reports where SliceSpacing came from: the slice
+// positions, or, when they cannot measure it (a single slice), Spacing
+// Between Slices, then Slice Thickness, then the 1 mm default
+// (object.ResolveSliceSpacing).
+func (v *Volume) SliceSpacingSource() object.SliceSpacingSource {
+	if v == nil {
+		return object.SliceSpacingUnknown
+	}
+	return v.sliceSource
 }
 
 // GantryTiltCorrection returns the immutable correction metadata for this
@@ -387,6 +416,77 @@ func (v *Volume) PatientToVoxel(p Vec3) Vec3 {
 		Y: d.Dot(v.AxisY) / v.RowSpacing,
 		Z: z,
 	}
+}
+
+// voxelLine maps the patient-space points base + s·dir to voxel coordinates
+// by stepping along the line, as VTK's reslice advances along output rows
+// (#1007). Without gantry tilt the in-plane coordinates and the along-normal
+// position are affine: base is transformed once and each point adds s times
+// the step. z then follows the slice positions exactly (positionToIndex),
+// or divides by the step when the positions are uniform to rounding. A tilted
+// volume transforms every point.
+type voxelLine struct {
+	vol       *Volume
+	base, dir Vec3
+	affine    bool
+	// origin and step of (x, y, along-normal position).
+	x0, y0, pos0 float64
+	dx, dy, dpos float64
+}
+
+func (v *Volume) voxelLine(base, dir Vec3) voxelLine {
+	line := voxelLine{vol: v, base: base, dir: dir}
+	if !v.tilt.Applied {
+		d := base.Sub(v.Origin)
+		line.affine = true
+		line.x0, line.y0, line.pos0 = d.Dot(v.AxisX)/v.ColSpacing, d.Dot(v.AxisY)/v.RowSpacing, d.Dot(v.Normal)
+		line.dx, line.dy, line.dpos = dir.Dot(v.AxisX)/v.ColSpacing, dir.Dot(v.AxisY)/v.RowSpacing, dir.Dot(v.Normal)
+	}
+	return line
+}
+
+// at returns the voxel coordinates of base + s·dir.
+func (l voxelLine) at(s float64) Vec3 {
+	if !l.affine {
+		return l.vol.PatientToVoxel(l.base.Add(l.dir.Scale(s)))
+	}
+	return Vec3{X: l.x0 + s*l.dx, Y: l.y0 + s*l.dy, Z: l.vol.positionToSlice(l.pos0 + s*l.dpos)}
+}
+
+// positionToSlice is the fractional slice of an along-normal position, as
+// PatientToVoxel computes it.
+func (v *Volume) positionToSlice(pos float64) float64 {
+	if len(v.positions) == 0 {
+		return pos / v.effectiveSliceSpacing()
+	}
+	if step := v.uniformSliceStep(); step > 0 {
+		return pos / step
+	}
+	return v.positionToIndex(pos)
+}
+
+// uniformSliceStep is the slice step when every slice position is k·step to
+// within 1e-9 of the stack length, where positionToIndex is linear up to
+// rounding; 0 otherwise.
+func (v *Volume) uniformSliceStep() float64 {
+	v.uniformOnce.Do(func() {
+		n := len(v.positions)
+		if n < 2 || v.positions[0] != 0 {
+			return
+		}
+		step := v.positions[n-1] / float64(n-1)
+		if !(step > 0) {
+			return
+		}
+		tolerance := 1e-9 * math.Max(1, v.positions[n-1])
+		for k, pos := range v.positions {
+			if math.Abs(pos-float64(k)*step) > tolerance {
+				return
+			}
+		}
+		v.uniformStep = step
+	})
+	return v.uniformStep
 }
 
 func (v *Volume) effectiveSliceSpacing() float64 {
@@ -488,7 +588,7 @@ func (v *Volume) positionToIndex(pos float64) float64 {
 // ValueAt returns the rescaled value and photometric interpretation at integer
 // voxel coordinates, sampling the sorted slice for that depth.
 func (v *Volume) ValueAt(col, row, slice int) (float64, string, bool) {
-	if v == nil || slice < 0 || slice >= len(v.slices) || col < 0 || row < 0 || col >= v.Cols || row >= v.Rows {
+	if v == nil || v.Components() != 1 || slice < 0 || slice >= len(v.slices) || col < 0 || row < 0 || col >= v.Cols || row >= v.Rows {
 		return 0, "", false
 	}
 	if !v.geometry.RequiresResampling {
@@ -615,20 +715,15 @@ func decodeVolumeFloat32Context(ctx context.Context, v *Volume) ([]float32, erro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	count, ok := checkedVoxelCount(v.Cols, v.Rows, v.Depth)
-	if !ok {
-		return nil, fmt.Errorf("%w: volume dimensions overflow", ErrInvalidVolumeSnapshot)
+	count, err := v.componentSampleCount()
+	if err != nil {
+		return nil, err
 	}
 	values := make([]float32, count)
-	plane := v.Cols * v.Rows
-	for index, frame := range v.slices {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		destination := values[index*plane : (index+1)*plane]
-		if err := decodeGrayscaleSliceInto(destination, frame); err != nil {
-			return nil, fmt.Errorf("render: decode volume frame %d: %w", index+1, err)
-		}
+	if err := decodeVolumeSlices(ctx, len(v.slices), count, func(index int) error {
+		return decodeFloat32SliceInto(ctx, v, values, index)
+	}); err != nil {
+		return nil, err
 	}
 	return values, nil
 }
@@ -661,6 +756,12 @@ func (v *Volume) PrepareSnapshotContext(ctx context.Context) (VolumePreparationS
 }
 
 func (v *Volume) prepareDirectSnapshot(ctx context.Context) (VolumePreparationStats, error) {
+	return v.prepareDirectSnapshotObserved(ctx, nil, VolumeDecodeOptions{})
+}
+
+// prepareDirectSnapshotObserved builds the snapshot, reporting progressive
+// decode events to observe when this call performs the build (#1230).
+func (v *Volume) prepareDirectSnapshotObserved(ctx context.Context, observe func(VolumeDecodeProgress), options VolumeDecodeOptions) (VolumePreparationStats, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return VolumePreparationStats{}, err
@@ -700,7 +801,7 @@ func (v *Volume) prepareDirectSnapshot(ctx context.Context) (VolumePreparationSt
 		wait := v.snapshotWait
 		v.snapshotMu.Unlock()
 
-		stats, generation, err := v.buildDirectSnapshot(ctx)
+		stats, generation, err := v.buildDirectSnapshot(ctx, observe, options)
 		v.snapshotMu.Lock()
 		if v.closed.Load() {
 			err = ErrVolumeStoreClosed
@@ -719,10 +820,19 @@ func (v *Volume) prepareDirectSnapshot(ctx context.Context) (VolumePreparationSt
 	}
 }
 
-func (v *Volume) buildDirectSnapshot(ctx context.Context) (VolumePreparationStats, uint64, error) {
+func (v *Volume) buildDirectSnapshot(ctx context.Context, observe func(VolumeDecodeProgress), options VolumeDecodeOptions) (VolumePreparationStats, uint64, error) {
+	if plan := planPacked16(v.slices); plan.ok {
+		return v.buildPacked16Snapshot(ctx, plan, observe, options)
+	}
 	started := time.Now()
 	normalizationStarted := time.Now()
-	values, err := decodeVolumeFloat32Context(ctx, v)
+	var values []float32
+	var err error
+	if observe != nil {
+		values, err = v.decodeFloat32Progressive(ctx, observe, options)
+	} else {
+		values, err = decodeVolumeFloat32Context(ctx, v)
+	}
 	stats := VolumePreparationStats{
 		NormalizationDuration: time.Since(normalizationStarted),
 		Frames:                v.Depth,
@@ -756,6 +866,48 @@ func (v *Volume) buildDirectSnapshot(ctx context.Context) (VolumePreparationStat
 	return stats, generation, err
 }
 
+// buildPacked16Snapshot installs the stack's 16-bit stored samples with their
+// shared rescale (#1065), half the memory of the float32 generation.
+func (v *Volume) buildPacked16Snapshot(ctx context.Context, plan packed16Plan, observe func(VolumeDecodeProgress), options VolumeDecodeOptions) (VolumePreparationStats, uint64, error) {
+	started := time.Now()
+	var payload *packed16VolumePayload
+	var err error
+	if observe != nil {
+		payload, err = v.decodePacked16Progressive(ctx, plan, observe, options)
+	} else {
+		payload, err = decodeVolumePacked16Context(ctx, v, plan)
+	}
+	stats := VolumePreparationStats{NormalizationDuration: time.Since(started), Frames: v.Depth}
+	if err != nil {
+		stats.TotalDuration = time.Since(started)
+		return stats, 0, err
+	}
+	stats.VoxelBytes = payload.byteLen()
+	if err := ctx.Err(); err != nil {
+		stats.TotalDuration = time.Since(started)
+		return stats, 0, err
+	}
+	canonicalStarted := time.Now()
+	descriptor, err := v.snapshotDescriptor(VolumeDerivationNormalized, 0, false)
+	if err == nil {
+		descriptor.RescaleSlope, descriptor.RescaleIntercept = plan.slope, plan.intercept
+		v.snapshotMu.Lock()
+		if v.store == nil {
+			v.store = NewVolumeStore()
+		}
+		store := v.store
+		v.snapshotMu.Unlock()
+		var generation uint64
+		generation, err = store.replacePacked16Owned(descriptor, payload)
+		stats.CanonicalizationDuration = time.Since(canonicalStarted)
+		stats.TotalDuration = time.Since(started)
+		return stats, generation, err
+	}
+	stats.CanonicalizationDuration = time.Since(canonicalStarted)
+	stats.TotalDuration = time.Since(started)
+	return stats, 0, err
+}
+
 func (v *Volume) snapshotDescriptor(derivation VolumeDerivation, parent uint64, sourceGeometry bool) (VolumeDescriptor, error) {
 	if v == nil || v.Cols <= 0 || v.Rows <= 0 || v.Depth <= 0 ||
 		uint64(v.Cols) > math.MaxUint32 || uint64(v.Rows) > math.MaxUint32 || uint64(v.Depth) > math.MaxUint32 {
@@ -778,15 +930,20 @@ func (v *Volume) snapshotDescriptor(derivation VolumeDerivation, parent uint64, 
 	if !ok {
 		return VolumeDescriptor{}, fmt.Errorf("%w: invalid patient affine", ErrInvalidVolumeSnapshot)
 	}
-	rowStride := uint64(v.Cols) * 4
+	components := v.Components()
+	version := VolumeSnapshotContractVersion
+	if components > 1 {
+		version = VolumeSnapshotContractVersionV2
+	}
+	rowStride := uint64(v.Cols) * uint64(components) * 4
 	sliceStride := uint64(v.Rows) * rowStride
 	return VolumeDescriptor{
-		ContractVersion:   VolumeSnapshotContractVersion,
+		ContractVersion:   version,
 		HeaderSize:        VolumeSnapshotHeaderSizeV1,
 		ParentGeneration:  parent,
 		Derivation:        derivation,
 		Dimensions:        [3]uint32{uint32(v.Cols), uint32(v.Rows), uint32(v.Depth)},
-		Components:        1,
+		Components:        components,
 		ScalarFormat:      VolumeScalarF32ModalityLE,
 		SampleDomain:      VolumeSampleDomainModality,
 		RowStrideBytes:    rowStride,
@@ -878,6 +1035,9 @@ func (v *Volume) Close() error {
 	v.closeOnce.Do(func() {
 		v.closed.Store(true)
 		if closeErr := v.closeVRPreparedVolumes(); err == nil {
+			err = closeErr
+		}
+		if closeErr := v.closeInteractiveVolume(); err == nil {
 			err = closeErr
 		}
 		v.regularizedOnce.Do(func() {

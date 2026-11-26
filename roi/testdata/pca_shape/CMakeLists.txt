@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(PCAShapeOracle LANGUAGES C CXX)
+find_package(ITK 5.4.6 EXACT REQUIRED COMPONENTS ITKCommon ITKImageFunction ITKSignedDistanceFunction ITKTransform)
+include(${ITK_USE_FILE})
+add_executable(pca-shape-oracle oracle.cpp)
+target_compile_features(pca-shape-oracle PRIVATE cxx_std_17)
+target_link_libraries(pca-shape-oracle PRIVATE ${ITK_LIBRARIES})

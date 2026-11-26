@@ -40,63 +40,25 @@ func (m MeasureSpacing) spacingXY() (float64, float64) {
 // LengthMMWith returns the distance between two pane pixels in mm using the
 // pane's effective spacing.
 func LengthMMWith(a, b image.Point, sp MeasureSpacing) (float64, bool) {
-	if !sp.valid() {
-		return 0, false
-	}
-	x, y := sp.spacingXY()
-	dx := float64(a.X-b.X) * x
-	dy := float64(a.Y-b.Y) * y
-	return math.Hypot(dx, dy), true
+	return SubpixelLengthMM(point2D(a), point2D(b), sp)
 }
 
 // RectangleAreaMM2With returns the area of the rectangle spanned by a,b in mm².
 func RectangleAreaMM2With(a, b image.Point, sp MeasureSpacing) (float64, bool) {
-	if !sp.valid() {
-		return 0, false
-	}
-	x, y := sp.spacingXY()
-	w := math.Abs(float64(a.X-b.X)) * x
-	h := math.Abs(float64(a.Y-b.Y)) * y
-	return w * h, true
+	return SubpixelRectangleAreaMM2(point2D(a), point2D(b), sp)
 }
 
 // EllipseAreaMM2With returns the area of the ellipse inscribed in bbox in mm².
 func EllipseAreaMM2With(bbox image.Rectangle, sp MeasureSpacing) (float64, bool) {
-	if !sp.valid() {
-		return 0, false
-	}
-	x, y := sp.spacingXY()
-	rw := math.Abs(float64(bbox.Dx())) / 2 * x
-	rh := math.Abs(float64(bbox.Dy())) / 2 * y
-	return math.Pi * rw * rh, true
+	return SubpixelEllipseAreaMM2(point2D(bbox.Min), point2D(bbox.Max), sp)
 }
 
 // PolygonLengthMMWith returns the polyline length through pts in mm.
 func PolygonLengthMMWith(pts []image.Point, sp MeasureSpacing) (float64, bool) {
-	if !sp.valid() || len(pts) < 2 {
-		return 0, false
-	}
-	x, y := sp.spacingXY()
-	total := 0.0
-	for i := 1; i < len(pts); i++ {
-		dx := float64(pts[i].X-pts[i-1].X) * x
-		dy := float64(pts[i].Y-pts[i-1].Y) * y
-		total += math.Hypot(dx, dy)
-	}
-	return total, true
+	return SubpixelPolygonLengthMM(imagePointsToPoint2D(pts), sp)
 }
 
 // PolygonAreaMM2With returns the area of the closed polygon (shoelace) in mm².
 func PolygonAreaMM2With(pts []image.Point, sp MeasureSpacing) (float64, bool) {
-	if !sp.valid() || len(pts) < 3 {
-		return 0, false
-	}
-	x, y := sp.spacingXY()
-	areaPx := 0.0
-	n := len(pts)
-	for i := 0; i < n; i++ {
-		j := (i + 1) % n
-		areaPx += float64(pts[i].X*pts[j].Y - pts[j].X*pts[i].Y)
-	}
-	return math.Abs(areaPx) / 2 * x * y, true
+	return SubpixelPolygonAreaMM2(imagePointsToPoint2D(pts), sp)
 }

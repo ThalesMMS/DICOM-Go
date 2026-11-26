@@ -3,6 +3,8 @@ package roi
 import (
 	"image"
 	"math"
+
+	"github.com/ThalesMMS/dicom-go/render"
 )
 
 // Point2D is a sub-pixel point used by derived ROI geometry. Persisted ROI
@@ -49,6 +51,12 @@ func MeanAxisLines(points [4]image.Point) (Line2D, Line2D, bool) {
 // enough to include the triangle's circumcenter and a visible margin beyond
 // it. A triangle with coincident or collinear vertices has no unique result.
 func TrianglePerpendicularBisectors(points [3]image.Point) ([3]Line2D, bool) {
+	return SubpixelTrianglePerpendicularBisectors([3]Point2D{point2D(points[0]), point2D(points[1]), point2D(points[2])})
+}
+
+// SubpixelTrianglePerpendicularBisectors is TrianglePerpendicularBisectors for
+// sub-pixel vertices.
+func SubpixelTrianglePerpendicularBisectors(points [3]Point2D) ([3]Line2D, bool) {
 	var result [3]Line2D
 	circumcenter, ok := triangleCircumcenter(points)
 	if !ok {
@@ -58,8 +66,8 @@ func TrianglePerpendicularBisectors(points [3]image.Point) ([3]Line2D, bool) {
 	longestSide := 0.0
 	for i := range points {
 		j := (i + 1) % len(points)
-		length := math.Hypot(float64(points[j].X-points[i].X), float64(points[j].Y-points[i].Y))
-		if length == 0 {
+		length := math.Hypot(points[j].X-points[i].X, points[j].Y-points[i].Y)
+		if length == 0 || !finiteNumber(length) {
 			return result, false
 		}
 		longestSide = math.Max(longestSide, length)
@@ -67,8 +75,7 @@ func TrianglePerpendicularBisectors(points [3]image.Point) ([3]Line2D, bool) {
 
 	for i := range points {
 		j := (i + 1) % len(points)
-		start := point2D(points[i])
-		end := point2D(points[j])
+		start, end := points[i], points[j]
 		dx := end.X - start.X
 		dy := end.Y - start.Y
 		length := math.Hypot(dx, dy)
@@ -89,53 +96,71 @@ func TrianglePerpendicularBisectors(points [3]image.Point) ([3]Line2D, bool) {
 // projection to the segment because Perpendicular Lines keeps B/C orthogonal
 // even when their feet move beyond the displayed A endpoints.
 func ProjectPointToLine(point, start, end image.Point) (Point2D, bool) {
-	dx := float64(end.X - start.X)
-	dy := float64(end.Y - start.Y)
+	return SubpixelProjectPointToLine(point2D(point), point2D(start), point2D(end))
+}
+
+// SubpixelProjectPointToLine is ProjectPointToLine for sub-pixel points.
+func SubpixelProjectPointToLine(point, start, end Point2D) (Point2D, bool) {
+	dx := end.X - start.X
+	dy := end.Y - start.Y
 	denominator := dx*dx + dy*dy
-	if denominator == 0 {
+	if denominator == 0 || !finiteNumber(denominator) {
 		return Point2D{}, false
 	}
-	u := (float64(point.X-start.X)*dx + float64(point.Y-start.Y)*dy) / denominator
-	return Point2D{
-		X: float64(start.X) + u*dx,
-		Y: float64(start.Y) + u*dy,
-	}, true
+	u := ((point.X-start.X)*dx + (point.Y-start.Y)*dy) / denominator
+	return Point2D{X: start.X + u*dx, Y: start.Y + u*dy}, true
 }
 
 // PerpendicularLinePoints builds the six persisted points of the OsiriX-style
 // Perpendicular Lines ROI. Points 1 and 3 are the editable B/C endpoints,
-// points 4 and 5 define main line A, and points 0 and 2 are derived feet.
+// points 4 and 5 define main line A, and points 0 and 2 are derived feet,
+// rounded to whole pixels here; SubpixelPerpendicularLinePoints keeps them.
 func PerpendicularLinePoints(bEnd, cEnd, mainStart, mainEnd image.Point) ([6]image.Point, bool) {
 	var points [6]image.Point
-	bFoot, ok := ProjectPointToLine(bEnd, mainStart, mainEnd)
+	sub, ok := SubpixelPerpendicularLinePoints(point2D(bEnd), point2D(cEnd), point2D(mainStart), point2D(mainEnd))
 	if !ok {
 		return points, false
 	}
-	cFoot, ok := ProjectPointToLine(cEnd, mainStart, mainEnd)
-	if !ok {
-		return points, false
-	}
-	points[0] = image.Pt(int(math.Round(bFoot.X)), int(math.Round(bFoot.Y)))
+	points[0] = image.Pt(render.NearestIndex(sub[0].X), render.NearestIndex(sub[0].Y))
 	points[1] = bEnd
-	points[2] = image.Pt(int(math.Round(cFoot.X)), int(math.Round(cFoot.Y)))
+	points[2] = image.Pt(render.NearestIndex(sub[2].X), render.NearestIndex(sub[2].Y))
 	points[3] = cEnd
 	points[4] = mainStart
 	points[5] = mainEnd
 	return points, true
 }
 
+// SubpixelPerpendicularLinePoints is PerpendicularLinePoints with sub-pixel
+// points and feet.
+func SubpixelPerpendicularLinePoints(bEnd, cEnd, mainStart, mainEnd Point2D) ([6]Point2D, bool) {
+	bFoot, ok := SubpixelProjectPointToLine(bEnd, mainStart, mainEnd)
+	if !ok {
+		return [6]Point2D{}, false
+	}
+	cFoot, ok := SubpixelProjectPointToLine(cEnd, mainStart, mainEnd)
+	if !ok {
+		return [6]Point2D{}, false
+	}
+	return [6]Point2D{bFoot, bEnd, cFoot, cEnd, mainStart, mainEnd}, true
+}
+
 // DynamicAngleDeg returns the acute angle between two directed lines and the
 // opposite angle displayed by the Dynamic Angle ROI. Pixel spacing is applied
 // before measuring, so anisotropic source pixels do not skew the result.
 func DynamicAngleDeg(line1Start, line1End, line2Start, line2End image.Point, spacing MeasureSpacing) (float64, float64, bool) {
+	return SubpixelDynamicAngleDeg(point2D(line1Start), point2D(line1End), point2D(line2Start), point2D(line2End), spacing)
+}
+
+// SubpixelDynamicAngleDeg is DynamicAngleDeg for sub-pixel points.
+func SubpixelDynamicAngleDeg(line1Start, line1End, line2Start, line2End Point2D, spacing MeasureSpacing) (float64, float64, bool) {
 	if !spacing.valid() {
 		return 0, 0, false
 	}
 	x, y := spacing.spacingXY()
-	v1x := float64(line1End.X-line1Start.X) * x
-	v1y := float64(line1End.Y-line1Start.Y) * y
-	v2x := float64(line2End.X-line2Start.X) * x
-	v2y := float64(line2End.Y-line2Start.Y) * y
+	v1x := (line1End.X - line1Start.X) * x
+	v1y := (line1End.Y - line1Start.Y) * y
+	v2x := (line2End.X - line2Start.X) * x
+	v2y := (line2End.Y - line2Start.Y) * y
 	if math.Hypot(v1x, v1y) == 0 || math.Hypot(v2x, v2y) == 0 {
 		return 0, 0, false
 	}
@@ -242,10 +267,10 @@ func PolygonIntersectsRectangle(points []Point2D, rectangle Rectangle2D) bool {
 	return pointInPolygon2D(rectangle.Min, points)
 }
 
-func triangleCircumcenter(points [3]image.Point) (Point2D, bool) {
-	ax, ay := float64(points[0].X), float64(points[0].Y)
-	bx, by := float64(points[1].X), float64(points[1].Y)
-	cx, cy := float64(points[2].X), float64(points[2].Y)
+func triangleCircumcenter(points [3]Point2D) (Point2D, bool) {
+	ax, ay := points[0].X, points[0].Y
+	bx, by := points[1].X, points[1].Y
+	cx, cy := points[2].X, points[2].Y
 	d := 2 * (ax*(by-cy) + bx*(cy-ay) + cx*(ay-by))
 	if d == 0 {
 		return Point2D{}, false

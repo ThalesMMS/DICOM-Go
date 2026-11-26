@@ -11,9 +11,12 @@ import (
 // central moments needed to derive skewness and kurtosis, so callers do not have
 // to re-walk the voxels.
 type VolumeStats struct {
-	VoxelCount int
-	AreaMM2    float64 // total in-plane area of the labeled voxels
-	VolumeMM3  float64 // total volume using per-slice patient-space thickness
+	// VoxelCount is the number of labeled voxels with a finite value; voxels
+	// whose value is NaN or ±Inf are skipped and counted in NonFiniteCount.
+	VoxelCount     int
+	NonFiniteCount int
+	AreaMM2        float64 // total in-plane area of the voxels counted in VoxelCount
+	VolumeMM3      float64 // total volume using per-slice patient-space thickness
 
 	Min  float64
 	Max  float64
@@ -42,6 +45,7 @@ func (s *Segmentation3D) Statistics(valueAt func(x, y, slice int) (float64, bool
 	slices := s.Slices()
 	min, max := math.Inf(1), math.Inf(-1)
 	var moments centralMoments
+	nonFinite := 0
 	for _, z := range slices {
 		mask := s.masks[z]
 		colSp, rowSp := sliceInPlaneSpacing(s.Geometry, z)
@@ -50,6 +54,10 @@ func (s *Segmentation3D) Statistics(valueAt func(x, y, slice int) (float64, bool
 		mask.ForEachPixel(func(x, y int) {
 			v, ok := valueAt(x, y, z)
 			if !ok {
+				return
+			}
+			if !finite(v) {
+				nonFinite++
 				return
 			}
 			moments.Add(v)
@@ -64,8 +72,9 @@ func (s *Segmentation3D) Statistics(valueAt func(x, y, slice int) (float64, bool
 		})
 	}
 	if moments.Count == 0 {
-		return VolumeStats{}
+		return VolumeStats{NonFiniteCount: nonFinite}
 	}
+	stats.NonFiniteCount = nonFinite
 
 	stats.VoxelCount = moments.Count
 	n := float64(moments.Count)
@@ -88,7 +97,7 @@ func (s *Segmentation3D) Statistics(valueAt func(x, y, slice int) (float64, bool
 		for _, z := range slices {
 			s.masks[z].ForEachPixel(func(x, y int) {
 				v, ok := valueAt(x, y, z)
-				if !ok {
+				if !ok || !finite(v) {
 					return
 				}
 				b := int((v - min) / stats.HistogramBinWidth)

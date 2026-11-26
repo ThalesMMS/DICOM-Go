@@ -168,6 +168,13 @@ func TestNormalizedVRLUTCacheIgnoresWindowOnlyChanges(t *testing.T) {
 	if &first.entries[0] != &cloned.entries[0] {
 		t.Fatal("immutable presentation clone discarded the reusable LUT cache")
 	}
+	if !first.SameTable(second) || !first.SameTable(cloned) || first.SameTable(scaled) {
+		t.Fatal("SameTable does not follow the cached table identity")
+	}
+	rebaked := NewMusclesBonesVRTransferFunction(VROpacityMappingLinear).BakeWindowLUT(WindowLevel{Center: 0, Width: 100}, 256)
+	if first.SameTable(rebaked) || first.SameTable(tf.BakeWindowLUT(WindowLevel{}, 128)) || !(VRLUT{}).SameTable(VRLUT{}) {
+		t.Fatal("SameTable reported identity for a separately baked or resized table")
+	}
 }
 
 func TestVRTransferWithControlPointsPreservesClinicalIdentity(t *testing.T) {
@@ -275,7 +282,7 @@ func TestClinicalVRPreviewAndSettledUseSameScalarSelection(t *testing.T) {
 		Mode: VRModeDVR,
 	}
 	window := WindowLevel{Center: 128, Width: 256}
-	quality := VRQuality{Width: 20, Height: 20, MaxSteps: 192}
+	quality := VRQuality{Width: 20, Height: 20, MaxSteps: DefaultVRMaxSteps}
 	preview := RenderVRPreview(volume, camera, preset, window, nil, quality)
 	settled := RenderVR(volume, camera, preset, window, false, nil, quality)
 	if !sameImage(preview, settled) {
@@ -290,7 +297,7 @@ func TestClinicalTransferDoesNotAffectNonDVRProjectionSemantics(t *testing.T) {
 	}
 	camera := NewVRCamera(volume.BoundingRadiusMM())
 	window := WindowLevel{Center: 128, Width: 256}
-	quality := VRQuality{Width: 12, Height: 12, MaxSteps: 96}
+	quality := VRQuality{Width: 12, Height: 12, MaxSteps: DefaultVRMaxSteps}
 	clinical := NewMusclesBonesVRTransferFunction(VROpacityMappingLogarithmicInverse)
 	legacy := NewVRTransferFunction(
 		[]TFColorStop{{HU: 0}, {HU: 1, R: 1, G: 1, B: 1}},
@@ -305,7 +312,7 @@ func TestClinicalTransferDoesNotAffectNonDVRProjectionSemantics(t *testing.T) {
 	}
 }
 
-func TestRenderVRPhysicalAlphaStableAcrossMaxSteps(t *testing.T) {
+func TestRenderVRPhysicalAlphaStableAcrossSampleDistances(t *testing.T) {
 	volume, err := BuildVolume(sphereStack(24, 8))
 	if err != nil {
 		t.Fatal(err)
@@ -318,12 +325,12 @@ func TestRenderVRPhysicalAlphaStableAcrossMaxSteps(t *testing.T) {
 	)
 	preset := VRPreset{Name: "physical-alpha", TF: transfer, Mode: VRModeDVR}
 	window := WindowLevel{Center: 128, Width: 256}
-	low := RenderVR(volume, camera, preset, window, false, nil, VRQuality{Width: 32, Height: 32, MaxSteps: 96}).(*image.NRGBA)
-	high := RenderVR(volume, camera, preset, window, false, nil, VRQuality{Width: 32, Height: 32, MaxSteps: 768}).(*image.NRGBA)
+	low := RenderVR(volume, camera, preset, window, false, nil, VRQuality{Width: 32, Height: 32, MaxSteps: DefaultVRMaxSteps, SpacingFraction: 1}).(*image.NRGBA)
+	high := RenderVR(volume, camera, preset, window, false, nil, VRQuality{Width: 32, Height: 32, MaxSteps: DefaultVRMaxSteps, SpacingFraction: 0.125}).(*image.NRGBA)
 	lowCenter := low.NRGBAAt(16, 16)
 	highCenter := high.NRGBAAt(16, 16)
 	if delta := math.Abs(float64(lowCenter.R) - float64(highCenter.R)); delta > 6 {
-		t.Fatalf("center brightness changed by %.0f across MaxSteps: low=%v high=%v", delta, lowCenter, highCenter)
+		t.Fatalf("center brightness changed by %.0f across sample distances: low=%v high=%v", delta, lowCenter, highCenter)
 	}
 }
 

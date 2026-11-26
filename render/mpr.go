@@ -6,6 +6,8 @@ import (
 	"image"
 	"image/color"
 	"math"
+
+	"github.com/ThalesMMS/dicom-go/object"
 )
 
 type MPRPlane string
@@ -32,10 +34,48 @@ const (
 type MPRRenderOptions struct {
 	GantryTiltMode GantryTiltRenderMode
 	Limits         MPRLimits
+	// Interpolation resamples tilt-corrected scalar planes (zero value:
+	// trilinear). Cubic suits settled frames; interaction stays trilinear.
+	Interpolation Interpolation
+	// Slab controls sampling and endpoint weights in the scalar slab API.
+	// Its zero value preserves one sample per source spacing and equal weights.
+	// Legacy image-returning MPR APIs do not consume this field.
+	Slab SlabSampling
 }
 
 func DefaultMPRRenderOptions() MPRRenderOptions {
 	return MPRRenderOptions{GantryTiltMode: GantryTiltCorrected}
+}
+
+// MPRPlaneImageAxes returns the patient-space (LPS) directions of the image x
+// axis (toward the right edge) and y axis (toward the bottom edge) of an
+// orthogonal plane rendered by RenderMPRPlane, for a stack whose columns run
+// along axisX and whose rows run along axisY (the Image Orientation (Patient)
+// row and column vectors). The axial plane is the acquired plane. Coronal and
+// sagittal planes cut through the stack with the last slice (farthest along
+// axisX x axisY) at the top, so their y axis is the negated slice normal.
+//
+// The plane names follow the volume axes, not the anatomy: for a sagittal
+// acquisition the "axial" plane is anatomically sagittal. Orientation labels
+// should therefore be derived from these axes (for example with
+// object.EdgeLabelsForImageAxes) rather than from the plane name. It reports
+// false for an unknown plane or degenerate axes.
+func MPRPlaneImageAxes(plane MPRPlane, axisX, axisY Vec3) (right, down Vec3, ok bool) {
+	axisX, axisY = axisX.Normalize(), axisY.Normalize()
+	normal := axisX.Cross(axisY).Normalize()
+	if axisX.Length() == 0 || axisY.Length() == 0 || normal.Length() == 0 {
+		return Vec3{}, Vec3{}, false
+	}
+	switch plane {
+	case MPRPlaneAxial:
+		return axisX, axisY, true
+	case MPRPlaneCoronal:
+		return axisX, normal.Scale(-1), true
+	case MPRPlaneSagittal:
+		return axisY, normal.Scale(-1), true
+	default:
+		return Vec3{}, Vec3{}, false
+	}
 }
 
 func RenderMPRPlane(series *Stack, plane MPRPlane, index int, window WindowLevel) (image.Image, error) {
@@ -271,7 +311,8 @@ func orthogonalVolumeHeight(depth int, sliceSpacing, inPlaneAxisSpacing float64)
 // seriesSliceSpacing is the mean through-plane spacing between slices in mm,
 // derived from their spatial positions — NOT SliceThickness, which is the slab
 // thickness and may differ from the inter-slice distance. Falls back to
-// SliceThickness, then 1 mm, when positions are unavailable. This mirrors
+// seriesFallbackSliceSpacing (Spacing Between Slices, then SliceThickness,
+// then 1 mm) when positions are unavailable. This mirrors
 // BuildVolume.SliceSpacing so the orthogonal reformats and the volume-based
 // reslice agree.
 func seriesSliceSpacing(series *Stack) float64 {
@@ -298,53 +339,76 @@ func seriesSliceSpacing(series *Stack) float64 {
 			return sp
 		}
 	}
-	if thickness := seriesSliceThickness(series); thickness > 0 {
-		return thickness
+	return seriesFallbackSliceSpacing(series).Value
+}
+
+// framePixelSpacing reads a [row, column] Pixel Spacing: a single value is
+// isotropic (object.SpacingPair). Both must be finite and positive.
+func framePixelSpacing(values []float64) (row, column float64, ok bool) {
+	switch {
+	case len(values) >= 2:
+		row, column = values[0], values[1]
+	case len(values) == 1:
+		row, column = values[0], values[0]
+	default:
+		return 0, 0, false
 	}
-	return 1
+	if !finitePositiveSpacing(row) || !finitePositiveSpacing(column) {
+		return 0, 0, false
+	}
+	return row, column, true
+}
+
+// seriesPixelSpacing is the series Pixel Spacing, or that of its first frame
+// with one; 0, 0 when none is usable.
+func seriesPixelSpacing(series *Stack) (row, column float64) {
+	if series == nil {
+		return 0, 0
+	}
+	if row, column, ok := framePixelSpacing(series.PixelSpacing); ok {
+		return row, column
+	}
+	for _, frame := range series.Frames {
+		if frame != nil {
+			if row, column, ok := framePixelSpacing(frame.PixelSpacing); ok {
+				return row, column
+			}
+		}
+	}
+	return 0, 0
 }
 
 func seriesRowSpacing(series *Stack) float64 {
-	if series != nil && len(series.PixelSpacing) >= 1 && finitePositiveSpacing(series.PixelSpacing[0]) {
-		return series.PixelSpacing[0]
-	}
-	if series != nil {
-		for _, frame := range series.Frames {
-			if frame != nil && len(frame.PixelSpacing) >= 1 && finitePositiveSpacing(frame.PixelSpacing[0]) {
-				return frame.PixelSpacing[0]
-			}
-		}
-	}
-	return 0
+	row, _ := seriesPixelSpacing(series)
+	return row
 }
 
 func seriesColumnSpacing(series *Stack) float64 {
-	if series != nil && len(series.PixelSpacing) >= 2 && finitePositiveSpacing(series.PixelSpacing[1]) {
-		return series.PixelSpacing[1]
-	}
-	if series != nil {
-		for _, frame := range series.Frames {
-			if frame != nil && len(frame.PixelSpacing) >= 2 && finitePositiveSpacing(frame.PixelSpacing[1]) {
-				return frame.PixelSpacing[1]
-			}
-		}
-	}
-	return 0
+	_, column := seriesPixelSpacing(series)
+	return column
 }
 
-func seriesSliceThickness(series *Stack) float64 {
+// seriesFallbackSliceSpacing is the slice spacing when slice positions
+// cannot measure it (one slice, or no spread): object.ResolveSliceSpacing
+// over the series attributes, else over the first frame with a usable one.
+// Spacing Between Slices therefore wins over Slice Thickness (ITK
+// 9467d94115), and 1 mm is the reported default.
+func seriesFallbackSliceSpacing(series *Stack) object.SliceSpacing {
 	if series == nil {
-		return 0
+		return object.ResolveSliceSpacing(0, 0)
 	}
-	if finitePositiveSpacing(series.SliceThickness) {
-		return series.SliceThickness
+	if spacing := object.ResolveSliceSpacing(series.SpacingBetweenSlices, series.SliceThickness); spacing.Source != object.SliceSpacingDefault {
+		return spacing
 	}
 	for _, frame := range series.Frames {
-		if frame != nil && finitePositiveSpacing(frame.SliceThickness) {
-			return frame.SliceThickness
+		if frame == nil {
+			continue
+		}
+		if spacing := object.ResolveSliceSpacing(frame.SpacingBetweenSlices, frame.SliceThickness); spacing.Source != object.SliceSpacingDefault {
+			return spacing
 		}
 	}
-	return 0
+	return object.ResolveSliceSpacing(0, 0)
 }
 
 func finitePositiveSpacing(value float64) bool {

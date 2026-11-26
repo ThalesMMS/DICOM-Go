@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"fmt"
 	"math"
 
@@ -116,6 +117,7 @@ func (v *Volume) RegularGrid() (*Volume, error) {
 			return
 		}
 		v.regularized, v.regularizedErr = regularizePatientGrid(v)
+		v.regularizedReady.Store(v.regularizedErr == nil)
 	})
 	return v.regularized, v.regularizedErr
 }
@@ -154,27 +156,9 @@ func regularizePatientGrid(source *Volume) (*Volume, error) {
 	positions := make([]float64, depth)
 	origins := make([]Vec3, depth)
 	sliceGeometries := make([]SliceGeometry, depth)
-	sourceOriginVoxel := source.PatientToVoxel(origin)
-	columnDelta := source.PatientToVoxel(origin.Add(source.AxisX.Scale(source.ColSpacing))).Sub(sourceOriginVoxel)
-	rowDelta := source.PatientToVoxel(origin.Add(source.AxisY.Scale(source.RowSpacing))).Sub(sourceOriginVoxel)
-	sourceSliceOrigins := make([]Vec3, depth)
-	for z := range sourceSliceOrigins {
-		targetSliceOrigin := origin.Add(source.Normal.Scale(float64(z) * sliceSpacing))
-		sourceSliceOrigins[z] = source.PatientToVoxel(targetSliceOrigin)
-	}
+	fillRegularGrid(source, grid, values, sampler.trilinearAt)
 	for z := 0; z < depth; z++ {
 		sliceOrigin := origin.Add(source.Normal.Scale(float64(z) * sliceSpacing))
-		planeOffset := z * rows * cols
-		for y := 0; y < rows; y++ {
-			sourceVoxel := sourceSliceOrigins[z].Add(rowDelta.Scale(float64(y)))
-			for x := 0; x < cols; x++ {
-				value, valid := sampler.trilinearAt(sourceVoxel)
-				if valid {
-					values[planeOffset+y*cols+x] = float32(value)
-				}
-				sourceVoxel = sourceVoxel.Add(columnDelta)
-			}
-		}
 		metadata := pixeldata.Metadata{
 			Rows:                      uint16(rows),
 			Columns:                   uint16(cols),
@@ -268,4 +252,121 @@ func checkedVoxelCount(cols, rows, depth int) (int, bool) {
 		return 0, false
 	}
 	return plane * depth, true
+}
+
+// fillRegularGrid samples source at every voxel of the regular grid (x
+// fastest) into values; samples sample reports invalid stay zero. Each row
+// steps its source position by repeated additions, so a given sampler
+// returns the same values on every call.
+func fillRegularGrid(source *Volume, grid RegularGridGeometry, values []float32, sample func(Vec3) (float64, bool)) {
+	cols, rows, depth := grid.Dimensions[0], grid.Dimensions[1], grid.Dimensions[2]
+	origin := grid.Origin
+	sourceOriginVoxel := source.PatientToVoxel(origin)
+	columnDelta := source.PatientToVoxel(origin.Add(source.AxisX.Scale(source.ColSpacing))).Sub(sourceOriginVoxel)
+	rowDelta := source.PatientToVoxel(origin.Add(source.AxisY.Scale(source.RowSpacing))).Sub(sourceOriginVoxel)
+	for z := 0; z < depth; z++ {
+		sourceSliceOrigin := source.PatientToVoxel(origin.Add(source.Normal.Scale(float64(z) * grid.SliceSpacing)))
+		planeOffset := z * rows * cols
+		for y := 0; y < rows; y++ {
+			sourceVoxel := sourceSliceOrigin.Add(rowDelta.Scale(float64(y)))
+			for x := 0; x < cols; x++ {
+				value, valid := sample(sourceVoxel)
+				if valid {
+					values[planeOffset+y*cols+x] = float32(value)
+				}
+				sourceVoxel = sourceVoxel.Add(columnDelta)
+			}
+		}
+	}
+}
+
+// RegularGridInterpolation selects the kernel of ResampleRegularGridContext.
+type RegularGridInterpolation uint8
+
+const (
+	// RegularGridLinear is the trilinear resampling of RegularGrid.
+	RegularGridLinear RegularGridInterpolation = iota
+	// RegularGridCubicBSpline is the cubic B-spline interpolant of the
+	// source samples (#1190): exact at the samples, C² between them, for
+	// non-interactive exports only.
+	RegularGridCubicBSpline
+)
+
+func (i RegularGridInterpolation) String() string {
+	switch i {
+	case RegularGridLinear:
+		return "linear"
+	case RegularGridCubicBSpline:
+		return "cubic-bspline"
+	}
+	return "unknown"
+}
+
+// ResampleRegularGridContext returns the voxels (x fastest, modality values)
+// of the volume resampled onto PlanRegularGridGeometry of its geometry with
+// the interpolation, and that grid. Unlike RegularGrid it neither caches the
+// result nor installs a generation: it is for one export. A regular volume
+// is resampled too, onto its own grid (the cubic B-spline then reproduces
+// the samples). Linear output equals RegularGrid's voxels. The B-spline
+// prefilters the whole source volume (the exported region) into float32
+// coefficients, as much memory again as the source; points within half a
+// voxel of the source grid are clamped to it as for trilinear sampling and
+// points farther out are zero. ctx cancels it.
+func (v *Volume) ResampleRegularGridContext(ctx context.Context, interpolation RegularGridInterpolation) ([]float32, RegularGridGeometry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if v == nil || v.Cols <= 0 || v.Rows <= 0 || v.Depth <= 0 {
+		return nil, RegularGridGeometry{}, fmt.Errorf("render: cannot resample an empty volume")
+	}
+	if v.closed.Load() {
+		return nil, RegularGridGeometry{}, ErrVolumeStoreClosed
+	}
+	if interpolation != RegularGridLinear && interpolation != RegularGridCubicBSpline {
+		return nil, RegularGridGeometry{}, fmt.Errorf("render: unknown regular-grid interpolation %d", interpolation)
+	}
+	grid, err := PlanRegularGridGeometry(v.geometry)
+	if err != nil {
+		return nil, RegularGridGeometry{}, err
+	}
+	count, ok := checkedVoxelCount(grid.Dimensions[0], grid.Dimensions[1], grid.Dimensions[2])
+	if !ok {
+		return nil, RegularGridGeometry{}, fmt.Errorf("render: regularized grid dimensions overflow")
+	}
+	sampler, ok := newDecodedVolumeSampler(v)
+	if !ok {
+		return nil, RegularGridGeometry{}, fmt.Errorf("render: cannot prepare source sampler for regularization")
+	}
+	defer sampler.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, RegularGridGeometry{}, err
+	}
+	sample := sampler.trilinearAt
+	if interpolation == RegularGridCubicBSpline {
+		spline, err := NewCubicBSplineContext(ctx, [3]int{}, [3]int{v.Cols, v.Rows, v.Depth}, func(x, y, z int) float64 {
+			return sampler.valueOrZero(x, y, z)
+		})
+		if err != nil {
+			return nil, RegularGridGeometry{}, err
+		}
+		sample = func(p Vec3) (float64, bool) {
+			var ok bool
+			if p.X, ok = clampToGrid(p.X, v.Cols); !ok {
+				return 0, false
+			}
+			if p.Y, ok = clampToGrid(p.Y, v.Rows); !ok {
+				return 0, false
+			}
+			if p.Z, ok = clampToGrid(p.Z, v.Depth); !ok {
+				return 0, false
+			}
+			return spline.At(p), true
+		}
+	}
+	values := make([]float32, count)
+	fillRegularGrid(v, grid, values, sample)
+	if err := ctx.Err(); err != nil {
+		return nil, RegularGridGeometry{}, err
+	}
+	return values, grid, nil
 }

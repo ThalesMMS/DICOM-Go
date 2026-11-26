@@ -1,0 +1,267 @@
+{
+  "simpleitk": "2.5.6",
+  "itk": "5.4",
+  "h5py": "3.16.0",
+  "hdf5": "2.0.0",
+  "python": "3.12.0",
+  "mixed": {
+    "sha256": "7f82a1fb09933a34d8d57c0970e13e79433180dd22b9faeacbd8581c972b64e4",
+    "itk_hdf5_version": "HDF5 library version: 1.12.1",
+    "queue": [
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "AffineTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "BSplineTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "DisplacementFieldTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform",
+      "TranslationTransform"
+    ],
+    "points": [
+      {
+        "input": [
+          -15.5,
+          8.6,
+          1.6000000000000014
+        ],
+        "output": [
+          -15.263888302695463,
+          8.546729394137706,
+          1.7960327221680816
+        ],
+        "jacobian": [
+          [
+            1.026112869672943,
+            0.017712858272716403,
+            -6.443826714530587e-05
+          ],
+          [
+            -0.001202196639496833,
+            0.9800341137452051,
+            -0.030726990022230893
+          ],
+          [
+            0.007348055420152377,
+            0.002080596656014677,
+            1.0112351774369017
+          ]
+        ]
+      },
+      {
+        "input": [
+          -17.5,
+          12.4,
+          5.200000000000001
+        ],
+        "output": [
+          -17.249521203064834,
+          12.1621783952508,
+          5.429199986157606
+        ],
+        "jacobian": [
+          [
+            1.0263223649235442,
+            0.01756619557272643,
+            -0.00019751128274947405
+          ],
+          [
+            -0.0010080852662213147,
+            0.9798857781570405,
+            -0.03084785002283752
+          ],
+          [
+            0.007547727786004543,
+            0.0019229529716540128,
+            1.0111069874255918
+          ]
+        ]
+      },
+      {
+        "input": [
+          -22.25,
+          16.6,
+          -1.6999999999999993
+        ],
+        "output": [
+          -22.0501727401079,
+          16.494603600233383,
+          -1.5760333972262661
+        ],
+        "jacobian": [
+          [
+            1.0264796103583649,
+            0.017375297495163977,
+            -0.00018764170818030834
+          ],
+          [
+            -0.0008658090373501182,
+            0.9797095191897824,
+            -0.030833399039693177
+          ],
+          [
+            0.007721508052782156,
+            0.0017420534422853962,
+            1.0111339120703633
+          ]
+        ]
+      },
+      {
+        "input": [
+          -48.25,
+          30.4,
+          -20.6
+        ],
+        "output": [
+          -48.49314575195312,
+          30.59739794921875,
+          -20.887154174804692
+        ],
+        "jacobian": [
+          [
+            1.0249999999068677,
+            0.015625,
+            0.0
+          ],
+          [
+            0.0,
+            0.9799999999813735,
+            -0.03125
+          ],
+          [
+            0.0078125,
+            0.0,
+            1.0100000000093132
+          ]
+        ]
+      }
+    ]
+  },
+  "ordered": {
+    "sha256": "947d57433caf43041fd24feecf219ed54e6e765181d9f5a7bc7ae2b33ae41f96",
+    "names": [
+      "g_00",
+      "g_37",
+      "g_01",
+      "g_38",
+      "g_02",
+      "g_39",
+      "g_03",
+      "g_40",
+      "g_04",
+      "g_41",
+      "g_05",
+      "g_42",
+      "g_06",
+      "g_43",
+      "g_07",
+      "g_44",
+      "g_08",
+      "g_45",
+      "g_09",
+      "g_46",
+      "g_10",
+      "g_47",
+      "g_11",
+      "g_48",
+      "g_12",
+      "g_49",
+      "g_13",
+      "g_50",
+      "g_14",
+      "g_51",
+      "g_15",
+      "g_52",
+      "g_16",
+      "g_53",
+      "g_17",
+      "g_54",
+      "g_18",
+      "g_55",
+      "g_19",
+      "g_56",
+      "g_20",
+      "g_57",
+      "g_21",
+      "g_58",
+      "g_22",
+      "g_59",
+      "g_23",
+      "g_60",
+      "g_24",
+      "g_61",
+      "g_25",
+      "g_62",
+      "g_26",
+      "g_63",
+      "g_27",
+      "g_64",
+      "g_28",
+      "g_65",
+      "g_29",
+      "g_66",
+      "g_30",
+      "g_67",
+      "g_31",
+      "g_68",
+      "g_32",
+      "g_69",
+      "g_33",
+      "g_70",
+      "g_34",
+      "g_71",
+      "g_35",
+      "g_72",
+      "g_36"
+    ]
+  }
+}

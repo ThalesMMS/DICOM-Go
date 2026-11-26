@@ -15,11 +15,12 @@ import (
 const defaultRenderCacheBytes int64 = 128 << 20
 
 type RenderCache struct {
-	mu sync.Mutex
+	mu         sync.Mutex
+	generation uint64
 
 	maxDecodedBytes int64
 	decodedBytes    int64
-	decodedEntries  map[*Frame]*list.Element
+	decodedEntries  map[frameCacheKey]*list.Element
 	decodedLRU      *list.List
 
 	maxWindowBytes int64
@@ -27,23 +28,42 @@ type RenderCache struct {
 	windowEntries  map[windowCacheKey]*list.Element
 	windowLRU      *list.List
 
-	pinnedDecoded map[*Frame]bool
+	pinnedDecoded map[frameCacheKey]bool
 	pinnedWindow  map[windowCacheKey]bool
-	hits          uint64
-	misses        uint64
-	evictions     uint64
+	// decoding holds the decode in progress of each frame, so concurrent
+	// callers (a render, a read-ahead, a volume build) wait for one decode
+	// instead of each decoding the frame (#1612).
+	decoding  map[frameCacheKey]*decodeCall
+	hits      uint64
+	misses    uint64
+	evictions uint64
 
 	decodeFrame func(*Frame) (*decodedFrame, error)
 }
 
-type decodedCacheEntry struct {
-	slice *Frame
+type decodeCall struct {
+	done  chan struct{}
 	frame *decodedFrame
-	bytes int64
+	err   error
 }
 
+type decodedCacheEntry struct {
+	key   frameCacheKey
+	frame *decodedFrame
+	bytes int64
+	// windowMisses counts windows rendered from this decoded plane;
+	// levelsTried records that the level index was attempted (#1222).
+	windowMisses int
+	levelsTried  bool
+}
+
+// levelIndexWindowMisses is the windowed render of a decoded plane that first
+// builds its level index. Scrolling renders each plane at one window and never
+// pays for the index; a W/L drag reaches the second window at once.
+const levelIndexWindowMisses = 2
+
 type windowCacheKey struct {
-	slice      *Frame
+	slice      frameCacheKey
 	centerBits uint64
 	widthBits  uint64
 	function   int
@@ -63,15 +83,16 @@ func NewRenderCache(maxBytes int64) *RenderCache {
 	}
 	cache := &RenderCache{
 		maxDecodedBytes: maxBytes,
-		decodedEntries:  map[*Frame]*list.Element{},
+		decodedEntries:  map[frameCacheKey]*list.Element{},
 		decodedLRU:      list.New(),
 		maxWindowBytes:  maxBytes,
 		windowEntries:   map[windowCacheKey]*list.Element{},
 		windowLRU:       list.New(),
-		pinnedDecoded:   map[*Frame]bool{},
+		pinnedDecoded:   map[frameCacheKey]bool{},
 		pinnedWindow:    map[windowCacheKey]bool{},
+		decoding:        map[frameCacheKey]*decodeCall{},
 	}
-	cache.decodeFrame = decodeSliceFrame
+	cache.decodeFrame = decodeCacheFrame
 	return cache
 }
 
@@ -82,9 +103,10 @@ func (c *RenderCache) RenderFrame(slice *Frame, window WindowLevel) (image.Image
 	if slice.DecodeErr != nil {
 		return blankImage(int(slice.Metadata.Columns), int(slice.Metadata.Rows)), slice.DecodeErr
 	}
+	generation := c.cacheGeneration()
 	window = normalizedRenderWindow(slice, window)
 	key := windowCacheKey{
-		slice:      slice,
+		slice:      frameCacheIdentity(slice),
 		centerBits: cacheFloatBits(window.Center),
 		widthBits:  cacheFloatBits(window.Width),
 		function:   int(window.Function),
@@ -95,15 +117,16 @@ func (c *RenderCache) RenderFrame(slice *Frame, window WindowLevel) (image.Image
 		return img, err
 	}
 	c.recordResult(false)
-	decoded, err := c.decoded(slice)
+	decoded, err := c.decodedAtGeneration(slice, generation)
 	if err != nil {
 		return blankImage(int(slice.Metadata.Columns), int(slice.Metadata.Rows)), err
 	}
+	decoded = c.levelIndexedFrame(slice, decoded)
 	img, err := renderDecodedFrame(decoded, window)
 	if img == nil {
 		img = blankImage(int(slice.Metadata.Columns), int(slice.Metadata.Rows))
 	}
-	c.storeWindowImage(key, img, err)
+	c.storeWindowImage(key, img, err, generation)
 	return img, err
 }
 
@@ -116,7 +139,7 @@ func (c *RenderCache) ContainsFrame(slice *Frame, window WindowLevel) bool {
 	}
 	window = normalizedRenderWindow(slice, window)
 	key := windowCacheKey{
-		slice:      slice,
+		slice:      frameCacheIdentity(slice),
 		centerBits: cacheFloatBits(window.Center),
 		widthBits:  cacheFloatBits(window.Width),
 		function:   int(window.Function),
@@ -149,16 +172,16 @@ func (c *RenderCache) SetPinnedFrames(frames []PinnedFrame) {
 	if c == nil {
 		return
 	}
-	decoded := make(map[*Frame]bool, len(frames))
+	decoded := make(map[frameCacheKey]bool, len(frames))
 	windowed := make(map[windowCacheKey]bool, len(frames))
 	for _, pinned := range frames {
 		if pinned.Frame == nil {
 			continue
 		}
-		decoded[pinned.Frame] = true
+		decoded[frameCacheIdentity(pinned.Frame)] = true
 		window := normalizedRenderWindow(pinned.Frame, pinned.Window)
 		windowed[windowCacheKey{
-			slice:      pinned.Frame,
+			slice:      frameCacheIdentity(pinned.Frame),
 			centerBits: cacheFloatBits(window.Center),
 			widthBits:  cacheFloatBits(window.Width),
 			function:   int(window.Function),
@@ -183,7 +206,7 @@ func (c *RenderCache) EvictNonPinned() int64 {
 	for elem := c.decodedLRU.Back(); elem != nil; {
 		previous := elem.Prev()
 		entry := elem.Value.(*decodedCacheEntry)
-		if !c.pinnedDecoded[entry.slice] {
+		if !c.pinnedDecoded[entry.key] {
 			c.removeDecodedLocked(elem)
 		}
 		elem = previous
@@ -217,7 +240,7 @@ func (c *RenderCache) Stats() CacheStats {
 	}
 	for _, elem := range c.decodedEntries {
 		entry := elem.Value.(*decodedCacheEntry)
-		if c.pinnedDecoded[entry.slice] {
+		if c.pinnedDecoded[entry.key] {
 			stats.PinnedBytes += entry.bytes
 		}
 	}
@@ -259,13 +282,14 @@ func (c *RenderCache) Clear() {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.generation++
 	c.decodedBytes = 0
-	c.decodedEntries = map[*Frame]*list.Element{}
+	c.decodedEntries = map[frameCacheKey]*list.Element{}
 	c.decodedLRU.Init()
 	c.windowBytes = 0
 	c.windowEntries = map[windowCacheKey]*list.Element{}
 	c.windowLRU.Init()
-	c.pinnedDecoded = map[*Frame]bool{}
+	c.pinnedDecoded = map[frameCacheKey]bool{}
 	c.pinnedWindow = map[windowCacheKey]bool{}
 }
 
@@ -284,59 +308,148 @@ func (c *RenderCache) cachedWindowImage(key windowCacheKey) (image.Image, error,
 	return entry.image, entry.err, true
 }
 
-func (c *RenderCache) decoded(slice *Frame) (*decodedFrame, error) {
+func (c *RenderCache) cacheGeneration() uint64 {
 	if c == nil {
-		return decodeSliceFrame(slice)
+		return 0
 	}
 	c.mu.Lock()
-	if elem := c.decodedEntries[slice]; elem != nil {
+	defer c.mu.Unlock()
+	return c.generation
+}
+
+func (c *RenderCache) decoded(slice *Frame) (*decodedFrame, error) {
+	return c.decodedAtGeneration(slice, c.cacheGeneration())
+}
+
+func (c *RenderCache) decodedAtGeneration(slice *Frame, generation uint64) (*decodedFrame, error) {
+	if c == nil {
+		return decodeCacheFrame(slice)
+	}
+	key := frameCacheIdentity(slice)
+	c.mu.Lock()
+	if elem := c.decodedEntries[key]; elem != nil {
 		c.decodedLRU.MoveToFront(elem)
 		entry := elem.Value.(*decodedCacheEntry)
 		c.mu.Unlock()
 		return entry.frame, nil
 	}
+	if call := c.decoding[key]; call != nil {
+		c.mu.Unlock()
+		<-call.done
+		return call.frame, call.err
+	}
+	if c.decoding == nil {
+		c.decoding = map[frameCacheKey]*decodeCall{}
+	}
+	call := &decodeCall{done: make(chan struct{})}
+	c.decoding[key] = call
 	c.mu.Unlock()
 
-	decoded, err := c.decodeFrame(slice)
-	if err != nil {
-		return nil, err
+	call.frame, call.err = c.decodeFrame(slice)
+	if call.err == nil {
+		c.storeDecodedFrame(slice, call.frame, generation)
 	}
-	c.storeDecodedFrame(slice, decoded)
-	return decoded, nil
+	c.mu.Lock()
+	delete(c.decoding, key)
+	c.mu.Unlock()
+	close(call.done)
+	if call.err != nil {
+		return nil, call.err
+	}
+	return call.frame, nil
 }
 
-func (c *RenderCache) storeDecodedFrame(slice *Frame, decoded *decodedFrame) {
+// levelIndexedFrame counts one more window rendered from the cached decoded
+// plane of slice and, from the second window on, replaces the cached plane
+// with a copy that carries the level index (indexDecodedLevels), so every
+// later window maps one value per level instead of one per pixel. The copy
+// shares the modality values; renders already holding the previous plane keep
+// using it unchanged. Planes that are not cached, or whose index was already
+// attempted, are returned as they are.
+func (c *RenderCache) levelIndexedFrame(slice *Frame, decoded *decodedFrame) *decodedFrame {
+	if c == nil || decoded == nil || decoded.grayscale == nil || decoded.levels != nil {
+		return decoded
+	}
+	c.mu.Lock()
+	elem := c.decodedEntries[frameCacheIdentity(slice)]
+	if elem == nil {
+		c.mu.Unlock()
+		return decoded
+	}
+	entry := elem.Value.(*decodedCacheEntry)
+	if entry.frame != decoded || entry.levelsTried {
+		current := entry.frame
+		c.mu.Unlock()
+		if current != nil && current.levels != nil {
+			return current
+		}
+		return decoded
+	}
+	entry.windowMisses++
+	if entry.windowMisses < levelIndexWindowMisses {
+		c.mu.Unlock()
+		return decoded
+	}
+	entry.levelsTried = true
+	c.mu.Unlock()
+
+	indexed := *decoded
+	indexDecodedLevels(&indexed, slice)
+	if indexed.levels == nil {
+		return decoded
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if current := c.decodedEntries[frameCacheIdentity(slice)]; current == elem && entry.frame == decoded {
+		bytes := indexed.cacheBytes()
+		c.decodedBytes += bytes - entry.bytes
+		entry.frame = &indexed
+		entry.bytes = bytes
+		c.evictDecodedToLimitLocked()
+	}
+	return &indexed
+}
+
+func (c *RenderCache) storeDecodedFrame(slice *Frame, decoded *decodedFrame, generation uint64) {
 	if c == nil || slice == nil || decoded == nil {
 		return
 	}
 	bytes := decoded.cacheBytes()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if bytes > c.maxDecodedBytes && !c.pinnedDecoded[slice] {
+	if generation != c.generation {
 		return
 	}
-	if elem := c.decodedEntries[slice]; elem != nil {
+	if bytes > c.maxDecodedBytes && !c.pinnedDecoded[frameCacheIdentity(slice)] {
+		return
+	}
+	if elem := c.decodedEntries[frameCacheIdentity(slice)]; elem != nil {
 		entry := elem.Value.(*decodedCacheEntry)
 		c.decodedBytes -= entry.bytes
 		entry.frame = decoded
 		entry.bytes = bytes
+		entry.windowMisses = 0
+		entry.levelsTried = false
 		c.decodedBytes += bytes
 		c.decodedLRU.MoveToFront(elem)
 	} else {
-		elem = c.decodedLRU.PushFront(&decodedCacheEntry{slice: slice, frame: decoded, bytes: bytes})
-		c.decodedEntries[slice] = elem
+		elem = c.decodedLRU.PushFront(&decodedCacheEntry{key: frameCacheIdentity(slice), frame: decoded, bytes: bytes})
+		c.decodedEntries[frameCacheIdentity(slice)] = elem
 		c.decodedBytes += bytes
 	}
 	c.evictDecodedToLimitLocked()
 }
 
-func (c *RenderCache) storeWindowImage(key windowCacheKey, img image.Image, err error) {
+func (c *RenderCache) storeWindowImage(key windowCacheKey, img image.Image, err error, generation uint64) {
 	if c == nil || img == nil {
 		return
 	}
 	bytes := imageCacheBytes(img)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if generation != c.generation {
+		return
+	}
 	if bytes > c.maxWindowBytes && !c.pinnedWindow[key] {
 		return
 	}
@@ -359,7 +472,7 @@ func (c *RenderCache) storeWindowImage(key windowCacheKey, img image.Image, err 
 func (c *RenderCache) evictDecodedToLimitLocked() {
 	for c.decodedBytes > c.maxDecodedBytes {
 		elem := c.decodedLRU.Back()
-		for elem != nil && c.pinnedDecoded[elem.Value.(*decodedCacheEntry).slice] {
+		for elem != nil && c.pinnedDecoded[elem.Value.(*decodedCacheEntry).key] {
 			elem = elem.Prev()
 		}
 		if elem == nil {
@@ -384,7 +497,7 @@ func (c *RenderCache) evictWindowToLimitLocked() {
 
 func (c *RenderCache) removeDecodedLocked(elem *list.Element) {
 	entry := elem.Value.(*decodedCacheEntry)
-	delete(c.decodedEntries, entry.slice)
+	delete(c.decodedEntries, entry.key)
 	c.decodedBytes -= entry.bytes
 	c.decodedLRU.Remove(elem)
 	c.evictions++
@@ -443,4 +556,34 @@ func imageCacheBytes(img image.Image) int64 {
 		bounds := img.Bounds()
 		return int64(bounds.Dx() * bounds.Dy() * 4)
 	}
+}
+
+// Only one pointer is set. Tokens retain no source frame/pixels; nil-token
+// callers preserve the original pointer-identity lifetime contract.
+type frameCacheKey struct {
+	frame    *Frame
+	identity *FrameIdentity
+}
+
+func frameCacheIdentity(frame *Frame) frameCacheKey {
+	if frame.CacheIdentity != nil {
+		return frameCacheKey{identity: frame.CacheIdentity}
+	}
+	return frameCacheKey{frame: frame}
+}
+
+// LookupFrame returns an already windowed image atomically without loading or
+// decoding source pixels. It promotes residency and records a hit only when
+// found. A miss has no side effects. Inputs and returned images are immutable.
+func (c *RenderCache) LookupFrame(frame *Frame, window WindowLevel) (image.Image, error, bool) {
+	if c == nil || frame == nil {
+		return nil, nil, false
+	}
+	window = normalizedRenderWindow(frame, window)
+	key := windowCacheKey{slice: frameCacheIdentity(frame), centerBits: cacheFloatBits(window.Center), widthBits: cacheFloatBits(window.Width), function: int(window.Function), lut: window.LUT}
+	img, err, ok := c.cachedWindowImage(key)
+	if ok {
+		c.recordResult(true)
+	}
+	return img, err, ok
 }

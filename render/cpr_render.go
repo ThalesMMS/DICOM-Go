@@ -52,6 +52,10 @@ type CPRRequest struct {
 	// ArcLength selects the cross-section position for the transverse view.
 	ArcLength float64
 
+	// Interpolation of the volume samples (zero value: trilinear); cubic
+	// suits settled frames.
+	Interpolation Interpolation
+
 	// ThicknessMM and SlabMode control the slab projection in patient-space
 	// millimetres. Thickness is retained for source compatibility with older
 	// callers and is interpreted as a sample count only when ThicknessMM is not
@@ -201,82 +205,91 @@ func validateCPROutput(width, height, slabSamples int) error {
 	return err
 }
 
+// cprSink receives one sample of a CPR view: the output pixel, the sampled
+// value (modality value, or slab reduction of them) and its photometric
+// interpretation. ok is false where the sample left the volume.
+type cprSink func(x, y int, value float64, photometric string, ok bool)
+
 // renderLongitudinalCPR renders straightened (stretched=false) or stretched
 // (stretched=true) CPR: columns run along the centerline arc length, rows across
 // the cross-section. This orientation matches curved-MPR workstations where
 // transverse section markers are vertical lines on the longitudinal output.
 func renderLongitudinalCPR(ctx context.Context, req CPRRequest, stretched bool) (image.Image, error) {
-	vol := req.Volume
-	sampleCount, err := req.Path.SampleCountChecked(req.arcSpacing())
-	if err != nil {
-		return nil, err
-	}
-	width := req.width()
-	cross := req.crossSpacing()
-	slabSamples, err := cprSlabSampleCountChecked(req)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateCPROutput(sampleCount, width, slabSamples); err != nil {
-		return nil, err
-	}
-	samples, err := req.Path.ResampleChecked(req.arcSpacing())
-	if err != nil {
-		return nil, err
-	}
-	slabOffsets, err := cprSlabSampleOffsetsChecked(req, cross)
-	if err != nil {
-		return nil, err
-	}
-	sampler, ok := newVolumeSampler(vol)
-	if !ok {
-		return nil, ErrCPRInput
-	}
-	defer sampler.Close()
-	half := float64(width-1) / 2
-	photometric := vol.Photometric()
 	window := normalizeWindow(req.Window, WindowLevel{Center: defaultWindowCenter, Width: defaultWindowWidth})
 	mapper := prepareWindow(window)
-
-	ref := req.StretchDir
-	if stretched && ref == (Vec3{}) {
-		ref = samples[0].Normal
-	}
-
-	img := image.NewGray(image.Rect(0, 0, len(samples), width))
-	err = parallelRowsContext(ctx, width, func(r int) {
-		rowOffset := img.PixOffset(0, r)
-		offset := (float64(r) - half) * cross
-		for c, s := range samples {
-			crossDir := s.Normal
-			if stretched {
-				crossDir = ref.Sub(s.Tangent.Scale(ref.Dot(s.Tangent))).Normalize()
-				if crossDir == (Vec3{}) {
-					crossDir = s.Normal
-				}
-			}
-			crossDir, slabDir := rotateCPRBasis(crossDir, s.Tangent, req.RotationDegrees)
-			base := s.Position.Add(crossDir.Scale(offset))
-			if len(slabOffsets) > 0 {
-				value, ph, ok := reduceSlab(req.SlabMode, 0, len(slabOffsets)-1, func(k int) (float64, string, bool) {
-					p := base.Add(slabDir.Scale(slabOffsets[k]))
-					v, sampleOK := sampler.trilinearAt(sampler.vol.PatientToVoxel(p))
-					return v, photometric, sampleOK
-				})
-				if ok {
-					img.Pix[rowOffset+c] = displayGrayMapped(value, mapper, ph)
-				}
-				continue
-			}
-			if val, ok := sampler.trilinearAt(sampler.vol.PatientToVoxel(base)); ok {
-				img.Pix[rowOffset+c] = displayGrayMapped(val, mapper, photometric)
-			}
+	var img *image.Gray
+	err := sampleLongitudinalCPR(ctx, req, stretched, func(cols, rows int) {
+		img = image.NewGray(image.Rect(0, 0, cols, rows))
+	}, func(x, y int, value float64, photometric string, ok bool) {
+		if ok {
+			img.Pix[img.PixOffset(x, y)] = displayGrayMapped(value, mapper, photometric)
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
 	return img, nil
+}
+
+// sampleLongitudinalCPR samples a straightened or stretched CPR, calling
+// size with the output dimensions before sink receives every pixel.
+func sampleLongitudinalCPR(ctx context.Context, req CPRRequest, stretched bool, size func(cols, rows int), sink cprSink) error {
+	vol := req.Volume
+	sampleCount, err := req.Path.SampleCountChecked(req.arcSpacing())
+	if err != nil {
+		return err
+	}
+	width := req.width()
+	cross := req.crossSpacing()
+	slabSamples, err := cprSlabSampleCountChecked(req)
+	if err != nil {
+		return err
+	}
+	if err := validateCPROutput(sampleCount, width, slabSamples); err != nil {
+		return err
+	}
+	samples, err := req.Path.ResampleChecked(req.arcSpacing())
+	if err != nil {
+		return err
+	}
+	slabOffsets, err := cprSlabSampleOffsetsChecked(req, cross)
+	if err != nil {
+		return err
+	}
+	sampler, ok := newVolumeSampler(vol)
+	if !ok {
+		return ErrCPRInput
+	}
+	defer sampler.Close()
+	half := float64(width-1) / 2
+	photometric := vol.Photometric()
+
+	bases, err := prepareCPRBases(ctx, req, samples, stretched)
+	if err != nil {
+		return err
+	}
+	mapping := prepareCPRMapping(vol, sampler.vol)
+
+	size(len(samples), width)
+	return parallelRowsContext(ctx, width, func(r int) {
+		offset := (float64(r) - half) * cross
+		for c, s := range samples {
+			crossDir, slabDir := bases[c].cross, bases[c].slab
+			base := s.Position.Add(crossDir.Scale(offset))
+			if len(slabOffsets) > 0 {
+				interval := -1
+				value, ph, ok := reduceSlab(req.SlabMode, 0, len(slabOffsets)-1, func(k int) (float64, string, bool) {
+					p := base.Add(slabDir.Scale(slabOffsets[k]))
+					v, sampleOK := sampler.sampleAt(mapping.at(p, &interval), req.Interpolation)
+					return v, photometric, sampleOK
+				})
+				sink(c, r, value, ph, ok)
+				continue
+			}
+			val, ok := sampler.sampleAt(sampler.vol.PatientToVoxel(base), req.Interpolation)
+			sink(c, r, val, photometric, ok)
+		}
+	})
 }
 
 // renderSlabCPR renders a straightened CPR whose pixels are slab projections
@@ -290,59 +303,77 @@ func renderSlabCPR(ctx context.Context, req CPRRequest) (image.Image, error) {
 // renderTransverseCPR renders one cross-sectional slice perpendicular to the
 // centerline at req.ArcLength, spanned by the frame's normal and binormal.
 func renderTransverseCPR(ctx context.Context, req CPRRequest) (image.Image, error) {
-	vol := req.Volume
-	frame := req.Path.FrameAt(req.ArcLength)
-	normal, binormal := rotateCPRBasis(frame.Normal, frame.Tangent, req.RotationDegrees)
-	size := req.width()
-	cross := req.crossSpacing()
-	slabSamples, err := cprSlabSampleCountChecked(req)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateCPROutput(size, size, slabSamples); err != nil {
-		return nil, err
-	}
-	slabOffsets, err := cprSlabSampleOffsetsChecked(req, cross)
-	if err != nil {
-		return nil, err
-	}
-	sampler, ok := newVolumeSampler(vol)
-	if !ok {
-		return nil, ErrCPRInput
-	}
-	defer sampler.Close()
-	half := float64(size-1) / 2
-	photometric := vol.Photometric()
 	window := normalizeWindow(req.Window, WindowLevel{Center: defaultWindowCenter, Width: defaultWindowWidth})
 	mapper := prepareWindow(window)
-
-	img := image.NewGray(image.Rect(0, 0, size, size))
-	err = parallelRowsContext(ctx, size, func(j int) {
-		voff := (float64(j) - half) * cross
-		rowOffset := img.PixOffset(0, j)
-		for i := 0; i < size; i++ {
-			uoff := (float64(i) - half) * cross
-			base := frame.Position.Add(normal.Scale(uoff)).Add(binormal.Scale(voff))
-			if len(slabOffsets) > 0 {
-				value, ph, ok := reduceSlab(req.SlabMode, 0, len(slabOffsets)-1, func(k int) (float64, string, bool) {
-					p := base.Add(frame.Tangent.Scale(slabOffsets[k]))
-					v, sampleOK := sampler.trilinearAt(sampler.vol.PatientToVoxel(p))
-					return v, photometric, sampleOK
-				})
-				if ok {
-					img.Pix[rowOffset+i] = displayGrayMapped(value, mapper, ph)
-				}
-				continue
-			}
-			if val, ok := sampler.trilinearAt(sampler.vol.PatientToVoxel(base)); ok {
-				img.Pix[rowOffset+i] = displayGrayMapped(val, mapper, photometric)
-			}
+	var img *image.Gray
+	_, err := sampleTransverseCPR(ctx, req, func(cols, rows int) {
+		img = image.NewGray(image.Rect(0, 0, cols, rows))
+	}, func(x, y int, value float64, photometric string, ok bool) {
+		if ok {
+			img.Pix[img.PixOffset(x, y)] = displayGrayMapped(value, mapper, photometric)
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
 	return img, nil
+}
+
+// sampleTransverseCPR samples the transverse section and returns its plane:
+// pixel (i, j) lies at Origin + i/(size-1)*U + j/(size-1)*V.
+func sampleTransverseCPR(ctx context.Context, req CPRRequest, size func(cols, rows int), sink cprSink) (Plane, error) {
+	vol := req.Volume
+	frame := req.Path.FrameAt(req.ArcLength)
+	normal, binormal := rotateCPRBasis(frame.Normal, frame.Tangent, req.RotationDegrees)
+	side := req.width()
+	cross := req.crossSpacing()
+	slabSamples, err := cprSlabSampleCountChecked(req)
+	if err != nil {
+		return Plane{}, err
+	}
+	if err := validateCPROutput(side, side, slabSamples); err != nil {
+		return Plane{}, err
+	}
+	slabOffsets, err := cprSlabSampleOffsetsChecked(req, cross)
+	if err != nil {
+		return Plane{}, err
+	}
+	sampler, ok := newVolumeSampler(vol)
+	if !ok {
+		return Plane{}, ErrCPRInput
+	}
+	defer sampler.Close()
+	half := float64(side-1) / 2
+	photometric := vol.Photometric()
+	extent := float64(side-1) * cross
+	plane := Plane{
+		Origin: frame.Position.Add(normal.Scale(-half * cross)).Add(binormal.Scale(-half * cross)),
+		U:      normal.Scale(extent),
+		V:      binormal.Scale(extent),
+	}
+
+	mapping := prepareCPRMapping(vol, sampler.vol)
+	size(side, side)
+	err = parallelRowsContext(ctx, side, func(j int) {
+		voff := (float64(j) - half) * cross
+		for i := 0; i < side; i++ {
+			uoff := (float64(i) - half) * cross
+			base := frame.Position.Add(normal.Scale(uoff)).Add(binormal.Scale(voff))
+			if len(slabOffsets) > 0 {
+				interval := -1
+				value, ph, ok := reduceSlab(req.SlabMode, 0, len(slabOffsets)-1, func(k int) (float64, string, bool) {
+					p := base.Add(frame.Tangent.Scale(slabOffsets[k]))
+					v, sampleOK := sampler.sampleAt(mapping.at(p, &interval), req.Interpolation)
+					return v, photometric, sampleOK
+				})
+				sink(i, j, value, ph, ok)
+				continue
+			}
+			val, ok := sampler.sampleAt(sampler.vol.PatientToVoxel(base), req.Interpolation)
+			sink(i, j, val, photometric, ok)
+		}
+	})
+	return plane, err
 }
 
 // cprSlabSampleOffsets returns symmetric patient-space offsets spanning the

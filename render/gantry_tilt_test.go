@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
 	"math"
 	"testing"
 )
@@ -538,5 +539,78 @@ func BenchmarkGantryTiltCorrectedCoronalMPR(b *testing.B) {
 		if _, err := RenderMPRPlane(stack, MPRPlaneCoronal, 64, window); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// TestVRRendersGantryTiltCorrectedPatientGrid guards #1238: VR never marches
+// the acquired tilted grid. PrepareVRVolume resamples it into an untilted
+// patient-space grid whose voxels hold the source value at their patient
+// position, and RenderVR uses that grid.
+func TestVRRendersGantryTiltCorrectedPatientGrid(t *testing.T) {
+	origins := make([]Vec3, 5)
+	for i := range origins {
+		origins[i] = Vec3{Y: float64(i) * 0.5, Z: float64(i)}
+	}
+	vol, err := BuildVolume(tiltedGradientRowStack(4, 6, origins, 1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if geometry := vol.Geometry(); !geometry.GantryTilted || !geometry.RequiresResampling {
+		t.Fatalf("tilted geometry = %+v, want gantry tilt requiring resampling", geometry)
+	}
+
+	prepared, err := PrepareVRVolume(vol, VRPrefilterNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grid, err := vol.RegularGrid()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Volume != grid || grid == vol {
+		t.Fatalf("prepared VR volume = %p, want the regularized grid %p (source %p)", prepared.Volume, grid, vol)
+	}
+	if geometry := grid.Geometry(); geometry.GantryTilted || geometry.RequiresResampling {
+		t.Fatalf("VR grid geometry = %+v, want an untilted regular grid", geometry)
+	}
+
+	checked := 0
+	for z := 0; z < grid.Depth; z++ {
+		for y := 0; y < grid.Rows; y++ {
+			for x := 0; x < grid.Cols; x++ {
+				source := vol.PatientToVoxel(grid.VoxelToPatient(Vec3{X: float64(x), Y: float64(y), Z: float64(z)}))
+				const eps = 1e-6
+				if source.X < -eps || source.X > float64(vol.Cols-1)+eps ||
+					source.Y < -eps || source.Y > float64(vol.Rows-1)+eps ||
+					source.Z < -eps || source.Z > float64(vol.Depth-1)+eps {
+					continue
+				}
+				got, _, ok := grid.ValueAt(x, y, z)
+				if !ok {
+					t.Fatalf("ValueAt(%d,%d,%d) not available", x, y, z)
+				}
+				// The source rows hold 10+80·row, so any interpolation of
+				// the tilted grid is exact.
+				if want := 10 + 80*source.Y; math.Abs(got-want) > 0.51 {
+					t.Fatalf("VR grid voxel (%d,%d,%d) = %v, want source row %.3f value %v", x, y, z, got, source.Y, want)
+				}
+				checked++
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no VR grid voxel mapped inside the tilted source")
+	}
+
+	camera := NewVRCamera(vol.BoundingRadiusMM())
+	camera.FitVolume(vol)
+	window := WindowLevel{Center: 127.5, Width: 255}
+	got, gotOK := RenderVR(vol, camera, opaqueAbovePreset(), window, false, nil, DefaultVRQuality(16, 16)).(*image.NRGBA)
+	want, wantOK := RenderVRPrepared(prepared, camera, opaqueAbovePreset(), window, false, nil, DefaultVRQuality(16, 16)).(*image.NRGBA)
+	if !gotOK || !wantOK {
+		t.Fatal("VR renders did not return *image.NRGBA")
+	}
+	if !bytes.Equal(got.Pix, want.Pix) {
+		t.Fatal("RenderVR of the tilted source differs from the corrected-grid render")
 	}
 }

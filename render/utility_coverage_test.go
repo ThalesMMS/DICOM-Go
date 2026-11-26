@@ -31,8 +31,15 @@ func TestCPRPathLengthAndControlPointCount(t *testing.T) {
 	if got := path.ControlPointCount(); got != 3 {
 		t.Fatalf("ControlPointCount() = %d, want 3 distinct points", got)
 	}
-	if got := path.Length(); got != 7 {
-		t.Fatalf("Length() = %v, want 7", got)
+	// The centerline is a centripetal Catmull-Rom spline (#1011): it rounds the
+	// corner at (3,0), so its arc length exceeds the 7 mm chord sum of the old
+	// polyline, but it still passes through the corner and both ends, and its
+	// end tangents follow the end chords.
+	if got := path.Length(); got <= 7 || got > 7.5 {
+		t.Fatalf("Length() = %v, want slightly more than the 7 mm chord sum", got)
+	}
+	if got := path.PointAt(path.ControlPointArcLengths()[1]); got != (Vec3{X: 3}) {
+		t.Fatalf("PointAt(corner arc) = %+v, want the corner control point", got)
 	}
 	if got := path.PointAt(math.NaN()); got != (Vec3{}) {
 		t.Fatalf("PointAt(NaN) = %+v, want first point", got)
@@ -40,8 +47,11 @@ func TestCPRPathLengthAndControlPointCount(t *testing.T) {
 	if got := path.PointAt(99); got != (Vec3{X: 3, Y: 4}) {
 		t.Fatalf("PointAt(clamped) = %+v, want final point", got)
 	}
-	if got := path.TangentAt(4); got != (Vec3{Y: 1}) {
-		t.Fatalf("TangentAt(4) = %+v, want +Y", got)
+	if got := path.TangentAt(0); got.Sub(Vec3{X: 1}).Length() > 1e-12 {
+		t.Fatalf("TangentAt(0) = %+v, want +X", got)
+	}
+	if got := path.TangentAt(99); got.Sub(Vec3{Y: 1}).Length() > 1e-12 {
+		t.Fatalf("TangentAt(clamped) = %+v, want +Y", got)
 	}
 }
 
@@ -96,7 +106,7 @@ func TestVRPresetsLookupAndQuality(t *testing.T) {
 
 	full := DefaultVRQuality(320, 240)
 	preview := PreviewVRQuality(320, 240)
-	if full.Width != 320 || full.Height != 240 || full.MaxSteps <= preview.MaxSteps {
+	if full.Width != 320 || full.Height != 240 || full.SpacingFraction >= preview.SpacingFraction {
 		t.Fatalf("quality presets = full %+v preview %+v", full, preview)
 	}
 	if preview.MaxSteps <= 0 {
@@ -299,12 +309,17 @@ func TestVolumeCoordinateHelpers(t *testing.T) {
 		ColSpacing: 2, RowSpacing: 3, SliceSpacing: 4,
 	}
 
-	norm := vol.VoxelToNormalized(Vec3{X: 2, Y: 1, Z: 4})
+	// The texture convention of the renderers: the centre voxel is at 0.5,
+	// and the texture coordinate maps back through TextureToVoxel (#1115).
+	norm := vol.VoxelToNormalized(vol.CenterVoxel())
 	if norm != (Vec3{X: 0.5, Y: 0.5, Z: 0.5}) {
-		t.Fatalf("VoxelToNormalized() = %+v, want 0.5 in each axis", norm)
+		t.Fatalf("VoxelToNormalized(centre) = %+v, want 0.5 in each axis", norm)
 	}
-	if got := vol.NormalizedToVoxel(norm); got != (Vec3{X: 2, Y: 1, Z: 4}) {
-		t.Fatalf("NormalizedToVoxel() = %+v, want original voxel", got)
+	if got := vol.TextureToVoxel(vol.VoxelToNormalized(Vec3{X: 2, Y: 1, Z: 4})); got != (Vec3{X: 2, Y: 1, Z: 4}) {
+		t.Fatalf("TextureToVoxel(VoxelToNormalized) = %+v, want the voxel", got)
+	}
+	if got := vol.NormalizedToVoxel(Vec3{X: 1, Y: 1, Z: 1}); got != (Vec3{X: 3, Y: 1, Z: 7}) {
+		t.Fatalf("NormalizedToVoxel(1) = %+v, want the last voxel", got)
 	}
 	if got := vol.CenterVoxel(); got != (Vec3{X: 1.5, Y: 0.5, Z: 3.5}) {
 		t.Fatalf("CenterVoxel() = %+v", got)

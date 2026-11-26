@@ -1,8 +1,10 @@
 package render
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
@@ -103,6 +105,36 @@ func TestValidateViewStateV4RequiresFrozenOpaqueBackground(t *testing.T) {
 	legacy.VR.BackgroundRGBA = [4]float64{0, 0, 0, 1}
 	if err := ValidateViewState(legacy); !errors.Is(err, ErrInvalidViewState) {
 		t.Fatalf("V1 accepted unversioned background: %v", err)
+	}
+}
+
+func TestValidateViewStateV5Jitter(t *testing.T) {
+	state := validVRViewState()
+	state.ContractVersion = ViewStateContractVersionV5
+	state.StructSize = ViewStateHeaderSizeV5
+	state.VR.OpacityUnitDistanceMM = 1
+	state.VR.BackgroundRGBA = [4]float64{0, 0, 0, 1}
+	for _, jitter := range []uint32{0, 1} {
+		state.VR.JitterEnabled = jitter
+		if err := ValidateViewState(state); err != nil {
+			t.Fatalf("valid V5 VR state (jitter %d) rejected: %v", jitter, err)
+		}
+	}
+	state.VR.JitterEnabled = 2
+	if err := ValidateViewState(state); !errors.Is(err, ErrInvalidViewState) {
+		t.Fatalf("V5 jitter flag 2 error = %v", err)
+	}
+	state.StructSize = ViewStateHeaderSizeV4
+	state.VR.JitterEnabled = 0
+	if err := ValidateViewState(state); !errors.Is(err, ErrInvalidViewState) {
+		t.Fatalf("V5 with a V4 header size error = %v", err)
+	}
+
+	v4 := state
+	v4.ContractVersion, v4.StructSize = ViewStateContractVersionV4, ViewStateHeaderSizeV4
+	v4.VR.JitterEnabled = 1
+	if err := ValidateViewState(v4); !errors.Is(err, ErrInvalidViewState) {
+		t.Fatalf("V4 accepted jitter: %v", err)
 	}
 }
 
@@ -513,5 +545,196 @@ func validVRViewState() ViewState {
 				Samples:   []TransferSample{{}, {R: 1, G: 1, B: 1, A: 1}},
 			},
 		},
+	}
+}
+
+func TestValidateViewStateV6Labels(t *testing.T) {
+	m, err := NewVRLabelMap(2, 2, 2, []uint16{0, 1, 2, 0, 0, 0, 300, 0},
+		[]VRLabelStyle{{}, {Color: RGBA{R: 1}, Opacity: 1, Blend: 1, Visible: true}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := validVRViewState()
+	state.ContractVersion = ViewStateContractVersionV6
+	state.StructSize = ViewStateHeaderSizeV6
+	state.VR.OpacityUnitDistanceMM = 1
+	state.VR.BackgroundRGBA = [4]float64{0, 0, 0, 1}
+	state.VR.Labels = VRLabelStateFromMap(m, 7)
+	if state.VR.Labels.Bits != 16 || state.VR.Labels.OnlyInside != 1 || len(state.VR.Labels.Styles) != 2 || state.VR.Labels.Styles[1].Visible != 1 {
+		t.Fatalf("label state = %+v", state.VR.Labels)
+	}
+	frozen, err := FreezeViewState(state)
+	if err != nil {
+		t.Fatalf("valid V6 labels rejected: %v", err)
+	}
+	state.VR.Labels.Styles[1].Opacity = 0.5
+	if frozen.VR.Labels.Styles[1].Opacity != 1 {
+		t.Fatal("FreezeViewState shares the label styles")
+	}
+	for name, mutate := range map[string]func(*ViewState){
+		"V5": func(s *ViewState) {
+			s.ContractVersion, s.StructSize = ViewStateContractVersionV5, ViewStateHeaderSizeV5
+		},
+		"bits":       func(s *ViewState) { s.VR.Labels.Bits = 12 },
+		"8-bit data": func(s *ViewState) { s.VR.Labels.Bits = 8 },
+		"dims":       func(s *ViewState) { s.VR.Labels.Dimensions[2] = 3 },
+		"opacity":    func(s *ViewState) { s.VR.Labels.Styles[1].Opacity = 2 },
+		"visible":    func(s *ViewState) { s.VR.Labels.Styles[1].Visible = 2 },
+		"styles":     func(s *ViewState) { s.VR.Labels.Styles = make([]VRLabelStyleState, MaxVRLabelStyles+1) },
+		"no gen":     func(s *ViewState) { s.VR.Labels.Generation = 0 },
+		"huge":       func(s *ViewState) { s.VR.Labels.Volume = nil; s.VR.Labels.Dimensions = [3]uint32{4096, 4096, 4096} },
+		"overflow": func(s *ViewState) {
+			s.VR.Labels.Volume = nil
+			s.VR.Labels.Dimensions = [3]uint32{1 << 22, 1 << 21, 1 << 21}
+		},
+	} {
+		bad := state
+		bad.VR.Labels.Styles = append([]VRLabelStyleState(nil), state.VR.Labels.Styles...)
+		mutate(&bad)
+		if err := ValidateViewState(bad); !errors.Is(err, ErrInvalidViewState) {
+			t.Fatalf("%s: error = %v, want ErrInvalidViewState", name, err)
+		}
+	}
+	if got := m.LabelBytes(); len(got) != 16 || got[2] != 1 || got[12] != 300&0xff || got[13] != 1 {
+		t.Fatalf("16-bit label bytes = %v", got)
+	}
+	small, _ := NewVRLabelMap(1, 1, 2, []uint16{0, 5}, nil, false)
+	if small.StorageBits() != 8 || string(small.LabelBytes()) != "\x00\x05" {
+		t.Fatalf("8-bit label bytes = %v", small.LabelBytes())
+	}
+}
+
+// TestVRViewStateOmitsZeroLabelsFromJSON keeps label-free requests
+// byte-identical to V5 so frozen workloads keep their identity.
+func TestVRViewStateOmitsZeroLabelsFromJSON(t *testing.T) {
+	plain, err := json.Marshal(validVRViewState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(plain, []byte(`"Labels"`)) {
+		t.Fatalf("label-free view state serializes Labels: %s", plain)
+	}
+	labelled := validVRViewState()
+	labelled.VR.Labels = VRLabelState{Generation: 1, Dimensions: [3]uint32{1, 1, 1}, Bits: 8}
+	encoded, err := json.Marshal(labelled)
+	if err != nil || !bytes.Contains(encoded, []byte(`"Labels"`)) {
+		t.Fatalf("labelled view state = %s, %v", encoded, err)
+	}
+}
+
+func TestValidateViewStateV7Scattering(t *testing.T) {
+	state := validVRViewState()
+	state.ContractVersion, state.StructSize = ViewStateContractVersionV7, ViewStateHeaderSizeV7
+	state.VR.OpacityUnitDistanceMM = 1
+	state.VR.BackgroundRGBA = [4]float64{0, 0, 0, 1}
+	state.VR.Scattering = VRScatteringState{Blend: 1, ReachMM: 50, Anisotropy: 0.3, LightDirectionLPS: [3]float64{0, 0, 1}}
+	if err := ValidateViewState(state); err != nil {
+		t.Fatalf("V7 scattering rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*ViewState){
+		"V6": func(s *ViewState) {
+			s.ContractVersion, s.StructSize = ViewStateContractVersionV6, ViewStateHeaderSizeV6
+		},
+		"blend":          func(s *ViewState) { s.VR.Scattering.Blend = 2.5 },
+		"reach":          func(s *ViewState) { s.VR.Scattering.ReachMM = 0 },
+		"anisotropy":     func(s *ViewState) { s.VR.Scattering.Anisotropy = 1 },
+		"light":          func(s *ViewState) { s.VR.Scattering.LightDirectionLPS = [3]float64{0, 0, 2} },
+		"header":         func(s *ViewState) { s.StructSize = ViewStateHeaderSizeV6 },
+		"blend disabled": func(s *ViewState) { s.VR.Scattering.Blend = 0 },
+	} {
+		mutated := state
+		mutate(&mutated)
+		if err := ValidateViewState(mutated); !errors.Is(err, ErrInvalidViewState) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if encoded, err := json.Marshal(validVRViewState()); err != nil || bytes.Contains(encoded, []byte(`"Scattering"`)) {
+		t.Fatalf("scattering-free view state serializes Scattering: %s, %v", encoded, err)
+	}
+}
+
+func TestValidateViewStateV8CutPlanes(t *testing.T) {
+	state := validVRViewState()
+	state.ContractVersion, state.StructSize = ViewStateContractVersionV8, ViewStateHeaderSizeV8
+	state.VR.OpacityUnitDistanceMM = 1
+	state.VR.BackgroundRGBA = [4]float64{0, 0, 0, 1}
+	state.VR.ClippingPlanesLPS = []ClippingPlaneLPS{{0, 0, 1, -2}, {1, 0, 0, 0}}
+	state.VR.Cut = VRCutPlaneState{Planes: 0b10, ClippedVoxelIntensity: -1024, CapOpacity: 1, CapWindow: [2]float64{-160, 240}}
+	if err := ValidateViewState(state); err != nil {
+		t.Fatalf("V8 cut planes rejected: %v", err)
+	}
+	noCap := state
+	noCap.VR.Cut.CapOpacity, noCap.VR.Cut.CapWindow = 0, [2]float64{}
+	if err := ValidateViewState(noCap); err != nil {
+		t.Fatalf("V8 cut planes without cap rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*ViewState){
+		"V7": func(s *ViewState) {
+			s.ContractVersion, s.StructSize = ViewStateContractVersionV7, ViewStateHeaderSizeV7
+		},
+		"header":         func(s *ViewState) { s.StructSize = ViewStateHeaderSizeV7 },
+		"no plane":       func(s *ViewState) { s.VR.Cut.Planes = 0 },
+		"missing plane":  func(s *ViewState) { s.VR.Cut.Planes = 0b100 },
+		"intensity":      func(s *ViewState) { s.VR.Cut.ClippedVoxelIntensity = math.Inf(-1) },
+		"opacity":        func(s *ViewState) { s.VR.Cut.CapOpacity = 1.5 },
+		"empty window":   func(s *ViewState) { s.VR.Cut.CapWindow = [2]float64{10, 10} },
+		"reverse window": func(s *ViewState) { s.VR.Cut.CapWindow = [2]float64{240, -160} },
+	} {
+		mutated := state
+		mutate(&mutated)
+		if err := ValidateViewState(mutated); !errors.Is(err, ErrInvalidViewState) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if encoded, err := json.Marshal(validVRViewState()); err != nil || bytes.Contains(encoded, []byte(`"Cut"`)) {
+		t.Fatalf("cut-free view state serializes Cut: %s, %v", encoded, err)
+	}
+}
+
+func TestValidateViewStateV9Geometry(t *testing.T) {
+	state := validVRViewState()
+	state.ContractVersion, state.StructSize = ViewStateContractVersionV9, ViewStateHeaderSizeV9
+	state.VR.OpacityUnitDistanceMM = 1
+	state.VR.BackgroundRGBA = [4]float64{0, 0, 0, 1}
+	pixels := int(state.OutputWidth * state.OutputHeight)
+	depth := &VRDepthImage{Width: int(state.OutputWidth), Height: int(state.OutputHeight),
+		T: make([]float32, pixels), R: make([]float32, pixels), G: make([]float32, pixels), B: make([]float32, pixels)}
+	for i := range depth.T {
+		depth.T[i] = float32(math.Inf(1))
+	}
+	depth.T[0], depth.R[0] = 12.5, 1
+	state.VR.Geometry = VRGeometryStateFromDepth(depth)
+	if state.VR.Geometry.Color[0] != 0xff0000ff || state.VR.Geometry.Color[1] != 0xff000000 {
+		t.Fatalf("geometry colours %#x %#x", state.VR.Geometry.Color[0], state.VR.Geometry.Color[1])
+	}
+	if err := ValidateViewState(state); err != nil {
+		t.Fatalf("V9 geometry rejected: %v", err)
+	}
+	frozen, err := FreezeViewState(state)
+	if err != nil || &frozen.VR.Geometry.Depth[0] == &state.VR.Geometry.Depth[0] {
+		t.Fatalf("frozen geometry shares its depth: %v", err)
+	}
+	for name, mutate := range map[string]func(*ViewState){
+		"V8": func(s *ViewState) {
+			s.ContractVersion, s.StructSize = ViewStateContractVersionV8, ViewStateHeaderSizeV8
+		},
+		"flag":   func(s *ViewState) { s.VR.Geometry.Enabled = 2 },
+		"size":   func(s *ViewState) { s.VR.Geometry.Depth = s.VR.Geometry.Depth[1:] },
+		"colour": func(s *ViewState) { s.VR.Geometry.Color = nil },
+		"nan":    func(s *ViewState) { s.VR.Geometry.Depth = []float32{float32(math.NaN())} },
+		"depth":  func(s *ViewState) { s.VR.Geometry.Depth = append([]float32{0}, s.VR.Geometry.Depth[1:]...) },
+	} {
+		mutated := state
+		mutated.VR.Geometry.Depth = append([]float32(nil), state.VR.Geometry.Depth...)
+		mutate(&mutated)
+		if err := ValidateViewState(mutated); !errors.Is(err, ErrInvalidViewState) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if encoded, err := json.Marshal(state); err != nil || bytes.Contains(encoded, []byte(`"Depth"`)) || !bytes.Contains(encoded, []byte(`"Geometry"`)) {
+		t.Fatalf("geometry JSON = %s, %v", encoded, err)
+	}
+	if encoded, err := json.Marshal(validVRViewState()); err != nil || bytes.Contains(encoded, []byte(`"Geometry"`)) {
+		t.Fatalf("geometry-free view state serializes Geometry: %s, %v", encoded, err)
 	}
 }

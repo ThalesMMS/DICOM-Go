@@ -28,6 +28,8 @@ const (
 	VRModeMIP                   // maximum intensity projection
 	VRModeMinIP                 // minimum intensity projection
 	VRModeAverage               // mean intensity projection
+	// VRModeIsoSurface (4, view_state.go) and VRModeRaySum (5,
+	// vr_projection.go) follow.
 )
 
 // VRTransferDomain describes the authored scalar coordinate. HU is the zero
@@ -78,6 +80,16 @@ type VRPrefilterID uint8
 const (
 	VRPrefilterNone VRPrefilterID = iota
 	VRPrefilterBasicSmooth5x5
+	// VRPrefilterGaussian1mm is a 3D Gaussian of VRGaussianPrefilterSigmaMM
+	// in patient space (SmoothGaussian3D).
+	VRPrefilterGaussian1mm
+	// VRPrefilterMedian3x3x3 is the 3×3×3 median (Median3x3x3).
+	VRPrefilterMedian3x3x3
+	// VRPrefilterVesselEnhance keeps the modality values of bright tubular
+	// structures and fades plates, blobs and flat tissue towards the volume
+	// minimum (VesselEnhance: multiscale Frangi vesselness), for
+	// angiography MIP and VR.
+	VRPrefilterVesselEnhance
 )
 
 func (id VRPrefilterID) String() string {
@@ -86,6 +98,12 @@ func (id VRPrefilterID) String() string {
 		return "none"
 	case VRPrefilterBasicSmooth5x5:
 		return "basic-smooth-5x5"
+	case VRPrefilterGaussian1mm:
+		return "gaussian-1mm"
+	case VRPrefilterMedian3x3x3:
+		return "median-3x3x3"
+	case VRPrefilterVesselEnhance:
+		return "vessel-enhance"
 	default:
 		return "unknown"
 	}
@@ -111,6 +129,10 @@ func BasicClinicalVRLightingMaterial() VRLightingMaterial {
 func GlossyVascularVRLightingMaterial() VRLightingMaterial {
 	return VRLightingMaterial{Ambient: 0.15, Diffuse: 0.28, Specular: 1.42, SpecularPower: 50}
 }
+
+// VRSurfaceLightingMaterial is the headlight material of RenderVRSurface,
+// which GPU iso-surface backends (#1228) shade with.
+func VRSurfaceLightingMaterial() VRLightingMaterial { return legacyVRLightingMaterial() }
 
 func legacyVRLightingMaterial() VRLightingMaterial {
 	return VRLightingMaterial{Ambient: 0.3, Diffuse: 0.7, Specular: 0.3, SpecularPower: 20}
@@ -603,6 +625,18 @@ func (lut VRLUT) Len() int { return len(lut.entries) }
 
 func (lut VRLUT) Domain() (minimum, maximum float64) { return lut.min, lut.max }
 
+// SameTable reports whether lut and other are one immutable baked table: the
+// same backing entries over the same domain, as repeated BakeLUT calls on one
+// function identity return. It compares identity, not entries, so a consumer
+// can retain work derived from a table without rereading it; equal tables
+// baked separately report false.
+func (lut VRLUT) SameTable(other VRLUT) bool {
+	if len(lut.entries) != len(other.entries) || lut.min != other.min || lut.max != other.max {
+		return false
+	}
+	return len(lut.entries) == 0 || &lut.entries[0] == &other.entries[0]
+}
+
 // VRWindowBounds implements the continuous clinical window used as the DVR LUT
 // address. It is intentionally distinct from DICOM's discrete display-window
 // formula used by 2D and non-DVR projections.
@@ -662,14 +696,42 @@ type VRPreset struct {
 	// historical material; clinical presentation adapters always set it.
 	LightingMaterial    VRLightingMaterial
 	LightingMaterialSet bool
-	Prefilter           VRPrefilterID
+	// OpacityNormals selects the central difference of mapped transfer alpha
+	// for DVR illumination. The zero value retains scalar normals. Alpha is
+	// sampled before gradient modulation, labels, fusion and distance correction.
+	OpacityNormals bool
+	Prefilter      VRPrefilterID
 	// Background is linear, non-premultiplied viewport color. The viewport
 	// contract is opaque; an invalid/legacy zero value resolves to black alpha 1.
 	Background RGBA
 
 	// GradientOpacityScale modulates base sample opacity by the HU gradient
 	// magnitude before physical-distance correction. Zero disables modulation.
+	// It is the legacy form, in its historical index units, that the clinical
+	// presets keep so they render as before.
 	GradientOpacityScale float64
+	// GradientOpacity is the piecewise-linear gradient opacity function of
+	// the covariant magnitude in modality units per mm (#1010); when set it
+	// replaces GradientOpacityScale.
+	GradientOpacity VRGradientOpacity
+
+	// Scattering adds volumetric shadows to shaded DVR (#1064); the zero
+	// value disables it.
+	Scattering VRScattering
+
+	// ProjectionRange restricts Average and RaySum to the samples whose
+	// modality value it contains (#1181); the zero value keeps every sample.
+	ProjectionRange VRValueRange
+	// ColoredMIP maps the maximum modality sample through TF's RGB table.
+	// Transfer opacity and shading are ignored; other modes retain grayscale.
+	ColoredMIP bool
+
+	// Transfer2D, when not nil, classifies DVR samples by modality value
+	// and gradient magnitude (#1232), replacing TF's colour and opacity and
+	// the gradient opacity; TF keeps OpacityUnitDistanceMM. Volumetric
+	// scattering is not cast with it. The table is immutable and may be
+	// shared between preset copies.
+	Transfer2D *VRTransfer2D
 }
 
 // EffectiveLightingMaterial returns a finite, non-negative material. This is a

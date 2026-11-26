@@ -12,6 +12,8 @@ import (
 const (
 	// VolumeSnapshotContractVersion is the frozen cross-backend volume contract.
 	VolumeSnapshotContractVersion uint32 = 1
+	// V2 adds two to four interleaved F32 components. V1 remains scalar-only.
+	VolumeSnapshotContractVersionV2 uint32 = 2
 	// VolumeSnapshotHeaderSizeV1 is the minimum logical V1 header size. A larger
 	// header is accepted so V1 readers can ignore trailing fields.
 	VolumeSnapshotHeaderSizeV1 uint32 = 360
@@ -275,11 +277,25 @@ func (s VolumeSnapshot) ResidencyKey() VolumeResidencyKey {
 // slope/intercept for the optional stored-value formats.
 func (s VolumeSnapshot) ModalityAt(x, y, z uint32) (float64, bool) {
 	record, err := s.record()
+	if err != nil || record.descriptor.Components != 1 {
+		return 0, false
+	}
+	return componentModalityAt(record, x, y, z, 0)
+}
+
+// ComponentModalityAt addresses one component of an interleaved voxel.
+// Scalar consumers must use ModalityAt, which refuses multicomponent data.
+func (s VolumeSnapshot) ComponentModalityAt(x, y, z, component uint32) (float64, bool) {
+	record, err := s.record()
 	if err != nil {
 		return 0, false
 	}
+	return componentModalityAt(record, x, y, z, component)
+}
+
+func componentModalityAt(record *volumeRecord, x, y, z, component uint32) (float64, bool) {
 	descriptor := record.descriptor
-	if x >= descriptor.Dimensions[0] || y >= descriptor.Dimensions[1] || z >= descriptor.Dimensions[2] {
+	if x >= descriptor.Dimensions[0] || y >= descriptor.Dimensions[1] || z >= descriptor.Dimensions[2] || component >= descriptor.Components {
 		return 0, false
 	}
 	scalarSize, ok := descriptor.ScalarFormat.scalarSize()
@@ -294,7 +310,7 @@ func (s VolumeSnapshot) ModalityAt(x, y, z uint32) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	xOffset, ok := checkedMul64(uint64(x), scalarSize)
+	xOffset, ok := checkedMul64(uint64(x)*uint64(descriptor.Components)+uint64(component), scalarSize)
 	if !ok {
 		return 0, false
 	}
@@ -323,9 +339,8 @@ func (s VolumeSnapshot) WritePayloadTo(dst io.Writer) error {
 }
 
 // WriteModalityF32To streams tightly packed little-endian modality-domain
-// float32 rows. It is the bounded upload boundary for backends that require one
-// R32Float texture: stored-value inputs are rescaled while streaming and source
-// row/slice padding is not copied.
+// float32 rows, retaining V2 interleaved components. Stored-value inputs are
+// rescaled while streaming and source row/slice padding is not copied.
 func (s VolumeSnapshot) WriteModalityF32To(dst io.Writer) error {
 	return s.WriteModalityF32Context(context.Background(), dst)
 }
@@ -352,9 +367,16 @@ func (s VolumeSnapshot) WriteModalityF32Context(ctx context.Context, dst io.Writ
 	if !ok {
 		return fmt.Errorf("%w: unknown scalar format", ErrInvalidVolumeSnapshot)
 	}
-	rowBytes64, ok := checkedMul64(uint64(descriptor.Dimensions[0]), 4)
+	rowSamples := uint64(descriptor.Dimensions[0]) * uint64(descriptor.Components)
+	rowBytes64, ok := checkedMul64(rowSamples, 4)
 	if !ok || rowBytes64 > uint64(math.MaxInt) {
 		return fmt.Errorf("%w: modality row size overflow", ErrInvalidVolumeSnapshot)
+	}
+	if direct, ok := record.payload.(*float32VolumePayload); ok {
+		// Float32 samples already are the bytes to stream.
+		if done, err := direct.writeModalityDirect(ctx, dst, descriptor); done {
+			return err
+		}
 	}
 	row := make([]byte, int(rowBytes64))
 	for z := uint32(0); z < descriptor.Dimensions[2]; z++ {
@@ -375,7 +397,28 @@ func (s VolumeSnapshot) WriteModalityF32Context(ctx context.Context, dst io.Writ
 				}
 				continue
 			}
-			for x := uint32(0); x < descriptor.Dimensions[0]; x++ {
+			if packed, ok := record.payload.(*packed16VolumePayload); ok && sourceOffset%2 == 0 &&
+				sourceOffset/2+uint64(descriptor.Dimensions[0]) <= uint64(packed.count()) {
+				// Packed 16-bit stored rows (#1065): rescale without the
+				// per-voxel payload lookup; ValidateModalityF32Conversion
+				// already proved every stored value finite in float32.
+				base := int(sourceOffset / 2)
+				for x := 0; x < int(descriptor.Dimensions[0]); x++ {
+					var stored float64
+					if packed.signed != nil {
+						stored = float64(packed.signed[base+x])
+					} else {
+						stored = float64(packed.unsigned[base+x])
+					}
+					value := float32(stored*descriptor.RescaleSlope + descriptor.RescaleIntercept)
+					binary.LittleEndian.PutUint32(row[x*4:], math.Float32bits(value))
+				}
+				if err := writeExact(dst, row); err != nil {
+					return err
+				}
+				continue
+			}
+			for x := uint64(0); x < rowSamples; x++ {
 				if x&255 == 0 {
 					if err := ctx.Err(); err != nil {
 						return err
@@ -476,7 +519,7 @@ func validateVolumeDescriptor(descriptor VolumeDescriptor, generationPending boo
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", ErrInvalidVolumeSnapshot, fmt.Sprintf(format, args...))
 	}
-	if descriptor.ContractVersion != VolumeSnapshotContractVersion {
+	if descriptor.ContractVersion != VolumeSnapshotContractVersion && descriptor.ContractVersion != VolumeSnapshotContractVersionV2 {
 		return fail("contract version %d", descriptor.ContractVersion)
 	}
 	if descriptor.HeaderSize < VolumeSnapshotHeaderSizeV1 {
@@ -500,8 +543,12 @@ func validateVolumeDescriptor(descriptor VolumeDescriptor, generationPending boo
 		descriptor.ParentGeneration != 0 {
 		return fail("root generation has parent %d", descriptor.ParentGeneration)
 	}
-	if descriptor.Components != 1 {
-		return fail("components %d, want 1", descriptor.Components)
+	if descriptor.ContractVersion == VolumeSnapshotContractVersion && descriptor.Components != 1 {
+		return fail("V1 components %d, want 1", descriptor.Components)
+	}
+	if descriptor.ContractVersion == VolumeSnapshotContractVersionV2 &&
+		(descriptor.Components < 2 || descriptor.Components > 4 || descriptor.ScalarFormat != VolumeScalarF32ModalityLE) {
+		return fail("V2 requires two to four interleaved F32 modality components")
 	}
 	for axis, dimension := range descriptor.Dimensions {
 		if dimension == 0 {
@@ -526,7 +573,7 @@ func validateVolumeDescriptor(descriptor VolumeDescriptor, generationPending boo
 	if !finiteScalar(descriptor.RescaleSlope) || !finiteScalar(descriptor.RescaleIntercept) {
 		return fail("non-finite rescale")
 	}
-	packedRow, ok := checkedMul64(uint64(descriptor.Dimensions[0]), scalarSize)
+	packedRow, ok := checkedMul64(uint64(descriptor.Dimensions[0])*uint64(descriptor.Components), scalarSize)
 	if !ok {
 		return fail("packed row overflow")
 	}

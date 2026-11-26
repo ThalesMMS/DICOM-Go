@@ -1,7 +1,9 @@
 // Package spatialreg parses and applies DICOM Spatial Registration objects.
 // Affine transforms expose their validated forward and inverse directions.
-// Deformable transforms are exposed only in the registered-to-source direction
-// defined by DICOM. The package does not infer an inverse deformation field.
+// Deformable transforms map in the registered-to-source direction defined by
+// DICOM; the reverse direction is found per point by fixed-point iteration
+// (InvertPoint), which fails closed when the residual stays above its
+// tolerance or the deformation folds. No inverse field is stored or inferred.
 package spatialreg
 
 import (
@@ -124,6 +126,35 @@ func (g *Grid) VectorAt(x, y, z int) (render.Vec3, bool) {
 	return render.Vec3{X: float64(value.X), Y: float64(value.Y), Z: float64(value.Z)}, true
 }
 
+// NewGrid builds a deformation grid from displacements in millimetres, x
+// fastest, then y and z, as Vector Grid Data stores them: origin is the
+// first node, row and column the directions of the x and y axes (the z axis
+// is their cross product) and spacing the node distances. A vector with
+// all three components NaN is undefined; any other non-finite vector is
+// refused, as are non-orthonormal directions and mismatched counts.
+func NewGrid(origin, row, column, spacing render.Vec3, dimensions [3]uint32, vectors []render.Vec3) (*Grid, error) {
+	count, ok := checkedProduct64(uint64(dimensions[0]), uint64(dimensions[1]), uint64(dimensions[2]))
+	if !ok || count != uint64(len(vectors)) {
+		return nil, fmt.Errorf("%w: %d vectors for grid dimensions %v", ErrInvalidObject, len(vectors), dimensions)
+	}
+	if !finiteVec(origin) || !finitePositive(spacing.X) || !finitePositive(spacing.Y) || !finitePositive(spacing.Z) {
+		return nil, fmt.Errorf("%w: non-finite origin or non-positive spacing", ErrInvalidObject)
+	}
+	normal := row.Cross(column)
+	if !validBasis(row, column, normal) {
+		return nil, fmt.Errorf("%w: grid directions must be orthonormal", ErrInvalidObject)
+	}
+	grid := &Grid{Origin: origin, RowDirection: row, ColumnDirection: column, NormalDirection: normal.Normalize(), Spacing: spacing, Dimensions: dimensions, vectors: make([]vector3f, len(vectors))}
+	for index, v := range vectors {
+		value := vector3f{X: float32(v.X), Y: float32(v.Y), Z: float32(v.Z)}
+		if !undefinedVector(value) && !(finite(float64(value.X)) && finite(float64(value.Y)) && finite(float64(value.Z))) {
+			return nil, fmt.Errorf("%w: vector %d is partially undefined or non-finite", ErrInvalidObject, index)
+		}
+		grid.vectors[index] = value
+	}
+	return grid, nil
+}
+
 // Registration maps coordinates in the registered Frame of Reference to
 // sampling coordinates in SourceFrameOfReferenceUID.
 type Registration struct {
@@ -142,7 +173,7 @@ type Object struct {
 }
 
 // MapRegisteredToSource applies pre-matrix, interpolated displacement, then
-// post-matrix. It never attempts to invert a deformation field.
+// post-matrix; MapSourceToRegistered inverts it per point.
 func (r *Registration) MapRegisteredToSource(point render.Vec3) (render.Vec3, error) {
 	if r == nil || !finiteVec(point) {
 		return render.Vec3{}, fmt.Errorf("%w: non-finite registered point", ErrInvalidObject)

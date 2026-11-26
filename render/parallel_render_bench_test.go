@@ -96,3 +96,29 @@ func BenchmarkParallelIssue314CPRTransverse256(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkResliceAxisAligned512 reslices a sagittal plane of the axial
+// volume on the voxel grid (every sample is a voxel) and a scalar oblique
+// plane (#1007).
+func BenchmarkResliceAxisAligned512(b *testing.B) {
+	vol := benchmarkParallelRenderVolume(b)
+	origin := vol.VoxelToPatient(Vec3{X: 64, Y: 0, Z: 0})
+	plane := Plane{
+		Origin: origin,
+		U:      vol.VoxelToPatient(Vec3{X: 64, Y: 127, Z: 0}).Sub(origin),
+		V:      vol.VoxelToPatient(Vec3{X: 64, Y: 0, Z: 95}).Sub(origin),
+	}
+	b.Run("sagittal-128x96", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_, benchmarkParallelRenderErr = ResliceObliqueScalarContext(context.Background(), vol, plane, 128, 96)
+		}
+	})
+	b.Run("oblique-scalar-512", func(b *testing.B) {
+		oblique := obliqueInteriorPlane(vol)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_, benchmarkParallelRenderErr = ResliceObliqueScalarContext(context.Background(), vol, oblique, 512, 512)
+		}
+	})
+}

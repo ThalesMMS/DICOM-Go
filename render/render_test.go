@@ -49,10 +49,11 @@ func TestEffectiveFrameMetadataNormalizesCodecRGBOutput(t *testing.T) {
 		TransferSyntaxUID: transfer.RLELossless.UID,
 		Metadata:          original,
 	})
+	// RLE keeps the photometric but decodes color-by-plane segments to
+	// interleaved samples.
 	if got.PhotometricInterpretation != original.PhotometricInterpretation ||
-		got.PlanarConfiguration != original.PlanarConfiguration ||
-		got.PlanarConfigurationPresent != original.PlanarConfigurationPresent {
-		t.Fatalf("RLE metadata = %+v, want unchanged %+v", got, original)
+		got.PlanarConfiguration != 0 || !got.PlanarConfigurationPresent {
+		t.Fatalf("RLE metadata = %+v, want %s interleaved", got, original.PhotometricInterpretation)
 	}
 }
 
@@ -312,8 +313,10 @@ func Test_AutoWindow_returns_full_dynamic_range_when_frame_has_contrast(t *testi
 	if !ok {
 		t.Fatal("AutoWindow() ok = false, want true")
 	}
-	if wl.Center != 127.5 || wl.Width != 255 {
-		t.Fatalf("AutoWindow() = %+v, want center 127.5 width 255", wl)
+	// LINEAR maps 0 to black and 255 to white with center (min+max+1)/2 and
+	// width max-min+1 (DCMTK +Wm).
+	if wl.Center != 128 || wl.Width != 256 {
+		t.Fatalf("AutoWindow() = %+v, want center 128 width 256", wl)
 	}
 }
 
@@ -344,8 +347,9 @@ func Test_AutoWindow_applies_rescale_to_native_16_bit_pixels(t *testing.T) {
 	if !ok {
 		t.Fatal("AutoWindow() ok = false, want true")
 	}
-	if wl.Center != 3000 || wl.Width != 8000 {
-		t.Fatalf("AutoWindow() = %+v, want center 3000 width 8000", wl)
+	// -1000..7000 in steps of the slope (2): width 8000+2, center 3001.
+	if wl.Center != 3001 || wl.Width != 8002 {
+		t.Fatalf("AutoWindow() = %+v, want center 3001 width 8002", wl)
 	}
 }
 

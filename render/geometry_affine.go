@@ -30,6 +30,17 @@ func (a GeometryAffine) Finite() bool {
 		math.Abs(a[15]-1) <= 1e-12
 }
 
+// Inverse returns the inverse of a finite, nonsingular homogeneous affine.
+// It uses the same admission and inversion as volume geometry construction.
+func (a GeometryAffine) Inverse() (GeometryAffine, bool) {
+	if !a.Finite() {
+		return GeometryAffine{}, false
+	}
+	_, inverse, ok := geometryAffinePair(Vec3{X: a[3], Y: a[7], Z: a[11]},
+		Vec3{X: a[0], Y: a[4], Z: a[8]}, Vec3{X: a[1], Y: a[5], Z: a[9]}, Vec3{X: a[2], Y: a[6], Z: a[10]})
+	return inverse, ok
+}
+
 func geometryAffinePair(origin, xStep, yStep, zStep Vec3) (indexToPatient, patientToIndex GeometryAffine, ok bool) {
 	if !finiteVec3(origin) || !finiteVec3(xStep) || !finiteVec3(yStep) || !finiteVec3(zStep) {
 		return GeometryAffine{}, GeometryAffine{}, false

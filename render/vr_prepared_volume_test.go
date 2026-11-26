@@ -169,10 +169,43 @@ func TestVRViewportBackgroundIsOpaqueAndLightingGainIsNotNormalized(t *testing.T
 		ColSpacing: 1, RowSpacing: 1, SliceSpacing: 1,
 	}
 	material := GlossyVascularVRLightingMaterial()
-	got := volume.shadeVRWithGradient(Vec3{X: 2}, Vec3{X: 1}, material)
-	wantGain := material.Ambient + material.Diffuse + material.Specular
-	if math.Abs(got-wantGain) > 1e-12 || got <= 1 {
-		t.Fatalf("glossy headlight gain = %g, want unnormalized %g", got, wantGain)
+	lit, specular := volume.shadeVRWithGradient(Vec3{X: 2}, Vec3{X: 1}, material)
+	if math.Abs(lit-(material.Ambient+material.Diffuse)) > 1e-12 || math.Abs(specular-material.Specular) > 1e-12 || specular <= 1 {
+		t.Fatalf("glossy headlight = %g + %g, want unnormalized %g + %g", lit, specular, material.Ambient+material.Diffuse, material.Specular)
+	}
+}
+
+// TestHeadlightShadingIsVTKs (#1063): white specular added to the tinted
+// ambient + diffuse, two-sided, with the reflection lobe r·v = 2(n·l)²-1.
+func TestHeadlightShadingIsVTKs(t *testing.T) {
+	material := VRLightingMaterial{Ambient: 0.1, Diffuse: 0.6, Specular: 0.5, SpecularPower: 2}
+	eye := Vec3{Z: 1}
+	for _, test := range []struct {
+		name          string
+		normal        Vec3
+		lit, specular float64
+	}{
+		{"facing", Vec3{Z: 1}, 0.7, 0.5},
+		{"back face lit as the front", Vec3{Z: -1}, 0.7, 0.5},
+		// n·l = cos 45°: r·v = 0, no highlight; Blinn-on-n·v would give 0.25.
+		{"45 degrees", Vec3{Y: 1, Z: 1}.Normalize(), 0.1 + 0.6*math.Sqrt2/2, 0},
+		// n·l = cos 30°: r·v = 0.5.
+		{"30 degrees", Vec3{Y: 0.5, Z: math.Sqrt(3) / 2}, 0.1 + 0.6*math.Sqrt(3)/2, 0.5 * 0.25},
+		{"grazing", Vec3{Y: 1}, 0.1, 0},
+	} {
+		lit, specular := headlightShading(test.normal, eye, material)
+		if math.Abs(lit-test.lit) > 1e-12 || math.Abs(specular-test.specular) > 1e-12 {
+			t.Errorf("%s: lit %g specular %g, want %g %g", test.name, lit, specular, test.lit, test.specular)
+		}
+	}
+	// The highlight is white: a red sample gains the same specular in every
+	// channel instead of a brighter red.
+	lit, specular := headlightShading(Vec3{Z: 1}, eye, material)
+	if r, g := 1*lit+specular, 0*lit+specular; g != specular || r <= g {
+		t.Fatalf("red sample shaded to %g/%g", r, g)
+	}
+	if vrOpacityThreshold != 1-1.0/255 {
+		t.Fatalf("opacity threshold %g", vrOpacityThreshold)
 	}
 }
 

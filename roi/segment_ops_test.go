@@ -2,6 +2,7 @@ package roi
 
 import (
 	"context"
+	"image"
 	"math"
 	"runtime"
 	"sync"
@@ -36,6 +37,50 @@ func Test_Brush_sets_and_erases_filled_disc(t *testing.T) {
 	}
 }
 
+func TestBrushSegmentUsesExactClippedPixelCenters(t *testing.T) {
+	tests := []struct {
+		name        string
+		first, last image.Point
+		radius      int
+		want        []string
+	}{
+		{"point", image.Pt(2, 2), image.Pt(2, 2), 1,
+			[]string{".....", "..#..", ".###.", "..#..", "....."}},
+		{"horizontal", image.Pt(4, 1), image.Pt(1, 1), 0,
+			[]string{".....", ".####", ".....", ".....", "....."}},
+		{"diagonal", image.Pt(0, 4), image.Pt(4, 0), 0,
+			[]string{"....#", "...#.", "..#..", ".#...", "#...."}},
+		{"steep half ties", image.Pt(2, 4), image.Pt(0, 0), 0,
+			[]string{"#....", ".#...", ".#...", "..#..", "..#.."}},
+		{"clipped discs", image.Pt(-1, 0), image.Pt(2, 0), 1,
+			[]string{"####.", "###..", ".....", ".....", "....."}},
+		{"negative half tie", image.Pt(0, -1), image.Pt(2, 0), 0,
+			[]string{".##..", ".....", ".....", ".....", "....."}},
+		{"distant endpoints", image.Pt(-1000000000, 2), image.Pt(1000000000, 2), 0,
+			[]string{".....", ".....", "#####", ".....", "....."}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mask := NewRasterMask(len(tt.want[0]), len(tt.want))
+			mask.BrushSegment(tt.first, tt.last, tt.radius, true)
+			for y, row := range tt.want {
+				for x := range row {
+					if got, want := mask.Get(x, y), row[x] == '#'; got != want {
+						t.Errorf("pixel (%d,%d) = %v, want %v", x, y, got, want)
+					}
+				}
+			}
+
+			// Erasing the same stroke leaves an unrelated pixel alone.
+			mask.Set(4, 3, true)
+			mask.BrushSegment(tt.first, tt.last, tt.radius, false)
+			if mask.Count() != 1 || !mask.Get(4, 3) {
+				t.Fatalf("erase left %d pixels, want only (4,3)", mask.Count())
+			}
+		})
+	}
+}
+
 func Test_ThresholdMask_groups_inclusive_range_into_runs(t *testing.T) {
 	// Given
 	valueAt := func(x, y int) (float64, bool) {
@@ -51,6 +96,18 @@ func Test_ThresholdMask_groups_inclusive_range_into_runs(t *testing.T) {
 	}
 	if !mask.Get(2, 0) || !mask.Get(4, 0) || mask.Get(1, 0) || mask.Get(5, 0) {
 		t.Fatal("threshold membership incorrect")
+	}
+}
+
+func TestThresholdMaskExcludesNonfiniteSamples(t *testing.T) {
+	values := []float64{math.NaN(), -1, math.NaN(), 1, math.Inf(-1), math.Inf(1)}
+	for _, bounds := range [][2]float64{{-1, 1}, {math.Inf(-1), math.Inf(1)}} {
+		mask := ThresholdMask(len(values), 1, bounds[0], bounds[1], func(x, y int) (float64, bool) {
+			return values[x], true
+		})
+		if mask.Count() != 2 || !mask.Get(1, 0) || !mask.Get(3, 0) {
+			t.Errorf("bounds %v: mask has %d pixels, want only the two finite samples", bounds, mask.Count())
+		}
 	}
 }
 

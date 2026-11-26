@@ -70,16 +70,22 @@ func (r *VolumeReader) Close() error {
 }
 
 type volumeSampler struct {
-	vol         *Volume
-	lease       *VolumeLease
-	descriptor  VolumeDescriptor
-	payload     volumePayload
-	values      []float32
-	cols        int
-	rows        int
-	depth       int
-	photometric string
-	invert      bool
+	vol        *Volume
+	lease      *VolumeLease
+	descriptor VolumeDescriptor
+	payload    volumePayload
+	values     []float32
+	// Packed 16-bit stored samples (#1065) with their rescale.
+	signed16         []int16
+	unsigned16       []uint16
+	slope, intercept float64
+	// Selected once: bounded affine reassociation for trilinear-only sampling.
+	packed16Affine bool
+	cols           int
+	rows           int
+	depth          int
+	photometric    string
+	invert         bool
 }
 
 // newVolumeSampler creates a volumeSampler from the given Volume, validating its dimensions and determining its photometric interpretation. It returns the sampler and true if vol is valid and non-nil, or nil and false otherwise.
@@ -143,8 +149,35 @@ func newVolumeSamplerFromLease(vol *Volume, lease *VolumeLease) (*volumeSampler,
 		record.descriptor.SliceStrideBytes == uint64(vol.Rows)*packedRow {
 		sampler.values = payload.data
 	}
+	if payload, ok := record.payload.(*packed16VolumePayload); ok &&
+		record.descriptor.RowStrideBytes == uint64(vol.Cols)*2 &&
+		record.descriptor.SliceStrideBytes == uint64(vol.Rows)*uint64(vol.Cols)*2 {
+		sampler.signed16, sampler.unsigned16 = payload.signed, payload.unsigned
+		sampler.slope, sampler.intercept = record.descriptor.RescaleSlope, record.descriptor.RescaleIntercept
+		maxStored := float64(65535)
+		if payload.signed != nil {
+			maxStored = 32768
+		}
+		// The old and reassociated paths each perform three convex lerps and
+		// an affine rescale. 64 machine epsilons conservatively cover their
+		// combined rounding error, including rounded (1-f) weights. Overflow
+		// or a large rescale stays on the original per-corner path.
+		scale := maxStored*math.Abs(sampler.slope) + math.Abs(sampler.intercept)
+		sampler.packed16Affine = scale <= packed16AffineErrorBudget/(64*0x1p-52)
+	}
 	return sampler, nil
 }
+
+// packed16At is the modality value of packed 16-bit sample offset.
+func (s *volumeSampler) packed16At(offset int) float64 {
+	if s.signed16 != nil {
+		return float64(s.signed16[offset])*s.slope + s.intercept
+	}
+	return float64(s.unsigned16[offset])*s.slope + s.intercept
+}
+
+// packed16 reports whether packed 16-bit samples back the sampler.
+func (s *volumeSampler) packed16() bool { return s.signed16 != nil || s.unsigned16 != nil }
 
 func newDecodedVolumeSampler(vol *Volume) (*volumeSampler, bool) {
 	if vol == nil || vol.Cols <= 0 || vol.Rows <= 0 || vol.Depth <= 0 {
@@ -175,6 +208,8 @@ func (s *volumeSampler) Close() {
 	s.descriptor = VolumeDescriptor{}
 	s.payload = nil
 	s.values = nil
+	s.signed16, s.unsigned16 = nil, nil
+	s.packed16Affine = false
 }
 
 func (s *volumeSampler) valueAt(col, row, slice int) (float64, bool) {
@@ -186,6 +221,9 @@ func (s *volumeSampler) valueAt(col, row, slice int) (float64, bool) {
 		if offset >= 0 && offset < len(s.values) {
 			return float64(s.values[offset]), true
 		}
+	}
+	if s.packed16() {
+		return s.packed16At((slice*s.rows+row)*s.cols + col), true
 	}
 	if s.payload == nil {
 		return 0, false
@@ -201,8 +239,60 @@ func (s *volumeSampler) valueAt(col, row, slice int) (float64, bool) {
 }
 
 func (s *volumeSampler) trilinearAt(p Vec3) (float64, bool) {
+	// A point on the voxel grid (axis-aligned planes through voxel centres)
+	// is the voxel itself: skip the eight-corner gather (#1007).
+	if s != nil && p.X >= 0 && p.Y >= 0 && p.Z >= 0 &&
+		p.X == math.Trunc(p.X) && p.Y == math.Trunc(p.Y) && p.Z == math.Trunc(p.Z) &&
+		p.X < float64(s.cols) && p.Y < float64(s.rows) && p.Z < float64(s.depth) {
+		return s.valueAt(int(p.X), int(p.Y), int(p.Z))
+	}
+	if s != nil && s.packed16Affine {
+		return s.packed16TrilinearAt(p)
+	}
 	sample, ok := s.voxelSample(p)
 	return sample.value(), ok
+}
+
+// packed16AffineErrorBudget is an absolute modality-value error bound relative
+// to the former per-corner path, not a displayed-pixel or clinical tolerance.
+const packed16AffineErrorBudget = 1e-8
+
+// packed16TrilinearAt interpolates normalized stored samples and applies the
+// common rescale once. voxelSample remains in modality units: derivative/DVR
+// callers need its original corner values, including large rescale fallbacks.
+func (s *volumeSampler) packed16TrilinearAt(p Vec3) (float64, bool) {
+	var ok bool
+	if p.X, ok = clampToGrid(p.X, s.cols); !ok {
+		return 0, false
+	}
+	if p.Y, ok = clampToGrid(p.Y, s.rows); !ok {
+		return 0, false
+	}
+	if p.Z, ok = clampToGrid(p.Z, s.depth); !ok {
+		return 0, false
+	}
+	x0, y0, z0 := int(math.Floor(p.X)), int(math.Floor(p.Y)), int(math.Floor(p.Z))
+	x1, y1, z1 := min(x0+1, s.cols-1), min(y0+1, s.rows-1), min(z0+1, s.depth-1)
+	plane := s.rows * s.cols
+	r00, r10 := z0*plane+y0*s.cols, z0*plane+y1*s.cols
+	r01, r11 := z1*plane+y0*s.cols, z1*plane+y1*s.cols
+	sample := volumeTextureSample{
+		fx: p.X - float64(x0), fy: p.Y - float64(y0), fz: p.Z - float64(z0),
+	}
+	if s.signed16 != nil {
+		v := s.signed16
+		sample.c000, sample.c100 = float64(v[r00+x0]), float64(v[r00+x1])
+		sample.c010, sample.c110 = float64(v[r10+x0]), float64(v[r10+x1])
+		sample.c001, sample.c101 = float64(v[r01+x0]), float64(v[r01+x1])
+		sample.c011, sample.c111 = float64(v[r11+x0]), float64(v[r11+x1])
+	} else {
+		v := s.unsigned16
+		sample.c000, sample.c100 = float64(v[r00+x0]), float64(v[r00+x1])
+		sample.c010, sample.c110 = float64(v[r10+x0]), float64(v[r10+x1])
+		sample.c001, sample.c101 = float64(v[r01+x0]), float64(v[r01+x1])
+		sample.c011, sample.c111 = float64(v[r11+x0]), float64(v[r11+x1])
+	}
+	return sample.value()*s.slope + s.intercept, true
 }
 
 func (s *volumeSampler) textureAt(tex Vec3) (float64, bool) {
@@ -236,24 +326,95 @@ func (s *volumeSampler) textureSample(tex Vec3) (volumeTextureSample, bool) {
 	return s.voxelSample(p)
 }
 
+// voxelBorderTolerance widens the half-voxel border so a position that
+// rounding puts a hair past it (a plane moved 0.499999 slice beyond the last
+// one) still samples the edge voxels (VTK bb7d5f73).
+const voxelBorderTolerance = 1e-3
+
+// voxelSample is the trilinear sample at fractional voxel coordinates p under
+// the volume's border policy (#1005): a position within half a voxel of the
+// grid is clamped to it, so edge samples repeat the edge voxels instead of
+// blending with a value the volume does not hold (0 is water in CT); a
+// position farther out is outside (ok false) and callers paint their
+// background.
 func (s *volumeSampler) voxelSample(p Vec3) (volumeTextureSample, bool) {
 	if s == nil {
+		return volumeTextureSample{}, false
+	}
+	var ok bool
+	if p.X, ok = clampToGrid(p.X, s.cols); !ok {
+		return volumeTextureSample{}, false
+	}
+	if p.Y, ok = clampToGrid(p.Y, s.rows); !ok {
+		return volumeTextureSample{}, false
+	}
+	if p.Z, ok = clampToGrid(p.Z, s.depth); !ok {
 		return volumeTextureSample{}, false
 	}
 	x0 := int(math.Floor(p.X))
 	y0 := int(math.Floor(p.Y))
 	z0 := int(math.Floor(p.Z))
-	if x0 < -1 || y0 < -1 || z0 < -1 || x0 >= s.cols || y0 >= s.rows || z0 >= s.depth {
-		return volumeTextureSample{}, false
+	x1, y1, z1 := min(x0+1, s.cols-1), min(y0+1, s.rows-1), min(z0+1, s.depth-1)
+	if len(s.values) > 0 {
+		// Packed float32 voxels: the eight corners by offset (#1007).
+		plane := s.rows * s.cols
+		r00, r10 := z0*plane+y0*s.cols, z0*plane+y1*s.cols
+		r01, r11 := z1*plane+y0*s.cols, z1*plane+y1*s.cols
+		v := s.values
+		return volumeTextureSample{
+			x0: x0, y0: y0, z0: z0,
+			fx: p.X - float64(x0), fy: p.Y - float64(y0), fz: p.Z - float64(z0),
+			c000: float64(v[r00+x0]), c100: float64(v[r00+x1]),
+			c010: float64(v[r10+x0]), c110: float64(v[r10+x1]),
+			c001: float64(v[r01+x0]), c101: float64(v[r01+x1]),
+			c011: float64(v[r11+x0]), c111: float64(v[r11+x1]),
+		}, true
+	}
+	if s.packed16() {
+		// Packed 16-bit stored samples (#1065), rescaled per corner.
+		plane := s.rows * s.cols
+		r00, r10 := z0*plane+y0*s.cols, z0*plane+y1*s.cols
+		r01, r11 := z1*plane+y0*s.cols, z1*plane+y1*s.cols
+		return volumeTextureSample{
+			x0: x0, y0: y0, z0: z0,
+			fx: p.X - float64(x0), fy: p.Y - float64(y0), fz: p.Z - float64(z0),
+			c000: s.packed16At(r00 + x0), c100: s.packed16At(r00 + x1),
+			c010: s.packed16At(r10 + x0), c110: s.packed16At(r10 + x1),
+			c001: s.packed16At(r01 + x0), c101: s.packed16At(r01 + x1),
+			c011: s.packed16At(r11 + x0), c111: s.packed16At(r11 + x1),
+		}, true
 	}
 	return volumeTextureSample{
 		x0: x0, y0: y0, z0: z0,
 		fx: p.X - float64(x0), fy: p.Y - float64(y0), fz: p.Z - float64(z0),
-		c000: s.valueOrZero(x0, y0, z0), c100: s.valueOrZero(x0+1, y0, z0),
-		c010: s.valueOrZero(x0, y0+1, z0), c110: s.valueOrZero(x0+1, y0+1, z0),
-		c001: s.valueOrZero(x0, y0, z0+1), c101: s.valueOrZero(x0+1, y0, z0+1),
-		c011: s.valueOrZero(x0, y0+1, z0+1), c111: s.valueOrZero(x0+1, y0+1, z0+1),
+		c000: s.valueOrZero(x0, y0, z0), c100: s.valueOrZero(x1, y0, z0),
+		c010: s.valueOrZero(x0, y1, z0), c110: s.valueOrZero(x1, y1, z0),
+		c001: s.valueOrZero(x0, y0, z1), c101: s.valueOrZero(x1, y0, z1),
+		c011: s.valueOrZero(x0, y1, z1), c111: s.valueOrZero(x1, y1, z1),
 	}, true
+}
+
+// clampToGrid clamps a voxel coordinate on an axis of n voxels to [0,n-1]
+// when it lies inside the axis (-0.5 <= v < n-0.5, #1115) widened by
+// voxelBorderTolerance.
+func clampToGrid(v float64, n int) (float64, bool) {
+	return ClampContinuousIndex(v, n, voxelBorderTolerance)
+}
+
+// clampIndex clamps a voxel coordinate to the grid [0,n-1] on every axis: the
+// gradient stencils repeat the edge voxels (VTK's clamp-to-edge volume
+// texture) rather than reading past them.
+func (s *volumeSampler) clampIndex(p Vec3) Vec3 {
+	return Vec3{
+		X: math.Max(0, math.Min(float64(s.cols-1), p.X)),
+		Y: math.Max(0, math.Min(float64(s.rows-1), p.Y)),
+		Z: math.Max(0, math.Min(float64(s.depth-1), p.Z)),
+	}
+}
+
+// valueClamped is the voxel at the indices clamped to the grid.
+func (s *volumeSampler) valueClamped(col, row, slice int) float64 {
+	return s.valueOrZero(max(0, min(col, s.cols-1)), max(0, min(row, s.rows-1)), max(0, min(slice, s.depth-1)))
 }
 
 func (sample volumeTextureSample) value() float64 {
@@ -304,24 +465,24 @@ func (cell *volumeGradientCell) prepare(s *volumeSampler, sample volumeTextureSa
 	}
 	for z := 0; z < 2; z++ {
 		for y := 0; y < 2; y++ {
-			left := s.valueOrZero(sample.x0-1, sample.y0+y, sample.z0+z)
-			right := s.valueOrZero(sample.x0+2, sample.y0+y, sample.z0+z)
+			left := s.valueClamped(sample.x0-1, sample.y0+y, sample.z0+z)
+			right := s.valueClamped(sample.x0+2, sample.y0+y, sample.z0+z)
 			cell.gradients[z][y][0].X = c[z][y][1] - left
 			cell.gradients[z][y][1].X = right - c[z][y][0]
 		}
 	}
 	for z := 0; z < 2; z++ {
 		for x := 0; x < 2; x++ {
-			below := s.valueOrZero(sample.x0+x, sample.y0-1, sample.z0+z)
-			above := s.valueOrZero(sample.x0+x, sample.y0+2, sample.z0+z)
+			below := s.valueClamped(sample.x0+x, sample.y0-1, sample.z0+z)
+			above := s.valueClamped(sample.x0+x, sample.y0+2, sample.z0+z)
 			cell.gradients[z][0][x].Y = c[z][1][x] - below
 			cell.gradients[z][1][x].Y = above - c[z][0][x]
 		}
 	}
 	for y := 0; y < 2; y++ {
 		for x := 0; x < 2; x++ {
-			behind := s.valueOrZero(sample.x0+x, sample.y0+y, sample.z0-1)
-			inFront := s.valueOrZero(sample.x0+x, sample.y0+y, sample.z0+2)
+			behind := s.valueClamped(sample.x0+x, sample.y0+y, sample.z0-1)
+			inFront := s.valueClamped(sample.x0+x, sample.y0+y, sample.z0+2)
 			cell.gradients[0][y][x].Z = c[1][y][x] - behind
 			cell.gradients[1][y][x].Z = inFront - c[0][y][x]
 		}
@@ -345,12 +506,16 @@ func (s *volumeSampler) gradientAt(tex Vec3) Vec3 {
 	dx := 1.0 / float64(maxInt(s.cols, 2))
 	dy := 1.0 / float64(maxInt(s.rows, 2))
 	dz := 1.0 / float64(maxInt(s.depth, 2))
-	hx1, _ := s.textureAt(Vec3{tex.X + dx, tex.Y, tex.Z})
-	hx0, _ := s.textureAt(Vec3{tex.X - dx, tex.Y, tex.Z})
-	hy1, _ := s.textureAt(Vec3{tex.X, tex.Y + dy, tex.Z})
-	hy0, _ := s.textureAt(Vec3{tex.X, tex.Y - dy, tex.Z})
-	hz1, _ := s.textureAt(Vec3{tex.X, tex.Y, tex.Z + dz})
-	hz0, _ := s.textureAt(Vec3{tex.X, tex.Y, tex.Z - dz})
+	clamped := func(t Vec3) float64 {
+		v, _ := s.textureAt(Vec3{X: math.Max(0, math.Min(1, t.X)), Y: math.Max(0, math.Min(1, t.Y)), Z: math.Max(0, math.Min(1, t.Z))})
+		return v
+	}
+	hx1 := clamped(Vec3{tex.X + dx, tex.Y, tex.Z})
+	hx0 := clamped(Vec3{tex.X - dx, tex.Y, tex.Z})
+	hy1 := clamped(Vec3{tex.X, tex.Y + dy, tex.Z})
+	hy0 := clamped(Vec3{tex.X, tex.Y - dy, tex.Z})
+	hz1 := clamped(Vec3{tex.X, tex.Y, tex.Z + dz})
+	hz0 := clamped(Vec3{tex.X, tex.Y, tex.Z - dz})
 	return Vec3{X: hx1 - hx0, Y: hy1 - hy0, Z: hz1 - hz0}
 }
 
@@ -363,13 +528,53 @@ func (s *volumeSampler) gradientIndexAt(tex Vec3) Vec3 {
 		Y: tex.Y * float64(s.rows-1),
 		Z: tex.Z * float64(s.depth-1),
 	}
-	hx1, _ := s.trilinearAt(index.Add(Vec3{X: 1}))
-	hx0, _ := s.trilinearAt(index.Add(Vec3{X: -1}))
-	hy1, _ := s.trilinearAt(index.Add(Vec3{Y: 1}))
-	hy0, _ := s.trilinearAt(index.Add(Vec3{Y: -1}))
-	hz1, _ := s.trilinearAt(index.Add(Vec3{Z: 1}))
-	hz0, _ := s.trilinearAt(index.Add(Vec3{Z: -1}))
+	hx1, _ := s.trilinearAt(s.clampIndex(index.Add(Vec3{X: 1})))
+	hx0, _ := s.trilinearAt(s.clampIndex(index.Add(Vec3{X: -1})))
+	hy1, _ := s.trilinearAt(s.clampIndex(index.Add(Vec3{Y: 1})))
+	hy0, _ := s.trilinearAt(s.clampIndex(index.Add(Vec3{Y: -1})))
+	hz1, _ := s.trilinearAt(s.clampIndex(index.Add(Vec3{Z: 1})))
+	hz0, _ := s.trilinearAt(s.clampIndex(index.Add(Vec3{Z: -1})))
 	return Vec3{X: hx1 - hx0, Y: hy1 - hy0, Z: hz1 - hz0}
+}
+
+// clippedGradientIndex is gradientIndexAt with the neighbours that a cut
+// plane removes read as clippedValue (VTK's ClippedVoxelIntensity, #1067), so
+// a cut face has the gradient of a surface. ok is false when no neighbour is
+// cut: the caller keeps its usual gradient.
+func (s *volumeSampler) clippedGradientIndex(tex Vec3, clip *VRClip, clippedValue float64) (gradient Vec3, ok bool) {
+	index := Vec3{
+		X: tex.X * float64(s.cols-1),
+		Y: tex.Y * float64(s.rows-1),
+		Z: tex.Z * float64(s.depth-1),
+	}
+	texOf := func(q Vec3) Vec3 {
+		axis := func(v float64, n int) float64 {
+			if n <= 1 {
+				return 0
+			}
+			return v / float64(n-1)
+		}
+		return Vec3{X: axis(q.X, s.cols), Y: axis(q.Y, s.rows), Z: axis(q.Z, s.depth)}
+	}
+	var neighbours [6]Vec3
+	for i, offset := range [6]Vec3{{X: 1}, {X: -1}, {Y: 1}, {Y: -1}, {Z: 1}, {Z: -1}} {
+		neighbours[i] = s.clampIndex(index.Add(offset))
+		if clip.cutAway(texOf(neighbours[i])) {
+			ok = true
+		}
+	}
+	if !ok {
+		return Vec3{}, false
+	}
+	var values [6]float64
+	for i, q := range neighbours {
+		if clip.cutAway(texOf(q)) {
+			values[i] = clippedValue
+			continue
+		}
+		values[i], _ = s.trilinearAt(q)
+	}
+	return Vec3{X: values[0] - values[1], Y: values[2] - values[3], Z: values[4] - values[5]}, true
 }
 
 func (s *volumeSampler) gradientOpacityVector(indexGradient Vec3) Vec3 {

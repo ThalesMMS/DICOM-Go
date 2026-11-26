@@ -47,24 +47,26 @@ func (v *Volume) huRangeFromSampler(sampler *volumeSampler) (huMin, huMax float6
 	}
 	huMin, huMax = math.Inf(1), math.Inf(-1)
 	found := false
-	i := 0
-	for z := 0; z < sampler.depth; z++ {
-		for y := 0; y < sampler.rows; y++ {
-			for x := 0; x < sampler.cols; x++ {
-				if i%stride == 0 {
-					if val, valid := sampler.valueAt(x, y, z); valid {
-						if val < huMin {
-							huMin = val
-						}
-						if val > huMax {
-							huMax = val
-						}
-						found = true
-					}
-				}
-				i++
+	// Visit exactly the previous flattened sample indices. Iterating every
+	// skipped voxel made the supposedly bounded range scan linear in the entire
+	// acquisition, even when only ~target samples were actually inspected.
+	for i := 0; i < total; {
+		x := i % sampler.cols
+		plane := i / sampler.cols
+		y, z := plane%sampler.rows, plane/sampler.rows
+		if val, valid := sampler.valueAt(x, y, z); valid {
+			if val < huMin {
+				huMin = val
 			}
+			if val > huMax {
+				huMax = val
+			}
+			found = true
 		}
+		if stride >= total-i {
+			break
+		}
+		i += stride
 	}
 	if !found {
 		return 0, 0, false
@@ -146,15 +148,6 @@ func (v *Volume) SampleHUTexture(tex Vec3) (float64, bool) {
 	return v.TrilinearAt(v.TextureToVoxel(tex))
 }
 
-// shadeAt returns a Blinn-Phong shading multiplier for the sample at texture
-// coordinate tex viewed along viewDir (3d-toolbar-plan.md §5.6). The surface
-// normal is the central-difference HU gradient (six trilinear samples); a
-// head-light (light = eye) drives diffuse + specular over an ambient term. Flat
-// regions (tiny gradient) return ambient only.
-func (v *Volume) shadeAt(tex, viewDir Vec3) float64 {
-	return v.shadeWithGradient(v.gradientAt(tex), viewDir)
-}
-
 // gradientAt returns the central-difference HU gradient at texture coordinate tex
 // (six trilinear samples one voxel apart). It drives both Blinn-Phong shading and
 // gradient-opacity modulation, so the renderer computes it once per opaque sample.
@@ -171,35 +164,56 @@ func (v *Volume) gradientAt(tex Vec3) Vec3 {
 	return Vec3{X: hx1 - hx0, Y: hy1 - hy0, Z: hz1 - hz0}
 }
 
-// shadeWithGradient is the Blinn-Phong shading multiplier for a sample with the
-// given HU gradient, viewed along viewDir, under a head-light (light = eye). Flat
-// regions (tiny gradient) return ambient only.
-func (v *Volume) shadeWithGradient(grad, viewDir Vec3) float64 {
-	const ambient, kd, ks, shininess = 0.3, 0.7, 0.3, 20.0
+// shadeWithGradient is the surface shading of a sample with the given HU
+// gradient viewed along viewDir under a headlight, in the model of
+// headlightShading with the legacy surface material: the shaded colour is
+// colour*lit + specular. Flat regions (tiny gradient) are ambient only.
+func (v *Volume) shadeWithGradient(grad, viewDir Vec3) (lit, specular float64) {
+	material := legacyVRLightingMaterial()
 	g := grad.Length()
 	if g < 1e-6 {
-		return ambient
+		return material.Ambient, 0
 	}
 	n := grad.Scale(-1 / g) // outward (toward lower density)
-	eye := viewDir.Scale(-1).Normalize()
-	diffuse := math.Max(n.Dot(eye), 0)
-	half := eye // light == eye (headlight) → half == eye
-	spec := math.Pow(math.Max(n.Dot(half), 0), shininess)
-	out := ambient + kd*diffuse + ks*spec
-	if out < 0 {
-		out = 0
-	}
-	return out
+	return headlightShading(n, viewDir.Scale(-1).Normalize(), material)
 }
 
-// shadeVRWithGradient implements the shared CPU/WebGPU DVR convention. The
-// scalar central difference arrives in index space without the 0.5 divisor;
+// vrOpacityThreshold ends a ray once its accumulated opacity leaves less
+// than one 8-bit step of the background visible, VTK's
+// g_opacityThreshold (the former 0.95 let up to 5% of the background leak
+// through opaque tissue, #1063).
+const vrOpacityThreshold = 1 - 1.0/255
+
+// headlightShading is VTK's default headlight model for volumes
+// (vtkVolumeShaderComposer, two-sided lighting as vtkRenderer's default,
+// #1063): with light = eye and unit normal n, the shaded colour is
+// colour*(ambient + diffuse*|n·l|) plus a white specular highlight
+// specular*max(r·v, 0)^power added on top, where r reflects the light about
+// n, so r·v = 2(n·l)²-1. Specular is not tinted by the tissue colour.
+func headlightShading(normal, eye Vec3, material VRLightingMaterial) (lit, specular float64) {
+	nDotL := normal.Dot(eye)
+	rDotV := 2*nDotL*nDotL - 1
+	nDotL = math.Abs(nDotL)
+	if !(nDotL > 0) {
+		return material.Ambient, 0
+	}
+	lit = material.Ambient + material.Diffuse*nDotL
+	if rDotV > 0 {
+		specular = material.Specular * math.Pow(rDotV, material.SpecularPower)
+	} else if material.SpecularPower == 0 {
+		specular = material.Specular
+	}
+	return lit, specular
+}
+
+// shadeVRWithGradient implements the shared CPU/WebGPU DVR convention: the
+// shaded colour is colour*lit + specular (headlightShading). The scalar
+// central difference arrives in index space without the 0.5 divisor;
 // transforming the covector by transpose(PatientLPSToIndex) produces a
-// physical patient-LPS normal. A headlight makes light and view direction
-// identical, so Blinn-Phong's half vector is simply the eye vector.
-func (v *Volume) shadeVRWithGradient(indexGradient, viewDir Vec3, material VRLightingMaterial) float64 {
+// physical patient-LPS normal.
+func (v *Volume) shadeVRWithGradient(indexGradient, viewDir Vec3, material VRLightingMaterial) (lit, specular float64) {
 	if v == nil || !material.valid() {
-		return 0
+		return 0, 0
 	}
 	physical := Vec3{}
 	if v.ColSpacing > 0 {
@@ -213,18 +227,13 @@ func (v *Volume) shadeVRWithGradient(indexGradient, viewDir Vec3, material VRLig
 	}
 	magnitude := physical.Length()
 	if magnitude <= 1e-6 {
-		return material.Ambient
+		return material.Ambient, 0
 	}
 	normal := physical.Scale(-1 / magnitude)
 	patientViewDirection := v.AxisX.Scale(viewDir.X).
 		Add(v.AxisY.Scale(viewDir.Y)).
 		Add(v.Normal.Scale(viewDir.Z))
-	eye := patientViewDirection.Scale(-1).Normalize()
-	incidence := math.Max(normal.Dot(eye), 0)
-	illumination := material.Ambient +
-		material.Diffuse*incidence +
-		material.Specular*math.Pow(incidence, material.SpecularPower)
-	return math.Max(illumination, 0)
+	return headlightShading(normal, patientViewDirection.Scale(-1).Normalize(), material)
 }
 
 func maxInt(a, b int) int {

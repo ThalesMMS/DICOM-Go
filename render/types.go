@@ -1,8 +1,10 @@
 package render
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/ThalesMMS/dicom-go/icc"
 	"image"
 	"sync"
 
@@ -30,8 +32,20 @@ type Rescale struct {
 	Intercept float64
 }
 
+// FrameIdentity identifies one immutable render-input generation. It contains no
+// source data. A fresh value must be used after pixels or rendering metadata
+// change. Its address, never SOP UID/path, is the cache identity.
+// The non-zero size keeps distinct allocations distinct.
+type FrameIdentity struct{ marker byte }
+
 // Frame is the headless render input for one decoded DICOM image frame.
 type Frame struct {
+	// CacheIdentity optionally shares cache entries between adapters for the
+	// same immutable input generation. Nil preserves pointer identity. A Frame
+	// and its identity must remain immutable while retained by a cache. Callers
+	// must not reuse an identity for different pixels or rendering metadata.
+	CacheIdentity *FrameIdentity `json:"-"`
+
 	SOPInstanceUID string
 	FrameIndex     int
 
@@ -41,22 +55,53 @@ type Frame struct {
 	TransferSyntaxName string
 	ByteOrder          binary.ByteOrder
 	PixelBytes         []byte
+	// LoadPixels optionally supplies a decoded immutable frame on demand. Geometry
+	// and preparation estimates use this Frame's metadata without calling it.
+	// The returned frame must have no loader and its bytes must remain valid for
+	// the duration of the call. Implementations must honor cancellation and allow
+	// concurrent calls; the render engine never mutates either frame.
+	LoadPixels func(context.Context) (*Frame, error) `json:"-"`
 
 	DefaultWindow WindowLevel
 	Rescale       Rescale
+	// PreserveModalityPrecision retains binary64 modality values in the 2D
+	// render cache. It does not alter volume/GPU scalar formats. Set before
+	// sharing a Frame with a cache; render inputs are immutable while cached.
+	PreserveModalityPrecision bool
+	// ColorTransform, when set, converts colour frames (three samples or
+	// PALETTE COLOR) from the ICC Profile's colour space to sRGB after
+	// rendering; nil leaves the samples as stored.
+	ColorTransform *icc.Transform
+	// PixelPadding, when set, marks stored values automatic windows ignore
+	// (Pixel Padding Value and Range Limit).
+	PixelPadding *pixeldata.PixelPadding
 
 	ImagePosition    []float64
 	ImageOrientation []float64
 	PixelSpacing     []float64
 	SliceThickness   float64
-	SliceLocation    float64
-	SliceLocationOK  bool
-	InstanceNumber   int
-	Sort             float64
+	// SpacingBetweenSlices is Spacing Between Slices (0018,0088) as read,
+	// sign included; zero when absent. With SliceThickness it sizes the
+	// through-plane voxel only when slice positions cannot
+	// (object.ResolveSliceSpacing).
+	SpacingBetweenSlices float64
+	SliceLocation        float64
+	SliceLocationOK      bool
+	InstanceNumber       int
+	Sort                 float64
 	// Temporal preserves the frame's independent temporal/spatial identity.
 	// Geometry guardrails use it to reject an unsplit 4D acquisition before it
 	// can be mistaken for one 3D volume.
 	Temporal dynamic.FrameMetadata
+	// EchoNumber is the first value of Echo Numbers (0018,0086) and
+	// AcquisitionNumber is Acquisition Number (0020,0012), each with an
+	// explicit presence flag so a real zero is never confused with an absent
+	// attribute. Stack.VolumeCandidates uses them to separate echoes and,
+	// on request, acquisitions that share one Series Instance UID.
+	EchoNumber           int
+	HasEchoNumber        bool
+	AcquisitionNumber    int
+	HasAcquisitionNumber bool
 
 	DecodeErr    error
 	Encapsulated bool
@@ -74,7 +119,10 @@ type Stack struct {
 
 	PixelSpacing   []float64
 	SliceThickness float64
-	Frames         []*Frame
+	// SpacingBetweenSlices is the series Spacing Between Slices (0018,0088),
+	// sign included; zero when absent.
+	SpacingBetweenSlices float64
+	Frames               []*Frame
 
 	volumeMu     sync.Mutex
 	volumeVoxels *volumeVoxels

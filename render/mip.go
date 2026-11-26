@@ -16,6 +16,9 @@ const (
 	SlabMIP                     // maximum intensity projection
 	SlabMinIP                   // minimum intensity projection
 	SlabAverage                 // mean of the in-bounds samples
+	// SlabSum adds the in-bounds samples (a ray-sum, DRR-like view), as
+	// VTK's slab Sum; CPU only (the view-state contract stops at Average).
+	SlabSum
 )
 
 func RenderMIP(series *Stack, window WindowLevel) (image.Image, error) {
@@ -260,7 +263,7 @@ func accumulateSlabValue(mode SlabMode, acc float64, count int, value float64) (
 		if count == 0 || value < acc {
 			acc = value
 		}
-	case SlabAverage:
+	case SlabAverage, SlabSum:
 		acc += value
 	default:
 		if count == 0 || value > acc {
@@ -337,7 +340,7 @@ func reduceSlab(mode SlabMode, start, end int, sample func(i int) (float64, stri
 			if count == 0 || v < acc {
 				acc = v
 			}
-		case SlabAverage:
+		case SlabAverage, SlabSum:
 			acc += v
 		default: // SlabMIP
 			if count == 0 || v > acc {

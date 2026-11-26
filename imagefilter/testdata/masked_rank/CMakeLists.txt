@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(masked_rank_oracle LANGUAGES CXX)
+find_package(ITK 5.4 REQUIRED COMPONENTS ITKMathematicalMorphology)
+include(${ITK_USE_FILE})
+add_executable(masked_rank_oracle oracle.cpp)
+target_compile_features(masked_rank_oracle PRIVATE cxx_std_17)
+target_link_libraries(masked_rank_oracle PRIVATE ${ITK_LIBRARIES})

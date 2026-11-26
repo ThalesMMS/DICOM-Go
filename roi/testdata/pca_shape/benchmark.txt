@@ -1,0 +1,15 @@
+goos: windows
+goarch: amd64
+pkg: github.com/ThalesMMS/dicom-go/roi
+cpu: Intel(R) Core(TM) i7-14700K
+BenchmarkPCAShapeTrain          	    1552	    146726 ns/op	   88184 B/op	      31 allocs/op
+BenchmarkPCAShapeTrain          	    1580	    146056 ns/op	   88184 B/op	      31 allocs/op
+BenchmarkPCAShapeTrain          	    1628	    147156 ns/op	   88184 B/op	      31 allocs/op
+BenchmarkPCAShapeFit            	   40130	      5534 ns/op	     112 B/op	       2 allocs/op
+BenchmarkPCAShapeFit            	   44764	      5415 ns/op	     112 B/op	       2 allocs/op
+BenchmarkPCAShapeFit            	   44208	      5474 ns/op	     112 B/op	       2 allocs/op
+BenchmarkPCAShapePriorEvolution 	     126	   1874881 ns/op	  278768 B/op	     949 allocs/op
+BenchmarkPCAShapePriorEvolution 	     127	   1874528 ns/op	  278768 B/op	     949 allocs/op
+BenchmarkPCAShapePriorEvolution 	     126	   1919037 ns/op	  278768 B/op	     949 allocs/op
+PASS
+ok  	github.com/ThalesMMS/dicom-go/roi	3.301s

@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/ThalesMMS/dicom-go/dynamic"
+	"github.com/ThalesMMS/dicom-go/object"
 )
 
 // SliceGeometry is the patient-space geometry of a single image, derived from
@@ -168,6 +169,16 @@ const (
 	GeometryIssueDifferentPixelGrid       GeometryIssue = "different-pixel-grid"
 	GeometryIssueInvalidGeometry          GeometryIssue = "invalid-geometry"
 	GeometryIssueMixedPositionSource      GeometryIssue = "mixed-position-source"
+	// GeometryIssueMissingPixelSpacing is informational: the series has no
+	// usable Pixel Spacing, so distances assume 1 mm per pixel. It never
+	// changes the disposition.
+	GeometryIssueMissingPixelSpacing GeometryIssue = "missing-pixel-spacing"
+	// GeometryIssueNonOrthonormalOrientation: a frame's Image Orientation
+	// (Patient) departs from orthonormal cosines by more than
+	// object.ImageOrientationTolerance (see
+	// GeometryMetrics.MaximumOrientationDeviation). It is not orthogonalized
+	// silently.
+	GeometryIssueNonOrthonormalOrientation GeometryIssue = "non-orthonormal-orientation"
 )
 
 // GeometryTolerances bounds the classification thresholds. The zero value is not
@@ -222,6 +233,10 @@ type GeometryMetrics struct {
 	MaximumNormalAngleDeg      float64
 	MaximumAffineResidualMM    float64
 	MaximumShearDeviation      float64
+	// MaximumOrientationDeviation is the largest departure of a frame's
+	// Image Orientation (Patient) from orthonormal cosines
+	// (object.ImageOrientationDeviation).
+	MaximumOrientationDeviation float64
 }
 
 // VolumeGeometry is the patient-space geometry of a stack of slices, classifying
@@ -510,7 +525,8 @@ func (g *VolumeGeometry) finalizeDisposition() {
 			GeometryIssueTemporalInterleaving,
 			GeometryIssueDifferentPixelGrid,
 			GeometryIssueInvalidGeometry,
-			GeometryIssueMixedPositionSource:
+			GeometryIssueMixedPositionSource,
+			GeometryIssueNonOrthonormalOrientation:
 			unsupported = true
 		}
 	}
@@ -531,6 +547,7 @@ func (g *VolumeGeometry) finalizeDisposition() {
 		GeometryIssueInconsistentPixelSpacing,
 		GeometryIssueDifferentPixelGrid,
 		GeometryIssueMixedPositionSource,
+		GeometryIssueNonOrthonormalOrientation,
 		GeometryIssueInvalidGeometry,
 		GeometryIssueSingleSlice,
 		GeometryIssueSliceGaps,
@@ -787,12 +804,15 @@ const (
 	sliceGeometryGridMismatch
 	sliceGeometryInvalid
 	sliceGeometryMixedPositionSource
+	sliceGeometryNonOrthonormal
 )
 
 type collectedSliceGeometry struct {
 	frame      *Frame
 	geometry   SliceGeometry
 	frameIndex int
+	// orientationDeviation is object.ImageOrientationDeviation of the frame.
+	orientationDeviation float64
 }
 
 // collectSliceGeometries applies the shared renderable-frame filter and
@@ -810,6 +830,13 @@ func collectSliceGeometries(frames []*Frame, refNormal Vec3, rowSp, colSp float6
 			(int(sl.Metadata.Rows) != expectedRows || int(sl.Metadata.Columns) != expectedCols) {
 			return nil, sliceGeometryGridMismatch, i
 		}
+		deviation, ok := object.ImageOrientationDeviation(sl.ImageOrientation)
+		if !ok {
+			return nil, sliceGeometryInvalid, i
+		}
+		if deviation > object.ImageOrientationTolerance {
+			return nil, sliceGeometryNonOrthonormal, i
+		}
 		geometry, ok := sliceGeometry(sl, refNormal, rowSp, colSp)
 		if !ok {
 			return nil, sliceGeometryInvalid, i
@@ -818,9 +845,10 @@ func collectSliceGeometries(frames []*Frame, refNormal Vec3, rowSp, colSp float6
 			return nil, sliceGeometryMixedPositionSource, i
 		}
 		collected = append(collected, collectedSliceGeometry{
-			frame:      sl,
-			geometry:   geometry,
-			frameIndex: i + 1,
+			frame:                sl,
+			geometry:             geometry,
+			frameIndex:           i + 1,
+			orientationDeviation: deviation,
 		})
 	}
 	return collected, sliceGeometryValid, -1
@@ -893,13 +921,8 @@ func sliceGeometry(sl *Frame, refNormal Vec3, rowSp, colSp float64) (SliceGeomet
 	if !finiteVec3(origin) {
 		return SliceGeometry{}, false
 	}
-	if len(sl.PixelSpacing) >= 2 {
-		if value := sl.PixelSpacing[0]; finitePositiveSpacing(value) {
-			rowSp = value
-		}
-		if value := sl.PixelSpacing[1]; finitePositiveSpacing(value) {
-			colSp = value
-		}
+	if row, column, ok := framePixelSpacing(sl.PixelSpacing); ok {
+		rowSp, colSp = row, column
 	}
 
 	return SliceGeometry{
@@ -947,10 +970,11 @@ func (s *Stack) GeometryAssessment() GeometryAssessment {
 
 	rowSp := seriesRowSpacing(s)
 	colSp := seriesColumnSpacing(s)
-	if rowSp <= 0 || math.IsNaN(rowSp) {
+	missingSpacing := !finitePositiveSpacing(rowSp) || !finitePositiveSpacing(colSp)
+	if !finitePositiveSpacing(rowSp) {
 		rowSp = 1
 	}
-	if colSp <= 0 || math.IsNaN(colSp) {
+	if !finitePositiveSpacing(colSp) {
 		colSp = 1
 	}
 
@@ -963,7 +987,11 @@ func (s *Stack) GeometryAssessment() GeometryAssessment {
 		if failedIndex >= 0 {
 			frame = failedIndex + 1
 		}
-		return unsupportedGeometryAssessment(reason, frame)
+		assessment := unsupportedGeometryAssessment(reason, frame)
+		if failure == sliceGeometryNonOrthonormal {
+			assessment.Geometry.Metrics.MaximumOrientationDeviation, _ = object.ImageOrientationDeviation(s.Frames[failedIndex].ImageOrientation)
+		}
+		return assessment
 	}
 	geometries := make([]SliceGeometry, len(collected))
 	for i := range collected {
@@ -971,6 +999,13 @@ func (s *Stack) GeometryAssessment() GeometryAssessment {
 	}
 	geometry := BuildVolumeGeometry(geometries, DefaultGeometryTolerances())
 	applyTemporalGeometryGuardrail(&geometry, collected)
+	if missingSpacing {
+		// No frame has a usable spacing: every distance assumes 1 mm.
+		geometry.addIssue(GeometryIssueMissingPixelSpacing)
+	}
+	for _, item := range collected {
+		geometry.Metrics.MaximumOrientationDeviation = math.Max(geometry.Metrics.MaximumOrientationDeviation, item.orientationDeviation)
+	}
 	geometry.Classification = classifyVolume(geometry)
 	geometry.finalizeDisposition()
 	return GeometryAssessment{
@@ -1070,6 +1105,8 @@ func geometryIssueForFailure(failure sliceGeometryFailure) GeometryIssue {
 		return GeometryIssueDifferentPixelGrid
 	case sliceGeometryMixedPositionSource:
 		return GeometryIssueMixedPositionSource
+	case sliceGeometryNonOrthonormal:
+		return GeometryIssueNonOrthonormalOrientation
 	default:
 		return GeometryIssueInvalidGeometry
 	}

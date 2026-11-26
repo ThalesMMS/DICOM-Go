@@ -4,8 +4,9 @@ import "math"
 
 // First-hit picking for the 3D renderer (3d-toolbar-plan.md §5.11). PickVR casts
 // a ray through screen pixel (sx,sy) using the same step / clip / window gate as
-// the renderer and returns the patient-space (mm) position of the first sample
-// whose composited alpha reaches the threshold. ROI length is the Euclidean
+// the renderer and returns the patient-space (mm) position where the composited
+// alpha reaches the threshold, refined by bisection between the last sample
+// below it and the first at or above it (#1004). ROI length is the Euclidean
 // distance between two picked points.
 
 const vrPickAlphaThreshold = 0.5
@@ -42,34 +43,49 @@ func PickVR(vol *Volume, cam VRCamera, preset VRPreset, window WindowLevel, clip
 	steps := 256
 	stepLen := size.Length() / float64(steps)
 
-	accA := 0.0
-	for t := t0; t <= t1; t += stepLen {
+	texAt := func(t float64) Vec3 {
 		pw := o.Add(d.Scale(t))
-		tex := Vec3{
+		return Vec3{
 			X: (pw.X - boxMin.X) / size.X,
 			Y: (pw.Y - boxMin.Y) / size.Y,
 			Z: (pw.Z - boxMin.Z) / size.Z,
 		}
+	}
+	// alphaAt is the transfer opacity of the sample at t (0 when clipped).
+	alphaAt := func(t float64) float64 {
+		tex := texAt(t)
 		if !clip.keep(tex) {
-			continue
+			return 0
 		}
-		hu, sok := vol.SampleHUTexture(tex)
-		if !sok {
-			continue
+		hu, ok := vol.SampleHUTexture(tex)
+		if !ok {
+			return 0
 		}
-		alpha := 0.0
 		if preset.TF.Domain() == VRTransferDomainNormalized {
-			alpha = lut.Lookup(preset.TF.windowCoordinate(hu, window)).A
-		} else {
-			densityData := normalizedVRDataCoordinate(hu, dataMin, dataMax)
-			alpha = lut.Lookup(densityData).A * windowedUnit(hu, window)
+			return lut.Lookup(preset.TF.windowCoordinate(hu, window)).A
 		}
-		alpha = CorrectVRAlpha(alpha, 1, stepLen, preset.TF.OpacityUnitDistanceMM())
-		accA += (1 - accA) * alpha
-		if accA >= vrPickAlphaThreshold {
-			patient := vol.VoxelToPatient(vol.TextureToVoxel(tex))
+		return lut.Lookup(normalizedVRDataCoordinate(hu, dataMin, dataMax)).A * windowedUnit(hu, window)
+	}
+	unit := preset.TF.OpacityUnitDistanceMM()
+	accA := 0.0
+	first := true
+	for t := t0; t <= t1; t += stepLen {
+		alpha := alphaAt(t)
+		next := accA + (1-accA)*CorrectVRAlpha(alpha, 1, stepLen, unit)
+		if next >= vrPickAlphaThreshold {
+			if !first {
+				// Opacity accumulated over the part of the step up to t'
+				// with the sample at t'.
+				before, start := accA, t-stepLen
+				t = bisectVRRay(start, t, func(tt float64) bool {
+					return before+(1-before)*CorrectVRAlpha(alphaAt(tt), 1, tt-start, unit) >= vrPickAlphaThreshold
+				})
+			}
+			patient := vol.VoxelToPatient(vol.TextureToVoxel(texAt(t)))
 			return WorldPoint{X: patient.X, Y: patient.Y, Z: patient.Z}, true
 		}
+		accA = next
+		first = false
 	}
 	return WorldPoint{}, false
 }

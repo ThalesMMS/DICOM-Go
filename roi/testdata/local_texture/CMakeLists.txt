@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(local_texture_oracle LANGUAGES C CXX)
+find_package(ITK 5.4.6 EXACT REQUIRED COMPONENTS ITKStatistics)
+include(${ITK_USE_FILE})
+add_executable(local_texture_oracle generate.cpp)
+target_compile_features(local_texture_oracle PRIVATE cxx_std_17)
+target_link_libraries(local_texture_oracle PRIVATE ${ITK_LIBRARIES} psapi)

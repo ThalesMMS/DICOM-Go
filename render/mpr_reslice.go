@@ -48,9 +48,9 @@ func (v *Volume) Photometric() string {
 }
 
 // TrilinearAt samples the volume at fractional voxel coordinates by trilinear
-// interpolation of the eight neighbours. Out-of-bounds neighbours contribute 0.
-// ok is false only when the sample point is fully outside the volume (so callers
-// can paint the background).
+// interpolation of the eight neighbours. A point within half a voxel of the
+// grid is clamped to it (edge voxels repeat; nothing blends with 0); ok is
+// false farther out, so callers can paint the background.
 func (v *Volume) TrilinearAt(p Vec3) (float64, bool) {
 	reader, err := v.AcquireReader()
 	if err != nil {
@@ -125,12 +125,10 @@ func resliceObliqueWithSamplerLimitsContext(ctx context.Context, vol *Volume, sa
 	}
 	err := parallelRowsContext(ctx, outH, func(j int) {
 		t := float64(j) / denomH
-		rowBase := plane.Origin.Add(plane.V.Scale(t))
+		row := sampler.vol.voxelLine(plane.Origin.Add(plane.V.Scale(t)), plane.U)
 		rowOffset := img.PixOffset(0, j)
 		for i := 0; i < outW; i++ {
-			s := float64(i) / denomW
-			p := rowBase.Add(plane.U.Scale(s))
-			voxel := sampler.vol.PatientToVoxel(p)
+			voxel := row.at(float64(i) / denomW)
 			if val, ok := sampler.trilinearAt(voxel); ok {
 				img.Pix[rowOffset+i] = sampler.displayGrayMapped(val, mapper)
 			}
@@ -234,7 +232,7 @@ func ResliceObliqueSlabWithLimitsContext(ctx context.Context, vol *Volume, plane
 	if err := ctx.Err(); err != nil {
 		return blankImage(1, 1), err
 	}
-	if mode < SlabNone || mode > SlabAverage {
+	if mode < SlabNone || mode > SlabSum {
 		return blankImage(1, 1), invalidMPRField("SlabMode")
 	}
 	slabSamples := 1
@@ -297,11 +295,9 @@ func resliceObliqueSlabRangeWithSamplerLimitsContext(ctx context.Context, vol *V
 				return
 			}
 			s := float64(i) / denomW
-			base := plane.At(s, t)
+			ray := sampler.vol.voxelLine(plane.At(s, t), normal)
 			value, _, ok := reduceSlab(mode, 0, sampleCount-1, func(k int) (float64, string, bool) {
-				off := (firstOffset + float64(k)) * step
-				p := base.Add(normal.Scale(off))
-				v, ok := sampler.trilinearAt(sampler.vol.PatientToVoxel(p))
+				v, ok := sampler.trilinearAt(ray.at((firstOffset + float64(k)) * step))
 				return v, sampler.photometric, ok
 			})
 			if ok {

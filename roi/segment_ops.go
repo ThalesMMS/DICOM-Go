@@ -2,6 +2,7 @@ package roi
 
 import (
 	"context"
+	"image"
 	"math"
 
 	"github.com/ThalesMMS/dicom-go/render"
@@ -10,7 +11,8 @@ import (
 // Segmentation operations on RasterMask / Segmentation3D. Everything here is
 // pure Go: brush/fill, thresholding, connected components, and basic morphology
 // run without any ITK, Python, or cgo dependency, keeping the default build
-// lightweight.
+// lightweight. Flood fill and connected-component labelling live in
+// connected_components.go.
 
 // Brush sets or clears a filled disc of the given radius (pixels) centered at
 // (cx,cy) in the mask.
@@ -28,25 +30,61 @@ func Brush(mask *RasterMask, cx, cy, radius int, on bool) {
 	}
 }
 
-// ThresholdMask returns a 2D mask of pixels whose value (from valueAt) lies in
-// the inclusive range [lo, hi].
+// BrushSegment sets or clears discs of radius pixels along the segment from
+// first to last, including both endpoints. It stamps once per pixel on the
+// dominant axis and rounds the other coordinate to the nearest pixel, with
+// half-pixel ties rounded up. Stamps are clipped to the mask.
+func (m *RasterMask) BrushSegment(first, last image.Point, radius int, on bool) {
+	if m == nil || m.Columns == 0 || m.Rows == 0 || radius < 0 {
+		return
+	}
+	if first == last {
+		Brush(m, first.X, first.Y, radius, on)
+		return
+	}
+
+	dx := float64(last.X) - float64(first.X)
+	dy := float64(last.Y) - float64(first.Y)
+	xMajor := math.Abs(dx) >= math.Abs(dy)
+	start, end, size, delta := first.X, last.X, m.Columns, dx
+	if !xMajor {
+		start, end, size, delta = first.Y, last.Y, m.Rows, dy
+	}
+	// Skip centers whose discs cannot reach the mask on the dominant axis.
+	low := max(min(start, end), -radius)
+	high := min(max(start, end), min(size-1, math.MaxInt-radius)+radius)
+	for center := low; center <= high; center++ {
+		t := (float64(center) - float64(start)) / delta
+		if xMajor {
+			Brush(m, center, render.NearestIndex(float64(first.Y)+dy*t), radius, on)
+		} else {
+			Brush(m, render.NearestIndex(float64(first.X)+dx*t), center, radius, on)
+		}
+		if center == high {
+			break
+		}
+	}
+}
+
+// ThresholdMask selects available, finite pixel values in the inclusive range
+// [lo, hi]. Infinite bounds can express an open-ended range.
 func ThresholdMask(columns, rows int, lo, hi float64, valueAt func(x, y int) (float64, bool)) *RasterMask {
 	mask := NewRasterMask(columns, rows)
-	if valueAt == nil {
+	if valueAt == nil || !(lo <= hi) {
 		return mask
 	}
 	for y := 0; y < rows; y++ {
 		x := 0
 		for x < columns {
 			v, ok := valueAt(x, y)
-			if !ok || v < lo || v > hi {
+			if !ok || !finiteNumber(v) || v < lo || v > hi {
 				x++
 				continue
 			}
 			start := x
 			for x < columns {
 				v, ok := valueAt(x, y)
-				if !ok || v < lo || v > hi {
+				if !ok || !finiteNumber(v) || v < lo || v > hi {
 					break
 				}
 				x++
@@ -231,10 +269,10 @@ func maskBounds(mask *RasterMask) (rasterMaskBounds, bool) {
 
 func interpolateBounds(first, last rasterMaskBounds, t float64) rasterMaskBounds {
 	return rasterMaskBounds{
-		minX: int(math.Round(lerpFloat(float64(first.minX), float64(last.minX), t))),
-		minY: int(math.Round(lerpFloat(float64(first.minY), float64(last.minY), t))),
-		maxX: int(math.Round(lerpFloat(float64(first.maxX), float64(last.maxX), t))),
-		maxY: int(math.Round(lerpFloat(float64(first.maxY), float64(last.maxY), t))),
+		minX: render.NearestIndex(lerpFloat(float64(first.minX), float64(last.minX), t)),
+		minY: render.NearestIndex(lerpFloat(float64(first.minY), float64(last.minY), t)),
+		maxX: render.NearestIndex(lerpFloat(float64(first.maxX), float64(last.maxX), t)),
+		maxY: render.NearestIndex(lerpFloat(float64(first.maxY), float64(last.maxY), t)),
 	}
 }
 
@@ -254,10 +292,10 @@ func remapMaskToBounds(mask *RasterMask, from, to rasterMaskBounds) *RasterMask 
 
 func remapMaskCoordinate(value, fromMin, fromMax, toMin, toMax int) int {
 	if fromMax == fromMin {
-		return int(math.Round((float64(toMin) + float64(toMax)) / 2))
+		return render.NearestIndex((float64(toMin) + float64(toMax)) / 2)
 	}
 	position := float64(value-fromMin) / float64(fromMax-fromMin)
-	return int(math.Round(lerpFloat(float64(toMin), float64(toMax), position)))
+	return render.NearestIndex(lerpFloat(float64(toMin), float64(toMax), position))
 }
 
 func lerpFloat(a, b, t float64) float64 {
@@ -388,125 +426,6 @@ func distanceParabolaIntersection(values []float64, q, p int) float64 {
 	qf := float64(q)
 	pf := float64(p)
 	return ((values[q] + qf*qf) - (values[p] + pf*pf)) / (2*qf - 2*pf)
-}
-
-// FloodFill returns the 4-connected region of pixels reachable from (seedX,seedY)
-// for which inside reports true (region growing). It is the basis of the fill
-// tool and seeded threshold growing.
-func FloodFill(columns, rows, seedX, seedY int, inside func(x, y int) bool) *RasterMask {
-	mask := NewRasterMask(columns, rows)
-	if inside == nil || seedX < 0 || seedY < 0 || seedX >= columns || seedY >= rows || !inside(seedX, seedY) {
-		return mask
-	}
-	visited := make([]bool, columns*rows)
-	idx := func(x, y int) int { return y*columns + x }
-	queue := [][2]int{{seedX, seedY}}
-	visited[idx(seedX, seedY)] = true
-	for len(queue) > 0 {
-		p := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
-		mask.Set(p[0], p[1], true)
-		for _, nb := range [][2]int{{p[0] - 1, p[1]}, {p[0] + 1, p[1]}, {p[0], p[1] - 1}, {p[0], p[1] + 1}} {
-			nx, ny := nb[0], nb[1]
-			if nx < 0 || ny < 0 || nx >= columns || ny >= rows || visited[idx(nx, ny)] {
-				continue
-			}
-			if inside(nx, ny) {
-				visited[idx(nx, ny)] = true
-				queue = append(queue, [2]int{nx, ny})
-			}
-		}
-	}
-	return mask
-}
-
-// ConnectedComponents labels the set pixels of a mask into connected regions
-// (8-connected when eightConnected, else 4-connected), returned in row-major
-// discovery order.
-func ConnectedComponents(mask *RasterMask, eightConnected bool) []*RasterMask {
-	if mask == nil {
-		return nil
-	}
-	visited := make([]bool, mask.Columns*mask.Rows)
-	idx := func(x, y int) int { return y*mask.Columns + x }
-	var comps []*RasterMask
-	mask.ForEachPixel(func(sx, sy int) {
-		if visited[idx(sx, sy)] {
-			return
-		}
-		comp := NewRasterMask(mask.Columns, mask.Rows)
-		queue := [][2]int{{sx, sy}}
-		visited[idx(sx, sy)] = true
-		for len(queue) > 0 {
-			p := queue[len(queue)-1]
-			queue = queue[:len(queue)-1]
-			comp.Set(p[0], p[1], true)
-			for _, nb := range neighbors2D(p[0], p[1], eightConnected) {
-				nx, ny := nb[0], nb[1]
-				if nx < 0 || ny < 0 || nx >= mask.Columns || ny >= mask.Rows || visited[idx(nx, ny)] {
-					continue
-				}
-				if mask.Get(nx, ny) {
-					visited[idx(nx, ny)] = true
-					queue = append(queue, [2]int{nx, ny})
-				}
-			}
-		}
-		comps = append(comps, comp)
-	})
-	return comps
-}
-
-func neighbors2D(x, y int, eight bool) [][2]int {
-	out := [][2]int{{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}}
-	if eight {
-		out = append(out, [2]int{x - 1, y - 1}, [2]int{x + 1, y - 1}, [2]int{x - 1, y + 1}, [2]int{x + 1, y + 1})
-	}
-	return out
-}
-
-// ConnectedComponents3D labels the set voxels of a segmentation into 6-connected
-// components, each returned as its own Segmentation3D carrying the same geometry.
-func ConnectedComponents3D(seg *Segmentation3D) []*Segmentation3D {
-	if seg == nil {
-		return nil
-	}
-	type voxel struct{ x, y, z int }
-	visited := map[voxel]bool{}
-	var comps []*Segmentation3D
-	for _, z := range seg.Slices() {
-		mask := seg.masks[z]
-		zCopy := z
-		mask.ForEachPixel(func(sx, sy int) {
-			seed := voxel{sx, sy, zCopy}
-			if visited[seed] {
-				return
-			}
-			comp := NewSegmentation3D(seg.Geometry, seg.Columns, seg.Rows)
-			queue := []voxel{seed}
-			visited[seed] = true
-			for len(queue) > 0 {
-				p := queue[len(queue)-1]
-				queue = queue[:len(queue)-1]
-				comp.SetVoxel(p.x, p.y, p.z, true)
-				for _, nb := range []voxel{
-					{p.x - 1, p.y, p.z}, {p.x + 1, p.y, p.z},
-					{p.x, p.y - 1, p.z}, {p.x, p.y + 1, p.z},
-					{p.x, p.y, p.z - 1}, {p.x, p.y, p.z + 1},
-				} {
-					if visited[nb] {
-						continue
-					}
-					if seg.Voxel(nb.x, nb.y, nb.z) {
-						visited[nb] = true
-						queue = append(queue, nb)
-					}
-				}
-			}
-			comps = append(comps, comp)
-		})
-	}
-	return comps
 }
 
 // Dilate grows a mask by one pixel using a 4-connected structuring element.

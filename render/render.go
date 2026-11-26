@@ -2,18 +2,26 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"math"
+	"strings"
 
+	"github.com/ThalesMMS/dicom-go/pixeldata"
 	"github.com/ThalesMMS/dicom-go/pixeldata/display"
 	dicomframe "github.com/ThalesMMS/dicom-go/pixeldata/frame"
 )
 
 func RenderFrame(slice *Frame, window WindowLevel) (image.Image, error) {
+	loaded, loadErr := loadFrameContext(context.Background(), slice)
+	if loadErr != nil {
+		return blankImage(512, 512), loadErr
+	}
+	slice = loaded
 	if slice == nil {
 		return blankImage(512, 512), errors.New("render: nil slice")
 	}
@@ -39,7 +47,14 @@ func RenderFrame(slice *Frame, window WindowLevel) (image.Image, error) {
 	if img == nil {
 		return blankImage(int(slice.Metadata.Columns), int(slice.Metadata.Rows)), err
 	}
+	if err == nil && slice.ColorTransform != nil && isColorFrame(metadata) {
+		img = slice.ColorTransform.Apply(img)
+	}
 	return img, err
+}
+
+func isColorFrame(metadata pixeldata.Metadata) bool {
+	return metadata.SamplesPerPixel == 3 || strings.EqualFold(strings.TrimSpace(metadata.PhotometricInterpretation), "PALETTE COLOR")
 }
 
 func normalizeWindow(window, fallback WindowLevel) WindowLevel {

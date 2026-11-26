@@ -240,7 +240,7 @@ func deformableFixture(
 		rawVectors(order, vectors),
 	)
 	registrationElements := []core.Element{
-		derivedio.UI(tagSourceFrameOfReferenceUID, "1.2.3.source"),
+		derivedio.UI(tagSourceFrameOfReferenceUID, "1.2.3.9118"),
 		derivedio.Seq(tagDeformableRegistrationGridSequence, grid),
 	}
 	if pre != nil {
@@ -251,8 +251,8 @@ func deformableFixture(
 	}
 	dataset := derivedio.Object(
 		derivedio.UI(derivedio.TagSOPClassUID, DeformableSpatialRegistrationStorage),
-		derivedio.UI(derivedio.TagSOPInstanceUID, "1.2.3.registration"),
-		derivedio.UI(derivedio.TagFrameOfReferenceUID, "1.2.3.registered"),
+		derivedio.UI(derivedio.TagSOPInstanceUID, "1.2.3.9122"),
+		derivedio.UI(derivedio.TagFrameOfReferenceUID, "1.2.3.9121"),
 		derivedio.Seq(tagDeformableRegistrationSequence, derivedio.DataSet(registrationElements...)),
 	)
 	dataset.SetValueByteOrder(order)

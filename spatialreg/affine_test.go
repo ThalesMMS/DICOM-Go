@@ -137,6 +137,34 @@ func TestReadAffineDatasetRejectsUnsupportedType(t *testing.T) {
 	}
 }
 
+func TestValidateMatrixMatchesReaderConstraints(t *testing.T) {
+	rotation := render.GeometryAffine{0, -1, 0, 4, 1, 0, 0, -2, 0, 0, 1, 7, 0, 0, 0, 1}
+	scaled := render.GeometryAffine{2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
+	sheared := render.GeometryAffine{1, 0.5, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
+	singular := render.GeometryAffine{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	tests := []struct {
+		name   string
+		matrix render.GeometryAffine
+		kind   TransformType
+		want   error
+	}{
+		{"rigid", rotation, TransformRigid, nil},
+		{"scaled rigid", scaled, TransformRigid, ErrInvalidMatrix},
+		{"rigid scale", scaled, TransformRigidScale, nil},
+		{"sheared rigid scale", sheared, TransformRigidScale, ErrInvalidMatrix},
+		{"affine", sheared, TransformAffine, nil},
+		{"singular affine", singular, TransformAffine, ErrSingularMatrix},
+		{"unknown type", rotation, TransformType("PERSPECTIVE"), ErrUnsupportedMatrix},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateMatrix(tt.matrix, tt.kind); !errors.Is(err, tt.want) {
+				t.Fatalf("ValidateMatrix() error = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestAffineRoundTripProperty(t *testing.T) {
 	random := rand.New(rand.NewSource(27))
 	for sample := 0; sample < 500; sample++ {
@@ -168,10 +196,10 @@ func TestAffineRoundTripProperty(t *testing.T) {
 func affineFixture(matrixItems ...core.DataSet) *object.Object {
 	return derivedio.Object(
 		derivedio.UI(derivedio.TagSOPClassUID, SpatialRegistrationStorage),
-		derivedio.UI(derivedio.TagSOPInstanceUID, "1.2.3.affine"),
-		derivedio.UI(derivedio.TagFrameOfReferenceUID, "1.2.3.registered"),
+		derivedio.UI(derivedio.TagSOPInstanceUID, "1.2.3.9120"),
+		derivedio.UI(derivedio.TagFrameOfReferenceUID, "1.2.3.9121"),
 		derivedio.Seq(tagRegistrationSequence, derivedio.DataSet(
-			derivedio.UI(derivedio.TagFrameOfReferenceUID, "1.2.3.source"),
+			derivedio.UI(derivedio.TagFrameOfReferenceUID, "1.2.3.9118"),
 			derivedio.Seq(tagMatrixRegistrationSequence, derivedio.DataSet(
 				derivedio.Seq(tagMatrixSequence, matrixItems...),
 			)),

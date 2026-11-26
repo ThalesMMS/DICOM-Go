@@ -45,7 +45,7 @@ func TestRenderVRContextCancelsActiveCPURenderer(t *testing.T) {
 			WindowLevel{Center: 128, Width: 256},
 			true,
 			nil,
-			VRQuality{Width: 512, Height: 512, MaxSteps: 1024},
+			VRQuality{Width: 512, Height: 512, MaxSteps: DefaultVRMaxSteps},
 		)
 		result <- renderErr
 	}()

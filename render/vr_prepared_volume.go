@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 )
 
 // VRPreparedVolume freezes the effective voxel source selected by one VR
@@ -27,6 +28,10 @@ type VRPreparedVolume struct {
 
 	histogramRangeMu sync.Mutex
 	histogramRange   *vrPreparedIntensityRange
+
+	// blocks is the empty-space skipping grid, built on first render.
+	blocksMu sync.Mutex
+	blocks   *vrBlockGrid
 }
 
 type vrPreparedCacheKey struct {
@@ -77,7 +82,7 @@ func (v *Volume) PrepareVRVolumeContext(ctx context.Context, prefilter VRPrefilt
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if prefilter != VRPrefilterNone && prefilter != VRPrefilterBasicSmooth5x5 {
+	if prefilter > VRPrefilterVesselEnhance {
 		return nil, fmt.Errorf("render: unsupported VR prefilter %d", prefilter)
 	}
 	grid, err := v.RegularGrid()
@@ -190,7 +195,26 @@ func buildVRPreparedVolume(
 	// The caller retains an idempotent release too; the sampler owns the lease
 	// for the duration of the convolution so no source generation can retire.
 	defer sampler.Close()
-	values, err := basicSmooth5x5Context(ctx, sampler)
+	var values []float32
+	switch prefilter {
+	case VRPrefilterGaussian1mm, VRPrefilterMedian3x3x3, VRPrefilterVesselEnhance:
+		source, sourceErr := samplerModalityValues(ctx, sampler)
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+		dims := [3]int{sampler.cols, sampler.rows, sampler.depth}
+		spacing := [3]float64{volume.ColSpacing, volume.RowSpacing, volume.effectiveSliceSpacing()}
+		switch prefilter {
+		case VRPrefilterMedian3x3x3:
+			values, err = Median3x3x3(ctx, source, dims)
+		case VRPrefilterVesselEnhance:
+			values, err = VesselEnhance(ctx, source, dims, spacing)
+		default:
+			values, err = SmoothGaussian3D(ctx, source, dims, spacing, VRGaussianPrefilterSigmaMM)
+		}
+	default:
+		values, err = basicSmooth5x5Context(ctx, sampler)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +225,10 @@ func buildVRPreparedVolume(
 	preparedDescriptor := descriptor
 	preparedDescriptor.VolumeGeneration = 0
 	preparedDescriptor.ParentGeneration = 0
+	// The filtered values are packed float32 whatever the source layout (a
+	// packed 16-bit source has 2-byte strides, #1065).
+	preparedDescriptor.RowStrideBytes = uint64(preparedDescriptor.Dimensions[0]) * 4
+	preparedDescriptor.SliceStrideBytes = uint64(preparedDescriptor.Dimensions[1]) * preparedDescriptor.RowStrideBytes
 	generation, err := preparedStore.replaceVRPrefilteredFloat32Owned(preparedDescriptor, values)
 	if err != nil {
 		_ = preparedStore.Close()
@@ -243,10 +271,13 @@ func basicSmooth5x5Context(ctx context.Context, sampler *volumeSampler) ([]float
 		return nil, fmt.Errorf("%w: prepared volume is too large", ErrInvalidVolumeSnapshot)
 	}
 	values := make([]float32, voxelCount)
-	for z := 0; z < sampler.depth; z++ {
+	// Slices are independent (the kernel is in-plane): filter them in
+	// parallel; the arithmetic per voxel is unchanged.
+	var invalid atomic.Bool
+	err := parallelRowsContext(ctx, sampler.depth, func(z int) {
 		for y := 0; y < sampler.rows; y++ {
-			if err := ctx.Err(); err != nil {
-				return nil, err
+			if invalid.Load() || ctx.Err() != nil {
+				return
 			}
 			for x := 0; x < sampler.cols; x++ {
 				sum := 0.0
@@ -256,7 +287,8 @@ func basicSmooth5x5Context(ctx context.Context, sampler *volumeSampler) ([]float
 						sx := min(max(x+kx, 0), sampler.cols-1)
 						value, ok := sampler.valueAt(sx, sy, z)
 						if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
-							return nil, fmt.Errorf("%w: invalid source voxel", ErrInvalidVolumeSnapshot)
+							invalid.Store(true)
+							return
 						}
 						sum += value * basicSmooth5x5Kernel[ky+2][kx+2]
 					}
@@ -264,6 +296,12 @@ func basicSmooth5x5Context(ctx context.Context, sampler *volumeSampler) ([]float
 				values[(z*sampler.rows+y)*sampler.cols+x] = float32(sum / 60)
 			}
 		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if invalid.Load() {
+		return nil, fmt.Errorf("%w: invalid source voxel", ErrInvalidVolumeSnapshot)
 	}
 	return values, nil
 }

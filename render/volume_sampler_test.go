@@ -202,6 +202,56 @@ func TestHURangeReusesExistingSamplerLease(t *testing.T) {
 	}
 }
 
+func TestHURangePreservesStridedSampleIndicesAcrossPlanes(t *testing.T) {
+	const cols, rows, depth = 257, 131, 163
+	total := cols * rows * depth
+	stride := total / 2_000_000
+	if stride < 2 {
+		t.Fatal("fixture must skip samples")
+	}
+	values := make([]float32, total)
+	for i := range values {
+		values[i] = float32(i % 2048)
+	}
+	values[1] = -99999                     // Excluded by the established stride.
+	values[(total-1)/stride*stride] = 9999 // Last sampled voxel in the last plane.
+	minimum, maximum := math.Inf(1), math.Inf(-1)
+	for i, v := range values {
+		if i%stride == 0 {
+			minimum = math.Min(minimum, float64(v))
+			maximum = math.Max(maximum, float64(v))
+		}
+	}
+	volume := &Volume{Cols: cols, Rows: rows, Depth: depth}
+	sampler := &volumeSampler{vol: volume, cols: cols, rows: rows, depth: depth, values: values}
+	lo, hi, ok := volume.huRangeFromSampler(sampler)
+	if !ok || lo != minimum || hi != maximum {
+		t.Fatalf("range=%g,%g,%v want=%g,%g", lo, hi, ok, minimum, maximum)
+	}
+	values[0] = -1000
+	if cached, _, _ := volume.huRangeFromSampler(sampler); cached != lo {
+		t.Fatal("range cache was discarded")
+	}
+}
+
+func BenchmarkHURangeColdClinicalVolume(b *testing.B) {
+	const cols, rows, depth = 512, 512, 461
+	volume := &Volume{Cols: cols, Rows: rows, Depth: depth}
+	values := make([]float32, cols*rows*depth)
+	for i := range values {
+		values[i] = float32(i%4096) - 1024
+	}
+	sampler := &volumeSampler{vol: volume, cols: cols, rows: rows, depth: depth, values: values}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		volume.huRangeOK = false
+		if _, _, ok := volume.huRangeFromSampler(sampler); !ok {
+			b.Fatal("no range")
+		}
+	}
+}
+
 func Test_volumeSampler_displayGray_noInversionForMonochrome2(t *testing.T) {
 	vol, err := BuildVolume(gradientColumnStack(2, 2, 2))
 	if err != nil {

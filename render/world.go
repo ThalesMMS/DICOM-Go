@@ -16,10 +16,13 @@ func PanelClickToWorld(s *Stack, plane MPRPlane, index, px, py int) (WorldPoint,
 		return WorldPoint{}, false
 	}
 	sl := s.Frames[index]
-	if sl == nil || len(sl.ImagePosition) < 3 || len(sl.ImageOrientation) < 6 || len(s.PixelSpacing) < 2 {
+	if sl == nil || len(sl.ImagePosition) < 3 || len(sl.ImageOrientation) < 6 {
 		return WorldPoint{}, false
 	}
-	rowSp, colSp := s.PixelSpacing[0], s.PixelSpacing[1]
+	rowSp, colSp, ok := framePixelSpacing(s.PixelSpacing)
+	if !ok {
+		return WorldPoint{}, false
+	}
 	o := sl.ImagePosition
 	col := sl.ImageOrientation[0:3] // direction of increasing column (x)
 	row := sl.ImageOrientation[3:6] // direction of increasing row (y)

@@ -162,6 +162,16 @@ func matrix3InfinityNorm(matrix render.GeometryAffine) float64 {
 	return maximum
 }
 
+// ValidateMatrix checks one Frame of Reference Transformation Matrix against
+// the constraints of its declared type, as ReadAffine does for every Matrix
+// Sequence item: finite homogeneous values, unit orthogonal columns with
+// determinant one for RIGID, orthogonal columns with a positive determinant
+// for RIGID_SCALE, and for every type an invertible matrix with a condition
+// number of at most 1e10. Writers can use it before emitting a matrix.
+func ValidateMatrix(matrix render.GeometryAffine, kind TransformType) error {
+	return validateMatrixType(matrix, kind)
+}
+
 func validateMatrixType(matrix render.GeometryAffine, kind TransformType) error {
 	if !matrix.Finite() {
 		return ErrInvalidMatrix

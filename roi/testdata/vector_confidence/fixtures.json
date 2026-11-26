@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "description": "Independent synthetic classes: c0=(x+y)%3-1; c1=(x+2*y+z)%3-1 + 8*(x>split). All pairs occur in initial box. No clinical data.",
+  "oracle": "ITK5.4.5 public VectorConfidenceConnectedImageFilter API; regular positive-definite fixtures only",
+  "tolerances": {
+    "mask_indices": "exact",
+    "mean_absolute": 1e-12,
+    "covariance_absolute": 1e-12
+  },
+  "fixtures": [
+    {
+      "name": "joint2d",
+      "dimensions": [
+        9,
+        7,
+        1
+      ],
+      "split": 4,
+      "seed": [
+        2,
+        3,
+        0
+      ],
+      "initial_radius": 1,
+      "multiplier": 2.5,
+      "iterations": [
+        0,
+        2
+      ],
+      "channel_counts": [
+        1,
+        2
+      ],
+      "joint_expected_voxels": 35,
+      "single_expected_voxels": 63,
+      "initial_samples": 9,
+      "initial_covariance_diagonal": 0.75,
+      "oracle_covariance_normalization": "population",
+      "initial_population_covariance_diagonal": 0.6666666666666666
+    },
+    {
+      "name": "joint3d",
+      "dimensions": [
+        7,
+        7,
+        5
+      ],
+      "split": 3,
+      "seed": [
+        2,
+        3,
+        2
+      ],
+      "initial_radius": 1,
+      "multiplier": 2.5,
+      "iterations": [
+        0,
+        2
+      ],
+      "channel_counts": [
+        1,
+        2
+      ],
+      "joint_expected_voxels": 140,
+      "single_expected_voxels": 245,
+      "initial_samples": 27,
+      "initial_covariance_diagonal": 0.6923076923076923,
+      "oracle_covariance_normalization": "population",
+      "initial_population_covariance_diagonal": 0.6666666666666666
+    }
+  ]
+}

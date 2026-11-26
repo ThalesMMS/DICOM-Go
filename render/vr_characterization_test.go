@@ -15,8 +15,16 @@ func TestRenderVRHonorsVOILUTFunction(t *testing.T) {
 	}
 	cam := NewVRCamera(vol.BoundingRadiusMM())
 	quality := DefaultVRQuality(24, 24)
-	linear := RenderVR(vol, cam, opaqueAbovePreset(), WindowLevel{Center: 128, Width: 256}, false, nil, quality)
-	sigmoid := RenderVR(vol, cam, opaqueAbovePreset(), WindowLevel{Center: 128, Width: 256, Function: display.VOISigmoid}, false, nil, quality)
+	// A faint transfer function keeps the sphere translucent: with rays
+	// terminating at 1-1/255 (#1063), opaque tissue renders alike under any
+	// VOI function.
+	faint := NewVRTransferFunction(
+		[]TFColorStop{{HU: 0, R: 1, G: 1, B: 1}, {HU: 255, R: 1, G: 1, B: 1}},
+		[]TFAlphaStop{{HU: 0, A: 0}, {HU: 127, A: 0}, {HU: 128, A: 0.02}, {HU: 255, A: 0.02}},
+	)
+	preset := VRPreset{Name: "faint", TF: faint, Mode: VRModeDVR}
+	linear := RenderVR(vol, cam, preset, WindowLevel{Center: 128, Width: 256}, false, nil, quality)
+	sigmoid := RenderVR(vol, cam, preset, WindowLevel{Center: 128, Width: 256, Function: display.VOISigmoid}, false, nil, quality)
 	if sameImage(linear, sigmoid) {
 		t.Fatal("RenderVR returned identical LINEAR and SIGMOID images")
 	}

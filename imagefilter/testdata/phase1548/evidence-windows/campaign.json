@@ -1,0 +1,360 @@
+{
+  "PlanSHA256": "ae35b18f5661a0383d6f2a1f8548c222f314e13b7f45fb7f493371adc7de43ab",
+  "GOOS": "windows",
+  "GOARCH": "amd64",
+  "GoVersion": "go1.26.4",
+  "Clock": "QueryPerformanceCounter",
+  "ClockFrequency": 10000000,
+  "Cases": [
+    {
+      "Parameters": {
+        "angle_degrees": 0,
+        "width_pixels": 1,
+        "contrast": 1,
+        "noise_sd": 0,
+        "seed": 15480
+      },
+      "HeldOut": false,
+      "SourceSHA256": "50b2ba69b42815e730d1f1c8df4e3d5900e3f6faf4edfeecc37ec88c6b9b71b2",
+      "Phase": {
+        "TP": 0,
+        "Positive": 96,
+        "FP": 0,
+        "Negative": 1516,
+        "Recall": 0,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 0.5,
+        "ElapsedNS": 23352800,
+        "AllocatedBytes": 2643888,
+        "WorkingBytes": 2626584,
+        "ResponseSHA256": "5322a2cce420df798f7db975f7e5cd7e234e90985e411dbc9cccdb3788ecd282"
+      },
+      "Frangi": {
+        "TP": 96,
+        "Positive": 96,
+        "FP": 0,
+        "Negative": 1516,
+        "Recall": 1,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 0.5,
+        "ElapsedNS": 1524300,
+        "AllocatedBytes": 363320,
+        "WorkingBytes": 283648,
+        "ResponseSHA256": "529c1ea4eccab856b4ff5f2a68106610736053f529c407da36f3d42e84d0c831"
+      },
+      "Metadata": {
+        "Experimental": true,
+        "Family": "undecimated-gaussian-difference-riesz-2d",
+        "Boundary": "reflect-six-sigma-radix2-periodic-extension",
+        "Dims": [
+          96,
+          96,
+          1
+        ],
+        "SpacingMM": [
+          1,
+          1,
+          0
+        ],
+        "ScalesMM": [
+          1,
+          2,
+          4
+        ],
+        "PaddedDims": [
+          256,
+          256
+        ],
+        "CropOffset": [
+          24,
+          24
+        ],
+        "Workers": 1,
+        "ScratchBytes": 2469888,
+        "WorkingBytes": 2626584
+      }
+    },
+    {
+      "Parameters": {
+        "angle_degrees": 90,
+        "width_pixels": 1.5,
+        "contrast": 0.25,
+        "noise_sd": 0.03,
+        "seed": 15481
+      },
+      "HeldOut": true,
+      "SourceSHA256": "0128898102f10e654f0d14f7ce5a10857d02d8b59a09652582d7f13514595ae5",
+      "Phase": {
+        "TP": 1,
+        "Positive": 96,
+        "FP": 3,
+        "Negative": 1386,
+        "Recall": 0.010416666666666666,
+        "FalsePositiveRate": 0.0021645021645021645,
+        "LocalizationPixels": 8.5,
+        "ElapsedNS": 22323300,
+        "AllocatedBytes": 2643848,
+        "WorkingBytes": 2626584,
+        "ResponseSHA256": "c954a70bcc650cd5de10da79b5f9f918aee7584326a9ca93f2cf1a400375e97b"
+      },
+      "Frangi": {
+        "TP": 96,
+        "Positive": 96,
+        "FP": 0,
+        "Negative": 1386,
+        "Recall": 1,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 0.5000000000000014,
+        "ElapsedNS": 1573800,
+        "AllocatedBytes": 363320,
+        "WorkingBytes": 283648,
+        "ResponseSHA256": "cd77fd2d0ae8459a6c4079ad0689d0fda6651ef80f29c12d1518c3fdd1182b7f"
+      },
+      "Metadata": {
+        "Experimental": true,
+        "Family": "undecimated-gaussian-difference-riesz-2d",
+        "Boundary": "reflect-six-sigma-radix2-periodic-extension",
+        "Dims": [
+          96,
+          96,
+          1
+        ],
+        "SpacingMM": [
+          1,
+          1,
+          0
+        ],
+        "ScalesMM": [
+          1,
+          2,
+          4
+        ],
+        "PaddedDims": [
+          256,
+          256
+        ],
+        "CropOffset": [
+          24,
+          24
+        ],
+        "Workers": 1,
+        "ScratchBytes": 2469888,
+        "WorkingBytes": 2626584
+      }
+    },
+    {
+      "Parameters": {
+        "angle_degrees": 45,
+        "width_pixels": 2,
+        "contrast": 1,
+        "noise_sd": 0.03,
+        "seed": 15482
+      },
+      "HeldOut": true,
+      "SourceSHA256": "cf0d54a876eff2a35f5e161d100ae5f8b5a4d25a42ce56b84e4431d09b0b714a",
+      "Phase": {
+        "TP": 76,
+        "Positive": 100,
+        "FP": 0,
+        "Negative": 1238,
+        "Recall": 0.76,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 8.881784197001252e-16,
+        "ElapsedNS": 22693000,
+        "AllocatedBytes": 2643832,
+        "WorkingBytes": 2626584,
+        "ResponseSHA256": "d90a451ddfb0f234de06a79a89f7ad70c6cded5ca3b5b64c9fc2100c1d98b72e"
+      },
+      "Frangi": {
+        "TP": 100,
+        "Positive": 100,
+        "FP": 0,
+        "Negative": 1238,
+        "Recall": 1,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 2.220446049250313e-16,
+        "ElapsedNS": 1471000,
+        "AllocatedBytes": 363320,
+        "WorkingBytes": 283648,
+        "ResponseSHA256": "4541100f7a99ff9443a2a21db8d96cdfe01462ae23b251ca48146e0c89bc74f5"
+      },
+      "Metadata": {
+        "Experimental": true,
+        "Family": "undecimated-gaussian-difference-riesz-2d",
+        "Boundary": "reflect-six-sigma-radix2-periodic-extension",
+        "Dims": [
+          96,
+          96,
+          1
+        ],
+        "SpacingMM": [
+          1,
+          1,
+          0
+        ],
+        "ScalesMM": [
+          1,
+          2,
+          4
+        ],
+        "PaddedDims": [
+          256,
+          256
+        ],
+        "CropOffset": [
+          24,
+          24
+        ],
+        "Workers": 1,
+        "ScratchBytes": 2469888,
+        "WorkingBytes": 2626584
+      }
+    },
+    {
+      "Parameters": {
+        "angle_degrees": 30,
+        "width_pixels": 2.5,
+        "contrast": 4,
+        "noise_sd": 0.03,
+        "seed": 15483
+      },
+      "HeldOut": true,
+      "SourceSHA256": "34f7c37ddf6cd5a92d2259adcdac0e83385517823980b906850bee8ffbfc2d8a",
+      "Phase": {
+        "TP": 72,
+        "Positive": 72,
+        "FP": 0,
+        "Negative": 1100,
+        "Recall": 1,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 0.013139720814414169,
+        "ElapsedNS": 22564500,
+        "AllocatedBytes": 2643832,
+        "WorkingBytes": 2626584,
+        "ResponseSHA256": "4e8432c9d330c8f4709cf5b6a3a048858c6aa894fa382c1acd97dc592547b04d"
+      },
+      "Frangi": {
+        "TP": 72,
+        "Positive": 72,
+        "FP": 0,
+        "Negative": 1100,
+        "Recall": 1,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 0.08493649053890273,
+        "ElapsedNS": 1477900,
+        "AllocatedBytes": 363320,
+        "WorkingBytes": 283648,
+        "ResponseSHA256": "aba28ebd5c401b8ec1dbb6859ecf5648b58660c9ca758bb753b71fb51255faa2"
+      },
+      "Metadata": {
+        "Experimental": true,
+        "Family": "undecimated-gaussian-difference-riesz-2d",
+        "Boundary": "reflect-six-sigma-radix2-periodic-extension",
+        "Dims": [
+          96,
+          96,
+          1
+        ],
+        "SpacingMM": [
+          1,
+          1,
+          0
+        ],
+        "ScalesMM": [
+          1,
+          2,
+          4
+        ],
+        "PaddedDims": [
+          256,
+          256
+        ],
+        "CropOffset": [
+          24,
+          24
+        ],
+        "Workers": 1,
+        "ScratchBytes": 2469888,
+        "WorkingBytes": 2626584
+      }
+    },
+    {
+      "Parameters": {
+        "angle_degrees": 60,
+        "width_pixels": 1.25,
+        "contrast": 0.5,
+        "noise_sd": 0.06,
+        "seed": 15484
+      },
+      "HeldOut": true,
+      "SourceSHA256": "545dfd85bd970e30c5ac2bd22ff63c48fdd07a40f1161021c13a0a5780e350a1",
+      "Phase": {
+        "TP": 35,
+        "Positive": 72,
+        "FP": 22,
+        "Negative": 1446,
+        "Recall": 0.4861111111111111,
+        "FalsePositiveRate": 0.015214384508990318,
+        "LocalizationPixels": 0.013139720814411504,
+        "ElapsedNS": 22396900,
+        "AllocatedBytes": 2643832,
+        "WorkingBytes": 2626584,
+        "ResponseSHA256": "f787113fe1c2281f690ee0b1add03ebd0a83fe066e77b8cbf1bece518a5bf505"
+      },
+      "Frangi": {
+        "TP": 72,
+        "Positive": 72,
+        "FP": 0,
+        "Negative": 1446,
+        "Recall": 1,
+        "FalsePositiveRate": 0,
+        "LocalizationPixels": 0.20929214352104175,
+        "ElapsedNS": 1529700,
+        "AllocatedBytes": 363320,
+        "WorkingBytes": 283648,
+        "ResponseSHA256": "55b2382d7de2d03a06e51f0325a800fbd8cffa8a7ad27dc6145925adcecad8a3"
+      },
+      "Metadata": {
+        "Experimental": true,
+        "Family": "undecimated-gaussian-difference-riesz-2d",
+        "Boundary": "reflect-six-sigma-radix2-periodic-extension",
+        "Dims": [
+          96,
+          96,
+          1
+        ],
+        "SpacingMM": [
+          1,
+          1,
+          0
+        ],
+        "ScalesMM": [
+          1,
+          2,
+          4
+        ],
+        "PaddedDims": [
+          256,
+          256
+        ],
+        "CropOffset": [
+          24,
+          24
+        ],
+        "Workers": 1,
+        "ScratchBytes": 2469888,
+        "WorkingBytes": 2626584
+      }
+    }
+  ],
+  "PhaseRecall": 0.5411764705882353,
+  "FrangiRecall": 1,
+  "PhaseFPR": 0.004835589941972921,
+  "FrangiFPR": 0,
+  "MedianPhaseLocalization": 0.013139720814412836,
+  "PromotionGatePassed": false,
+  "Decision": "experimental; no clinical preset",
+  "CancelTotalNS": 5169700,
+  "CancelRequestAfterNS": 5158200,
+  "CancelToReturnNS": 11500
+}

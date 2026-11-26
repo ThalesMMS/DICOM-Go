@@ -1,0 +1,5 @@
+# Stable source fingerprints for reproducible numerical oracles on Windows.
+*.py text eol=lf
+*.cpp text eol=lf
+*.txt text eol=lf
+*.json.gz binary

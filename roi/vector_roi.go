@@ -3,7 +3,6 @@ package roi
 import (
 	"image"
 	"math"
-	"sort"
 )
 
 // ROIShape identifies a vector ROI's geometry.
@@ -21,10 +20,27 @@ const (
 // VectorROI is a geometric region of interest in image-pixel coordinates. It is
 // the vector layer of the ROI model; Rasterize converts it to a RasterMask (the
 // raster layer) which can then be placed in a Segmentation3D (the volumetric
-// layer).
+// layer). A pixel belongs to the ROI when its centre does.
 type VectorROI struct {
 	Shape  ROIShape
 	Points []image.Point
+	// SubpixelPoints, when set, replaces Points with sub-pixel control
+	// points (#1073): an integer coordinate is a pixel centre.
+	SubpixelPoints []Point2D
+}
+
+// ControlPoints returns the control points as Point2D: SubpixelPoints when
+// set, else Points.
+func (r VectorROI) ControlPoints() []Point2D {
+	return append([]Point2D(nil), r.points2D()...)
+}
+
+// points2D returns the control points as Point2D.
+func (r VectorROI) points2D() []Point2D {
+	if len(r.SubpixelPoints) > 0 {
+		return r.SubpixelPoints
+	}
+	return imagePointsToPoint2D(r.Points)
 }
 
 // Contains reports whether pixel (x,y) lies inside the ROI.
@@ -33,31 +49,25 @@ func (r VectorROI) Contains(x, y int) bool {
 	case ROIEllipse:
 		return r.ellipseContains(x, y)
 	case ROIPolygon:
-		return roiPointInPolygon(x, y, r.Points)
+		return pointInPolygonEvenOdd(float64(x), float64(y), r.points2D())
 	default:
 		return r.rectContains(x, y)
 	}
 }
 
-func (r VectorROI) bbox() (minX, minY, maxX, maxY int, ok bool) {
-	if len(r.Points) < 2 {
+func (r VectorROI) bbox() (minX, minY, maxX, maxY float64, ok bool) {
+	points := r.points2D()
+	if len(points) < 2 {
 		return 0, 0, 0, 0, false
 	}
-	minX, maxX = r.Points[0].X, r.Points[0].X
-	minY, maxY = r.Points[0].Y, r.Points[0].Y
-	for _, p := range r.Points {
-		if p.X < minX {
-			minX = p.X
+	minX, maxX = points[0].X, points[0].X
+	minY, maxY = points[0].Y, points[0].Y
+	for _, p := range points {
+		if !finitePoint(p) {
+			return 0, 0, 0, 0, false
 		}
-		if p.X > maxX {
-			maxX = p.X
-		}
-		if p.Y < minY {
-			minY = p.Y
-		}
-		if p.Y > maxY {
-			maxY = p.Y
-		}
+		minX, maxX = math.Min(minX, p.X), math.Max(maxX, p.X)
+		minY, maxY = math.Min(minY, p.Y), math.Max(maxY, p.Y)
 	}
 	return minX, minY, maxX, maxY, true
 }
@@ -67,7 +77,8 @@ func (r VectorROI) rectContains(x, y int) bool {
 	if !ok {
 		return false
 	}
-	return x >= minX && x <= maxX && y >= minY && y <= maxY
+	px, py := float64(x), float64(y)
+	return px >= minX && px <= maxX && py >= minY && py <= maxY
 }
 
 func (r VectorROI) ellipseContains(x, y int) bool {
@@ -75,10 +86,10 @@ func (r VectorROI) ellipseContains(x, y int) bool {
 	if !ok {
 		return false
 	}
-	cx := float64(minX+maxX) / 2
-	cy := float64(minY+maxY) / 2
-	rx := float64(maxX-minX) / 2
-	ry := float64(maxY-minY) / 2
+	cx := (minX + maxX) / 2
+	cy := (minY + maxY) / 2
+	rx := (maxX - minX) / 2
+	ry := (maxY - minY) / 2
 	if rx <= 0 || ry <= 0 {
 		return false
 	}
@@ -88,16 +99,20 @@ func (r VectorROI) ellipseContains(x, y int) bool {
 }
 
 func roiPointInPolygon(x, y int, pts []image.Point) bool {
+	return pointInPolygonEvenOdd(float64(x), float64(y), imagePointsToPoint2D(pts))
+}
+
+// pointInPolygonEvenOdd is the crossing test of RasterizePolygon's rule.
+func pointInPolygonEvenOdd(px, py float64, pts []Point2D) bool {
 	if len(pts) < 3 {
 		return false
 	}
-	px, py := float64(x), float64(y)
 	in := false
 	n := len(pts)
 	j := n - 1
 	for i := 0; i < n; i++ {
-		xi, yi := float64(pts[i].X), float64(pts[i].Y)
-		xj, yj := float64(pts[j].X), float64(pts[j].Y)
+		xi, yi := pts[i].X, pts[i].Y
+		xj, yj := pts[j].X, pts[j].Y
 		if (yi > py) != (yj > py) {
 			cross := (xj-xi)*(py-yi)/(yj-yi) + xi
 			if px < cross {
@@ -147,112 +162,20 @@ func (r VectorROI) StatisticsWithHistogramBounds(columns, rows int, valueAt func
 	return Stats2DWithHistogramBounds(r.Rasterize(columns, rows), valueAt, bins, histogramMin, histogramMax)
 }
 
-// rasterizePolygonScanlines fills an even-odd polygon directly as horizontal
-// runs. Its half-open rule matches roiPointInPolygon exactly for integer pixel
-// centers: a sorted intersection pair [left,right] contributes integer x where
-// x >= left and x < right, i.e. [ceil(left), ceil(right)).
+// rasterizePolygonScanlines fills the integer-vertex polygon with the shared
+// sub-pixel scanline filler (see RasterizePolygon). Integer vertices convert to
+// float64 exactly, so the result equals roiPointInPolygon at every pixel.
 func (r VectorROI) rasterizePolygonScanlines(mask *RasterMask) {
-	if mask == nil || len(r.Points) < 3 || mask.Columns <= 0 || mask.Rows <= 0 {
+	points := r.points2D()
+	if mask == nil || len(points) < 3 {
 		return
 	}
-	_, minY, _, maxY, ok := r.bbox()
-	if !ok || maxY < 0 || minY >= mask.Rows {
-		return
-	}
-	if minY < 0 {
-		minY = 0
-	}
-	if maxY >= mask.Rows {
-		maxY = mask.Rows - 1
-	}
-	// Schedule each non-horizontal edge on its first intersecting scanline.
-	// Active edges retain the original intersection formula below, so this
-	// removes the H*P scan without changing even-odd or boundary rounding.
-	type scanlineEdge struct {
-		pointIndex int
-		endY       int
-		nextStart  int
-	}
-	edges := make([]scanlineEdge, 0, len(r.Points))
-	startHeads := make([]int, maxY-minY+1)
-	for index := range startHeads {
-		startHeads[index] = -1
-	}
-	for current := len(r.Points) - 1; current >= 0; current-- {
-		previous := current - 1
-		if previous < 0 {
-			previous = len(r.Points) - 1
+	if len(r.SubpixelPoints) > 0 {
+		snapped := make([]Point2D, len(points))
+		for i, point := range points {
+			snapped[i] = Point2D{X: snapToPixelCentre(point.X), Y: snapToPixelCentre(point.Y)}
 		}
-		currentPoint, previousPoint := r.Points[current], r.Points[previous]
-		if currentPoint.Y == previousPoint.Y {
-			continue
-		}
-		startY := min(currentPoint.Y, previousPoint.Y)
-		endY := max(currentPoint.Y, previousPoint.Y)
-		if endY <= minY || startY > maxY {
-			continue
-		}
-		startY = max(startY, minY)
-		endY = min(endY, maxY+1)
-		bucket := startY - minY
-		edges = append(edges, scanlineEdge{
-			pointIndex: current,
-			endY:       endY,
-			nextStart:  startHeads[bucket],
-		})
-		startHeads[bucket] = len(edges) - 1
+		points = snapped
 	}
-	active := make([]int, 0, len(edges))
-	intersections := make([]float64, 0, len(r.Points))
-	for y := minY; y <= maxY; y++ {
-		kept := active[:0]
-		for _, edgeIndex := range active {
-			if edges[edgeIndex].endY > y {
-				kept = append(kept, edgeIndex)
-			}
-		}
-		active = kept
-		for edgeIndex := startHeads[y-minY]; edgeIndex >= 0; edgeIndex = edges[edgeIndex].nextStart {
-			active = append(active, edgeIndex)
-		}
-		intersections = intersections[:0]
-		py := float64(y)
-		for _, edgeIndex := range active {
-			edge := edges[edgeIndex]
-			currentPoint := r.Points[edge.pointIndex]
-			previousPoint := r.Points[(edge.pointIndex+len(r.Points)-1)%len(r.Points)]
-			xi, yi := float64(currentPoint.X), float64(currentPoint.Y)
-			xj, yj := float64(previousPoint.X), float64(previousPoint.Y)
-			intersections = append(intersections, (xj-xi)*(py-yi)/(yj-yi)+xi)
-		}
-		sort.Float64s(intersections)
-		runs := make([]MaskRun, 0, len(intersections)/2)
-		for i := 0; i+1 < len(intersections); i += 2 {
-			start := polygonScanlineBoundary(intersections[i], mask.Columns)
-			end := polygonScanlineBoundary(intersections[i+1], mask.Columns)
-			if start >= end {
-				continue
-			}
-			if len(runs) > 0 && runs[len(runs)-1].End >= start {
-				if end > runs[len(runs)-1].End {
-					runs[len(runs)-1].End = end
-				}
-				continue
-			}
-			runs = append(runs, MaskRun{Start: start, End: end})
-		}
-		if len(runs) > 0 {
-			mask.runs[y] = runs
-		}
-	}
-}
-
-func polygonScanlineBoundary(intersection float64, columns int) int {
-	if intersection <= 0 {
-		return 0
-	}
-	if intersection >= float64(columns) {
-		return columns
-	}
-	return int(math.Ceil(intersection))
+	rasterizePolygonScanlines(mask, points)
 }

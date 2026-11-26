@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "purpose": "Research-only 2D ridge detection, fixed before evaluating the new method",
+  "family": "Undecimated Gaussian-difference radial frequency partition with monogenic Riesz phase",
+  "dims": [96, 96, 1],
+  "spacing_mm": [1.0, 1.0, 0.0],
+  "scales_mm": [1.0, 2.0, 4.0],
+  "boundary": "reflect padding by six maximum-scale sigmas, then radix-2 periodic FFT",
+  "phase": {"threshold": 0.35, "noise_threshold": 0.03, "amplitude_floor": 0.000001, "polarity": "bright"},
+  "baseline": {"method": "existing Frangi vesselness", "threshold": 0.35, "beta": 0.5, "gamma": "existing automatic per-scale", "workers": 1},
+  "corpus": {
+    "formula": "contrast * exp(-d^2/(2*width^2)) + seeded independent Gaussian noise",
+    "development": [{"angle_degrees": 0, "width_pixels": 1.0, "contrast": 1.0, "noise_sd": 0.0, "seed": 15480}],
+    "held_out": [
+      {"angle_degrees": 90, "width_pixels": 1.5, "contrast": 0.25, "noise_sd": 0.03, "seed": 15481},
+      {"angle_degrees": 45, "width_pixels": 2.0, "contrast": 1.0, "noise_sd": 0.03, "seed": 15482},
+      {"angle_degrees": 30, "width_pixels": 2.5, "contrast": 4.0, "noise_sd": 0.03, "seed": 15483},
+      {"angle_degrees": 60, "width_pixels": 1.25, "contrast": 0.5, "noise_sd": 0.06, "seed": 15484}
+    ]
+  },
+  "metrics": {
+    "evaluation": "Central radius <= 24 pixels; positive pixels have |d| <= 0.75 pixels, negatives |d| >= 3*width; intermediate pixels excluded",
+    "localization": "Distance of the strongest response to the true ridge within the central radius, in pixels; first row-major maximum wins",
+    "aggregation": "Pool held-out positive and negative pixel counts; also report each case and development separately"
+  },
+  "promotion_gate": {
+    "recall_improvement_absolute": 0.05,
+    "false_positive_rate_increase_max": 0.01,
+    "median_localization_pixels_max": 1.0,
+    "working_bytes_max": 67108864,
+    "elapsed_per_case_seconds_max": 2.0,
+    "failure_policy": "Remain experimental, report failure/inconclusive results; no clinical preset or default activation"
+  },
+  "numeric_gates": {
+    "reconstruction_max_abs_relative_to_max_1_source": 0.000002,
+    "analytic_frequency_max_abs": 0.000002,
+    "source": "immutable float32; FFT/kernel arithmetic float64, outputs float32"
+  }
+}

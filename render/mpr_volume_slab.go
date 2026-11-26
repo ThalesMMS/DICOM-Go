@@ -151,9 +151,9 @@ func renderCorrectedVolumeSlab(vol *Volume, sampler *volumeSampler, mapper prepa
 }
 
 func compositeCorrectedVolumeSlabRay(vol *Volume, sampler *volumeSampler, mapper preparedVOI, options VolumeSlabOptions, base, slabAxis, viewDir Vec3, center, start, end int, step float64) uint8 {
+	ray := sampler.vol.voxelLine(base, slabAxis)
 	return compositeVolumeSlabSamples(sampler, mapper, options, start, end, viewDir, func(sample int, needTexture bool) (float64, Vec3, bool) {
-		offset := float64(sample-center) * step
-		voxel := sampler.vol.PatientToVoxel(base.Add(slabAxis.Scale(offset)))
+		voxel := ray.at(float64(sample-center) * step)
 		value, ok := sampler.trilinearAt(voxel)
 		if !ok {
 			return 0, Vec3{}, false
@@ -197,7 +197,7 @@ func compositeVolumeSlabSamples(sampler *volumeSampler, mapper preparedVOI, opti
 	if count := end - start + 1; count > 64 {
 		stride = (count + 63) / 64
 	}
-	for sample := start; sample <= end && accAlpha < 0.995; sample += stride {
+	for sample := start; sample <= end && accAlpha <= vrOpacityThreshold; sample += stride {
 		value, texture, ok := sampleAt(sample, options.Shading)
 		if !ok {
 			continue
@@ -210,12 +210,12 @@ func compositeVolumeSlabSamples(sampler *volumeSampler, mapper preparedVOI, opti
 		// Correct the tabulated opacity for sample density so a thicker slab
 		// does not become completely opaque after only a few low-alpha voxels.
 		alpha = 1 - math.Pow(1-alpha, 0.25*float64(stride))
-		shade := 1.0
+		lit, specular := 1.0, 0.0
 		if options.Shading {
-			shade = volumeSlabShade(sampler.gradientAt(texture), viewDir, options)
+			lit, specular = volumeSlabShade(sampler.gradientAt(texture), viewDir, options)
 		}
 		weight := (1 - accAlpha) * alpha
-		accColor += weight * intensity * shade
+		accColor += weight * (intensity*lit + specular)
 		accAlpha += weight
 	}
 	return uint8(math.Round(255 * clamp01(accColor)))
@@ -246,16 +246,16 @@ func volumeSlabOpacity(mode SlabOpacityMode, value float64) float64 {
 	}
 }
 
-func volumeSlabShade(gradient, viewDir Vec3, options VolumeSlabOptions) float64 {
+// volumeSlabShade is the headlight model of the volume renderer
+// (headlightShading, #1063): the shaded gray is intensity*lit + specular.
+func volumeSlabShade(gradient, viewDir Vec3, options VolumeSlabOptions) (lit, specular float64) {
 	length := gradient.Length()
 	if length < 1e-6 {
-		return options.Ambient
+		return options.Ambient, 0
 	}
-	normal := gradient.Scale(-1 / length)
-	eye := viewDir.Scale(-1).Normalize()
-	diffuse := math.Max(normal.Dot(eye), 0)
-	specular := math.Pow(math.Max(normal.Dot(eye), 0), options.SpecularPower)
-	return clamp01(options.Ambient + options.Diffuse*diffuse + options.Specular*specular)
+	return headlightShading(gradient.Scale(-1/length), viewDir.Scale(-1).Normalize(), VRLightingMaterial{
+		Ambient: options.Ambient, Diffuse: options.Diffuse, Specular: options.Specular, SpecularPower: options.SpecularPower,
+	})
 }
 
 func normalizeVolumeSlabOptions(options VolumeSlabOptions) VolumeSlabOptions {

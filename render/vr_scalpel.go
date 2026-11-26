@@ -1,10 +1,11 @@
 package render
 
 import (
+	"context"
 	"math"
 	"math/bits"
-	"runtime"
-	"sync"
+
+	"github.com/ThalesMMS/dicom-go/internal/parallel"
 )
 
 // Scalpel freehand carve (3d-toolbar-plan.md §5.10). A drawn lasso (screen
@@ -93,9 +94,9 @@ func (m *VRCutMask) cut(tex Vec3) bool {
 	if m == nil || m.cols < 2 {
 		return false
 	}
-	x := int(tex.X*float64(m.cols-1) + 0.5)
-	y := int(tex.Y*float64(m.rows-1) + 0.5)
-	z := int(tex.Z*float64(m.depth-1) + 0.5)
+	x := NearestIndex(tex.X * float64(m.cols-1))
+	y := NearestIndex(tex.Y * float64(m.rows-1))
+	z := NearestIndex(tex.Z * float64(m.depth-1))
 	return m.IsCut(x, y, z)
 }
 
@@ -221,13 +222,11 @@ func CarveVR(vol *Volume, cam VRCamera, prev *VRCutMask, lasso [][2]float64, w, 
 		}
 	}
 
-	// Parallelize across cores (matching RenderVR). Chunk boundaries are rounded
-	// to a multiple of 64 so each goroutine owns a disjoint set of bitset words —
-	// no two goroutines touch the same uint64, so there is no data race.
-	workers := runtime.GOMAXPROCS(0)
-	if workers < 1 {
-		workers = 1
-	}
+	// Parallelize on the shared concurrency budget (matching RenderVR).
+	// Chunk boundaries are multiples of 64 so each worker owns a disjoint set
+	// of bitset words — no two goroutines touch the same uint64, so there is
+	// no data race.
+	workers := parallel.DefaultWorkers()
 	if workers == 1 || total < 1<<16 {
 		carve(0, total)
 		return mask
@@ -237,19 +236,9 @@ func CarveVR(vol *Volume, cam VRCamera, prev *VRCutMask, lasso [][2]float64, w, 
 	if chunk < 64 {
 		chunk = 64
 	}
-	var wg sync.WaitGroup
-	for lo := 0; lo < total; lo += chunk {
-		hi := lo + chunk
-		if hi > total {
-			hi = total
-		}
-		wg.Add(1)
-		go func(lo, hi int) {
-			defer wg.Done()
-			carve(lo, hi)
-		}(lo, hi)
-	}
-	wg.Wait()
+	_ = parallel.Do(context.Background(), (total+chunk-1)/chunk, workers, func(i int) {
+		carve(i*chunk, min(total, (i+1)*chunk))
+	})
 	return mask
 }
 

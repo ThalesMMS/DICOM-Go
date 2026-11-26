@@ -132,6 +132,76 @@ func TestFindCPRAssistedPathValidatesInputAndCancellation(t *testing.T) {
 	}
 }
 
+// cprTotalTurning sums the turning angles (radians) between consecutive
+// segments of a polyline, a measure of how jagged a route is.
+func cprTotalTurning(points []Vec3) float64 {
+	total := 0.0
+	for i := 1; i+1 < len(points); i++ {
+		a, b := points[i].Sub(points[i-1]), points[i+1].Sub(points[i])
+		total += math.Atan2(a.Cross(b).Length(), a.Dot(b))
+	}
+	return total
+}
+
+func TestFindCPRAssistedPathOptionalSmoothingKeepsWaypoints(t *testing.T) {
+	vol, err := BuildVolume(bentTubeStack())
+	if err != nil {
+		t.Fatalf("BuildVolume: %v", err)
+	}
+	waypoints := []Vec3{
+		vol.VoxelToPatient(Vec3{X: 3, Y: 10, Z: 4}),
+		vol.VoxelToPatient(Vec3{X: 14, Y: 16, Z: 4}),
+		vol.VoxelToPatient(Vec3{X: 25, Y: 22, Z: 4}),
+	}
+	options := CPRPathAssistantOptions{GridSpacingMM: 1, MarginMM: 3, OutputSpacingMM: 1, IntensityWeight: 80}
+	raw, err := FindCPRAssistedPath(context.Background(), vol, waypoints, options)
+	if err != nil {
+		t.Fatalf("FindCPRAssistedPath: %v", err)
+	}
+	options.SmoothingMM = 1.5
+	smooth, err := FindCPRAssistedPath(context.Background(), vol, waypoints, options)
+	if err != nil {
+		t.Fatalf("FindCPRAssistedPath(smoothed): %v", err)
+	}
+	rawTurning, smoothTurning := cprTotalTurning(raw), cprTotalTurning(smooth)
+	t.Logf("total turning: raw %.2f rad over %d points, smoothed %.2f rad over %d points", rawTurning, len(raw), smoothTurning, len(smooth))
+	// The tube itself turns by π; the grid staircase adds the rest.
+	if smoothTurning >= rawTurning || smoothTurning > math.Pi+1 {
+		t.Fatalf("smoothed route turns %.2f rad, raw %.2f rad; want the staircase removed", smoothTurning, rawTurning)
+	}
+	for _, waypoint := range waypoints {
+		found := false
+		for _, point := range smooth {
+			found = found || point.Sub(waypoint).Length() < 1e-9
+		}
+		if !found {
+			t.Fatalf("waypoint %+v is not on the smoothed route", waypoint)
+		}
+	}
+	segments := [][2]Vec3{
+		{{X: 3, Y: 10, Z: 4}, {X: 14, Y: 10, Z: 4}},
+		{{X: 14, Y: 10, Z: 4}, {X: 14, Y: 22, Z: 4}},
+		{{X: 14, Y: 22, Z: 4}, {X: 25, Y: 22, Z: 4}},
+	}
+	for i, point := range smooth {
+		voxel := vol.PatientToVoxel(point)
+		nearest := math.Inf(1)
+		for _, segment := range segments {
+			nearest = math.Min(nearest, distanceToSegment(voxel, segment[0], segment[1]))
+		}
+		if nearest > 2.25 {
+			t.Fatalf("smoothed point %d left the tube by %.2f voxels", i, nearest)
+		}
+	}
+
+	for _, bad := range []float64{-1, math.NaN(), math.Inf(1), MaxCPRAssistantSmoothingMM + 1} {
+		options.SmoothingMM = bad
+		if _, err := FindCPRAssistedPath(context.Background(), vol, waypoints, options); !errors.Is(err, ErrCPRPathAssistantInput) {
+			t.Fatalf("SmoothingMM=%v error=%v, want ErrCPRPathAssistantInput", bad, err)
+		}
+	}
+}
+
 func TestFindCPRAssistedPathReportsBoundedSegmentMemoryFailure(t *testing.T) {
 	vol, err := BuildVolume(bentTubeStack())
 	if err != nil {

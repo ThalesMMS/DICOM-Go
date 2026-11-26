@@ -15,7 +15,9 @@ import (
 // so the mesh is deterministic, watertight, and preserves the exact selected
 // voxel support for measurement/export workflows. Use VR raycasting for smooth
 // clinical previews; use STL export when topological fidelity matters more than
-// cosmetic interpolation.
+// cosmetic interpolation. Package mesh builds the same voxel surface as an
+// indexed mesh with shared vertices (mesh.VoxelFaces) and the smooth Marching
+// Cubes surface (mesh.MarchingCubes).
 
 // STLTriangle is a single iso-surface triangle in patient-space mm. It is the
 // element type of ISOSurfaceTriangles, so callers outside the package can inspect
